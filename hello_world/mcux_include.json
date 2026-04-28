@@ -1,0 +1,35 @@
+{
+  "version": 7,
+  "cmakeMinimumRequired": {
+    "major": 3
+  },
+  "configurePresets": [
+    {
+      "name": "debug-env",
+      "displayName": "debug-env",
+      "hidden": true,
+      "environment": {
+        "ZEPHYR_BASE": "C:/SCODE/NXP_Dev/MCXA156/zephyr_440_mcxa156/zephyr/zephyr",
+        "MCUX_VENV_PATH": "C:/Users/sameera.SONAVOX/.mcuxpressotools/.mcux-venv-3.12/Scripts",
+        "ZEPHYR_SDK_INSTALL_DIR": "C:/Users/sameera.SONAVOX/zephyr-sdk-1.0.1/gnu",
+        "PATH": "$env{MCUX_VENV_PATH}${pathListSep}$penv{PATH}",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      },
+      "cacheVariables": {}
+    },
+    {
+      "name": "release-env",
+      "displayName": "release-env",
+      "hidden": true,
+      "environment": {
+        "ZEPHYR_BASE": "C:/SCODE/NXP_Dev/MCXA156/zephyr_440_mcxa156/zephyr/zephyr",
+        "MCUX_VENV_PATH": "C:/Users/sameera.SONAVOX/.mcuxpressotools/.mcux-venv-3.12/Scripts",
+        "ZEPHYR_SDK_INSTALL_DIR": "C:/Users/sameera.SONAVOX/zephyr-sdk-1.0.1/gnu",
+        "PATH": "$env{MCUX_VENV_PATH}${pathListSep}$penv{PATH}",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      },
+      "cacheVariables": {}
+    }
+  ],
+  "buildPresets": []
+}

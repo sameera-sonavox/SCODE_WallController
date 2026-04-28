@@ -1,0 +1,3 @@
+syntax: glob
+hello_world/__repo__
+hello_world/debug

@@ -1,0 +1,50 @@
+#include <zephyr/dt-bindings/pwm/pwm.h>
+#include <nxp/mcx/MCXA156VLL-pinctrl.h>
+
+//Disable the FlexIO LCD interface to enable using of P0_22 for PWM
+&flexio0_lcd{
+    status = "disabled";
+};
+
+&pinctrl{
+    pinmux_ctimer0_match0_p0_22: pinmux_ctimer0_match0_p0_22{
+        group0{
+            pinmux = <CT0_MAT0_P0_22>;
+            slew-rate = "slow";
+            drive-strength = "low";
+        };
+    };
+};
+
+//Here this uses FRO_HF_GATED since 'clk-source = 1'
+&ctimer0{
+    compatible = "nxp,ctimer-pwm";
+    status = "okay";
+
+    clk-source = <1>;
+    prescaler = <0>;
+    #pwm-cells = <3>;
+
+    pinctrl-0 = <&pinmux_ctimer0_match0_p0_22>;
+    pinctrl-names = "default";
+
+};
+
+//defines 1KHz frequency on CTIMER0 -> CH0 with Normal Polarity (It means inactive -> 0)
+//if PWM_POLARITY_INVERTED, it means inactive -> 1
+//But in the driver, there is a bug in the CTIMER path.
+//The driver currently changes the pulse width when 'PWM_POLARITY_INVERTED' is set.
+//If we use 'PWM_POLARITY_NORMAL', then 25% duty means 75% -> High and 25% -> Low
+/{
+    pwm_outputs{
+        compatible = "pwm-leds";
+
+        ctpwm0:ctpwm0{
+            pwms = <&ctimer0 0 PWM_HZ(1000) PWM_POLARITY_INVERTED>;
+        };
+    };
+
+    aliases{
+        pwm-ch-0 = &ctpwm0;
+    };
+};

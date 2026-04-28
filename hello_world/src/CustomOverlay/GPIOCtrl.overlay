@@ -1,0 +1,16 @@
+#include <zephyr/dt-bindings/gpio/nxp-kinetis-gpio.h>
+
+/ {
+	debug_pins {
+		compatible = "gpio-leds";
+
+		debug_pin: debug_pin {
+			gpios = <&gpio1 14 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP | KINETIS_GPIO_DS_ALT)>;
+			label = "Debug Pin";
+		};
+	};
+
+	aliases {
+		debug-pin-0 = &debug_pin;
+	};
+};

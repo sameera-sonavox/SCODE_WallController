@@ -1,0 +1,13 @@
+{
+  "version": "25.3",
+  "toolchainPath": "${userHome}/zephyr-sdk-1.0.1/gnu/arm-zephyr-eabi",
+  "linkedProjects": [],
+  "trustZoneType": "none",
+  "multicoreType": "none",
+  "projectType": "zephyr-freestanding",
+  "projectName": "hello_world",
+  "sdk": {
+    "version": "4.4.0",
+    "path": "c:\\SCODE\\NXP_Dev\\MCXA156\\zephyr_440_mcxa156\\zephyr"
+  }
+}
