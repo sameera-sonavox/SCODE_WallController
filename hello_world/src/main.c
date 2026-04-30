@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include "GPIO/Amp_GPIO.h"
 #include "Lib/PWM/NXP_PWM_API.h"
+#include "CAN_Controller/CAN_Controller.h"
 
 void vInit_Amp( void );
 
@@ -40,6 +41,7 @@ void vInit_Amp( void )
 {
 	vInit_Amp_GPIO();
 	vInit_PWM();
+	vInit_CANController();
 
 	SET_AMP_SD();
 	bUpdate_PWM_Duty(eCTPWM1, 50);

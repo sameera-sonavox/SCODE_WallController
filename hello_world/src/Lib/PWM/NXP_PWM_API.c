@@ -476,6 +476,7 @@ bool bUpdate_PWM_Frequency_Hz(eCTPWM_Channel_t ePWMID, uint32_t uiFrequency_Hz)
 
 void vCheck_For_ValidFrequencyUpdate(eT_CTIMER_Module_t eCTIMER_Module)
 {
+    int iCount = 0;
     eCTPWM_Channel_t eaPWMChannels[4];
     memcpy(eaPWMChannels, eCTIMER_Module_To_PWMChannel_Map[eCTIMER_Module], sizeof(eaPWMChannels));
 
@@ -484,8 +485,13 @@ void vCheck_For_ValidFrequencyUpdate(eT_CTIMER_Module_t eCTIMER_Module)
         eCTPWM_Channel_t eChannel = eaPWMChannels[i];
         if(staPWM_Config[eChannel].eState != ePWM_Disabled)
         {
-            FHALT("The System contains active PWM channels that share the same CTIMER. So all channels will get the new frequency.");
+            iCount++;
         }
+    }
+
+    if(iCount > 1)
+    {
+        FHALT("Multiple active PWM channels mapped to the same CTIMER module. PWM update may not work as expected. Please check the configuration. Affected CTIMER module: %d", eCTIMER_Module);
     }
 }
 
