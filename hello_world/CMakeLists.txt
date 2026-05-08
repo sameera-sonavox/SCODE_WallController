@@ -16,4 +16,5 @@ target_sources(app PRIVATE
                 src/Lib/PWM/NXP_PWM_ProjDef.c
                 src/Lib/CAN/NXP_CAN_API.c 
                 src/Lib/CAN/NXP_CAN_ProjDef.c 
-                src/CAN_Controller/CAN_Controller.c)
+                src/CAN_Controller/CAN_Controller.c 
+                src/Bootloader_Controller/Bootloader_Ctrl.c)

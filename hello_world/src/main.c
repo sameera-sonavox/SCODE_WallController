@@ -8,6 +8,7 @@
 #include "GPIO/Amp_GPIO.h"
 #include "Lib/PWM/NXP_PWM_API.h"
 #include "CAN_Controller/CAN_Controller.h"
+#include "Bootloader_Controller/Bootloader_Ctrl.h"
 
 void vInit_Amp( void );
 
@@ -15,35 +16,38 @@ int main(void)
 {
 	vInit_Amp();
 
+	uint8_t uiaData_Mgmt[4] = {0x34, 0x22, 0x55, 0xEE};
+	uint8_t uiaData_Boot[4] = {0x55, 0x66, 0x77, 0x88};
+
+	sT_CAN_TXMsg_t stMsg = {
+		.uiID = CAN_NODE_0_ID,
+		.uiLen = 4,
+		.puiData = uiaData_Mgmt
+	};
+	sT_CAN_TXMsg_t stMsg_Boot = {
+		.uiID = CAN_RX_BOOTLOADER_ID,
+		.uiLen = 4,
+		.puiData = uiaData_Boot
+	};
+
 	while (1)
 	{
- 		k_msleep(1000);
-		bUpdate_PWM_Frequency_Hz(eCTPWM1, 1000);
-		k_msleep(2000);
-		bUpdate_PWM_Frequency_Hz(eCTPWM1, 2000);
-		k_msleep(4000);
-		bUpdate_PWM_Frequency_Hz(eCTPWM1, 3000);
-		k_msleep(6000);
-		bUpdate_PWM_Frequency_Hz(eCTPWM1, 4000);		
-/* 		k_msleep(2000);
-		bUpdate_PWM_Duty(eCTPWM1, 10);
-		k_msleep(5000);
-		bStop_PWM(eCTPWM1);
-		k_msleep(5000);
-		bUpdate_PWM_Duty(eCTPWM1, 60);
-		k_msleep(5000);
-		bUpdate_PWM_Duty(eCTPWM1, 0); */
+		k_msleep(50);
+/* 		k_msleep(50);
+		vSend_CANMessage(stMsg);
+		k_msleep(50);
+		vSend_CANMessage(stMsg_Boot); */
 	}
 	
 }
 
 void vInit_Amp( void )
 {
+	vInit_BootloaderController();
 	vInit_Amp_GPIO();
-	vInit_PWM();
 	vInit_CANController();
 
 	SET_AMP_SD();
-	bUpdate_PWM_Duty(eCTPWM1, 50);
+	//bUpdate_PWM_Duty(eCTPWM1, 50);
 }
 
