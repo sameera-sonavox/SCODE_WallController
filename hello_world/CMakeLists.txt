@@ -17,4 +17,5 @@ target_sources(app PRIVATE
                 src/Lib/CAN/NXP_CAN_API.c 
                 src/Lib/CAN/NXP_CAN_ProjDef.c 
                 src/CAN_Controller/CAN_Controller.c 
-                src/Bootloader_Controller/Bootloader_Ctrl.c)
+                src/Bootloader_Controller/Bootloader_Ctrl.c
+                src/UART_CAN_Bridge/UART_CAN_Bridge.c)

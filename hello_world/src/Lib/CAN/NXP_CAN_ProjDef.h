@@ -4,7 +4,7 @@
 #include "NXP_CAN_Types.h"
 
 #define DEBUG_CAN_DEV_INIT
-#define DEBUG_CAN_TX
+//#define DEBUG_CAN_TX
 #define DEBUG_CAN_MANUAL_RECOVER
 
 //Bus Recovery

@@ -48,7 +48,7 @@ typedef struct{
 typedef struct {
     uint32_t uiID;
     uint8_t uiLen;
-    uint8_t uiaData[CAN_MAX_DLEN];
+    uint8_t uiaData[CAN_MSG_MAX_SIZE];
 } sT_CAN_TxQueueItem_t;
 
 sT_CAN_DeviceData_t stTCANDevData_t;
@@ -445,9 +445,9 @@ static bool bCANTx_Msg_ValidationOk( sT_CAN_TXMsg_t *pstTxMsg, eT_CAN_TxResult *
         FHALT("Null pointer for Tx Message");
         return false;
     }
-    if(pstTxMsg->uiLen > CAN_MAX_DLEN)
+    if(pstTxMsg->uiLen > CAN_MSG_MAX_SIZE)
     {
-        FHALT("Payload length is larger than Max(%d) bytes", CAN_MAX_DLEN);
+        FHALT("Payload length is larger than Max(%d) bytes", CAN_MSG_MAX_SIZE);
         return false;
     }
     if(pstTxMsg->uiLen > 0 && pstTxMsg->puiData == NULL)

@@ -23,6 +23,10 @@ static struct k_work_delayable stBtlStateTimeOut_Work_t;
 #define vClear_FlashWriteFlag()                 sTFWImg.bIsFlashWritInProgress = false
 #define bIsFlashWriteInProgress()               sTFWImg.bIsFlashWritInProgress
 
+#define vSet_LostPacketsDetected()              sTFWImg.bLostPacketDetected = true
+#define vClear_LostPacketsDetected()            sTFWImg.bLostPacketDetected = false
+#define bIsLostPacketsDetected()                sTFWImg.bLostPacketDetected
+
 void vSet_BootloaderState( eT_Bootloader_State eState );
 eT_Bootloader_State eGet_BootloaderState( void );
 void vBtlState_TimeOutHandler( struct k_work *work );
@@ -37,6 +41,7 @@ void vAbort_BootloaderSession( void );
 void vUpdate_FWImage( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
 void vFinalize_FWImageWrite( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
 void vStop_FWUpgradeProcess( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
+bool bCanHandleMissingPackets( sT_Bootloader_CtrlMsg_t * pstTBootMsg, uint16_t uipacketId );
 
 static uint16_t u16CRC16_CCITT_Update(uint16_t crc, const uint8_t *data, uint32_t len);
 
@@ -216,8 +221,18 @@ void vUpdate_FWImage( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
     uint8_t uiIndex = 0;
     uint8_t uiaWriteBlock[FW_IMG_WRITE_BYTE_LENGTH];
     uint32_t uiOffset = 0, uiWriteLen = 0;
+    uint32_t uiAvailableFlashSize = 0;
     uint16_t uipacketId = (uint16_t)(pstTBootMsg->uiaData[0] << 8) | (uint16_t)pstTBootMsg->uiaData[1];
     uiIndex = 2;
+
+    if(stTBtlMgmt_t.uiFlashAreaSize <= FW_IMAGE_SECONDARY_SLOT_WRITE_OFFSET)
+    {
+        FHALT("Secondary slot is smaller than MCUboot write offset");
+        vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_FlashBoundsExceeded);
+        vAbort_BootloaderSession();
+        return;
+    }
+    uiAvailableFlashSize = stTBtlMgmt_t.uiFlashAreaSize - FW_IMAGE_SECONDARY_SLOT_WRITE_OFFSET;
 
     if(sTFWImg.uiLastId == 0 && sTFWImg.uiNextId == 0)
     {
@@ -232,10 +247,8 @@ void vUpdate_FWImage( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
 
     if(sTFWImg.uiNextId != uipacketId)
     {
-        FHALT("Invalid Packet Id. Expected: %d, Received: %d", sTFWImg.uiNextId, uipacketId);
-        vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_InvalidPacketId);
-        vAbort_BootloaderSession();
-        return;
+        if(!bCanHandleMissingPackets(pstTBootMsg, uipacketId))
+            return;
     }
     
     vSet_FlashWriteFlag();
@@ -256,7 +269,7 @@ void vUpdate_FWImage( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
     for(; uiIndex < pstTBootMsg->uiLen; uiIndex += FW_IMG_WRITE_BYTE_LENGTH)
     {
         uiOffset = sTFWImg.uiReceivedByteCount;
-        if(uiOffset > stTBtlMgmt_t.uiFlashAreaSize)
+        if(uiOffset > uiAvailableFlashSize)
         {
             FHALT("FW Bytes exceed available flash area");
             vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_FlashBoundsExceeded);
@@ -276,7 +289,7 @@ void vUpdate_FWImage( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
         else
             uiWriteLen = stTBtlMgmt_t.uiFWImgSize - uiOffset;
 
-        if(uiOffset + FW_IMG_WRITE_BYTE_LENGTH > stTBtlMgmt_t.uiFlashAreaSize)
+        if(uiOffset + FW_IMG_WRITE_BYTE_LENGTH > uiAvailableFlashSize)
         {
             FHALT("FW Bytes exceed available flash area");
             vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_FlashBoundsExceeded);
@@ -288,7 +301,7 @@ void vUpdate_FWImage( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
         memcpy(uiaWriteBlock, &pstTBootMsg->uiaData[uiIndex], uiWriteLen);
         sTFWImg.uiRunningCRC = u16CRC16_CCITT_Update(sTFWImg.uiRunningCRC, &pstTBootMsg->uiaData[uiIndex], uiWriteLen);
 
-        ret = flash_area_write(flashArea, uiOffset, uiaWriteBlock, sizeof(uiaWriteBlock));
+        ret = flash_area_write(flashArea, FW_IMAGE_SECONDARY_SLOT_WRITE_OFFSET + uiOffset, uiaWriteBlock, sizeof(uiaWriteBlock));
         if(ret != 0)
         {
             FHALT("Flash Area write fail");
@@ -305,6 +318,31 @@ void vUpdate_FWImage( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
 
     vClear_FlashWriteFlag();    
     k_work_reschedule(&stBtlStateTimeOut_Work_t, K_MSEC(TIMEOUT_FW_UPDATE_NextPacket_ms));
+}
+
+bool bCanHandleMissingPackets( sT_Bootloader_CtrlMsg_t * pstTBootMsg, uint16_t uipacketId )
+{
+    int iDiff = uipacketId - sTFWImg.uiNextId;
+
+    if((sTFWImg.uiLostPacketCount + iDiff) >= MAX_NUMBER_OF_ALLOWABLE_LOST_PACKETs)
+    {
+        pstTBootMsg->bIsMsgOk = false;
+        vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_InvalidPacketId);
+        FHALT("Invalid Packet Id. Expected: %d, Received: %d", sTFWImg.uiNextId, uipacketId);
+        vAbort_BootloaderSession();
+        return false;        
+    }
+
+    int i = 0
+    for(i = 0; i < iDiff; i++)
+    {
+        sTFWImg.uiaLostPacketIDs[sTFWImg.uiLostPacketCount] = sTFWImg.uiNextId + i;
+        sTFWImg.uiLostPacketCount++;
+    }
+
+    sTFWImg.uiNextId += i;
+    vSet_LostPacketsDetected();
+    return true;
 }
 
 static uint16_t u16CRC16_CCITT_Update(uint16_t crc, const uint8_t *data, uint32_t len)
@@ -329,6 +367,31 @@ static uint16_t u16CRC16_CCITT_Update(uint16_t crc, const uint8_t *data, uint32_
     return crc;
 }
 
+void vConfirm_MCUbootImage( void )
+{
+	int ret = boot_is_img_confirmed();
+
+	if(ret < 0)
+	{
+		printk("MCUboot image confirmation check failed: %d\n\r", ret);
+		return;
+	}
+
+	if(ret != 0)
+	{
+		return;
+	}
+
+	ret = boot_write_img_confirmed();
+	if(ret != 0)
+	{
+		printk("MCUboot image confirmation failed: %d\n\r", ret);
+		return;
+	}
+
+	printk("MCUboot image confirmed\n\r");
+}
+
 void vAbort_BootloaderSession( void )
 {
     k_work_cancel_delayable(&stBtlStateTimeOut_Work_t);
@@ -351,6 +414,7 @@ void vAbort_BootloaderSession( void )
     sTFWImg.uiReceivedByteCount = 0;
     sTFWImg.uiRunningCRC = 0xFFFF;
     sTFWImg.bIsFlashWritInProgress = false;
+    sTFWImg.bLostPacketDetected = false;
     memset(sTFWImg.uiaLostPacketIDs, 0, sizeof(sTFWImg.uiaLostPacketIDs));
     vSet_BootloaderState(eBootloader_State_Error);
 
@@ -431,10 +495,18 @@ void vExecute_Bootloader_IdleState( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
         vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_InvalidImageSize);
         return;        
     }
-    if(stTBtlMgmt_t.uiFWImgSize > stTBtlMgmt_t.uiFlashAreaSize)
+    if(stTBtlMgmt_t.uiFlashAreaSize <= FW_IMAGE_SECONDARY_SLOT_WRITE_OFFSET)
+    {
+        FHALT("Secondary slot is smaller than MCUboot write offset");
+        vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_FlashBoundsExceeded);
+        return;
+    }
+
+    const uint32_t uiAvailableFlashSize = stTBtlMgmt_t.uiFlashAreaSize - FW_IMAGE_SECONDARY_SLOT_WRITE_OFFSET;
+    if(stTBtlMgmt_t.uiFWImgSize > uiAvailableFlashSize)
     {
         FHALT("FW Image (Size: %d) larger than available memory(Size: %d)", 
-            stTBtlMgmt_t.uiFWImgSize, stTBtlMgmt_t.uiFlashAreaSize);
+            stTBtlMgmt_t.uiFWImgSize, uiAvailableFlashSize);
         vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_ImageTooLarge);
         return;
     }
@@ -485,17 +557,22 @@ void vErase_FlashArea( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
 
 void vBtlState_TimeOutHandler( struct k_work *work )
 {
-    FHALT("FW Update Timeout Occurred at State: %d", eGet_BootloaderState());
-
     eT_Bootloader_State estate = eGet_BootloaderState();
     if(estate == eBootloader_State_Reboot)
+    {
+        Bootloader_Print("System will reboot");
         vUpdateBootloader(NULL);
+    } 
     else
+    {        
+        FHALT("FW Update Timeout Occurred at State: %d", eGet_BootloaderState());
         vAbort_BootloaderSession();
+    }
 }
 
 void vInit_BootloaderController( void )
 {
+    Bootloader_Print("Bootloader Initialized");
     stTBtlMgmt_t.eBtlState = eBootloader_State_Inactive;
     stTBtlMgmt_t.bIsInitialized = false;
     stTBtlMgmt_t.uiCRC = 0;
@@ -511,6 +588,7 @@ void vInit_BootloaderController( void )
     sTFWImg.uiReceivedByteCount = 0;
     sTFWImg.uiRunningCRC = 0xFFFF;    
     sTFWImg.bIsFlashWritInProgress = false;
+    sTFWImg.bLostPacketDetected = false;
     memset(sTFWImg.uiaLostPacketIDs, 0, sizeof(sTFWImg.uiaLostPacketIDs));
 
     int ret = flash_area_open(FLASH_AREA_FW_IMAGE_STORE_ID, &flashArea);

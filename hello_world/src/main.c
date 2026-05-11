@@ -5,18 +5,21 @@
  */
 
 #include <stdio.h>
+#include <zephyr/dfu/mcuboot.h>
 #include "GPIO/Amp_GPIO.h"
 #include "Lib/PWM/NXP_PWM_API.h"
 #include "CAN_Controller/CAN_Controller.h"
 #include "Bootloader_Controller/Bootloader_Ctrl.h"
+#include "UART_CAN_Bridge/UART_CAN_Bridge.h"
 
 void vInit_Amp( void );
 
 int main(void)
 {
 	vInit_Amp();
-
-	uint8_t uiaData_Mgmt[4] = {0x34, 0x22, 0x55, 0xEE};
+	vConfirm_MCUbootImage();
+	printk("Img Booting from FW over UART....\n\r");
+/* 	uint8_t uiaData_Mgmt[4] = {0x34, 0x22, 0x55, 0xEE};
 	uint8_t uiaData_Boot[4] = {0x55, 0x66, 0x77, 0x88};
 
 	sT_CAN_TXMsg_t stMsg = {
@@ -28,12 +31,12 @@ int main(void)
 		.uiID = CAN_RX_BOOTLOADER_ID,
 		.uiLen = 4,
 		.puiData = uiaData_Boot
-	};
+	}; */
 
 	while (1)
 	{
 		k_msleep(50);
-/* 		k_msleep(50);
+/*  		k_msleep(50);
 		vSend_CANMessage(stMsg);
 		k_msleep(50);
 		vSend_CANMessage(stMsg_Boot); */
@@ -46,6 +49,7 @@ void vInit_Amp( void )
 	vInit_BootloaderController();
 	vInit_Amp_GPIO();
 	vInit_CANController();
+	vInit_UART_CAN_Bridge();
 
 	SET_AMP_SD();
 	//bUpdate_PWM_Duty(eCTPWM1, 50);

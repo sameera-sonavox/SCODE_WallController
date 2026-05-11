@@ -68,6 +68,7 @@ static inline void vSet_BootloaderMsgStatus(sT_Bootloader_CtrlMsg_t *pstBtlMsg,
 
 typedef struct{
     bool bIsFlashWritInProgress;
+    bool bLostPacketDetected;
     uint32_t uiReceivedByteCount;
     uint32_t uiRunningCRC;
     uint16_t uiNextId;

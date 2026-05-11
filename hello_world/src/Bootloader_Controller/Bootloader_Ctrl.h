@@ -15,9 +15,15 @@
 
 #define DEBUG_BOOTLOADER
 
+//Do not change
+#define FW_IMAGE_SECONDARY_SLOT_WRITE_OFFSET        0x2000
+
+//************************ */
+
 extern void vInit_BootloaderController( void );
 extern void vUpdateBootloader( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
 extern bool bIsBootloader_Initialized( void );
 extern bool bIsFW_ImageWrite_InProgress( void );
+extern void vConfirm_MCUbootImage( void );
 
 #endif
