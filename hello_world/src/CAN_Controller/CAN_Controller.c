@@ -4,6 +4,7 @@
 #include "../Lib/GenericMacro.h"
 #include "../Bootloader_Controller/Bootloader_Ctrl.h"
 #include "../Bootloader_Controller/Bootloader_TypeDef.h"
+#include "../UART_CAN_Bridge/UART_CAN_Bridge.h"
 
 K_MSGQ_DEFINE(msgq_CANBootloaderRx, sizeof(struct can_frame), BOOTLOADER_MSG_QUEUE_MAX_MESSAGEs, 4);
 
@@ -18,12 +19,14 @@ void vThread_BootloaderMsgHandler( void *p1, void *p2, void *p3 );
 
 void vFormat_Bootloader_Msg( sT_Bootloader_CtrlMsg_t * pstBtlMsg, struct can_frame * pstcanMsg );
 void vUpdate_ACK_Requirement( sT_Bootloader_CtrlMsg_t * pstBtlMsg );
-void vCAN_ACK_NACK( const sT_Bootloader_CtrlMsg_t * pstBtlMsg, struct can_frame * pstcanMsg );
+void vCAN_ACK_NACK( const sT_Bootloader_CtrlMsg_t * pstBtlMsg );
+static void vProcess_Bootloader_Messages( sT_Bootloader_CtrlMsg_t * pstBtlMsg );
 static bool bGet_BootloaderExpectedPayloadLen( eT_Bootloader_Command eCMD, uint8_t *puiExpectedLen );
 
-void vSend_CANMessage( sT_CAN_TXMsg_t stTMsg )
+void vSend_CANMessage( sT_CAN_TXMsg_t *pstTMsg )
 {
-    eT_CAN_TxResult eResult = eFlexCAN_SendMsg(&stTMsg);
+    eT_CAN_TxResult eResult = eFlexCAN_SendMsg(pstTMsg);
+    pstTMsg->eTxResult = eResult;
 }
 
 void vInit_CANController( void )
@@ -85,19 +88,39 @@ void vThread_BootloaderMsgHandler( void *p1, void *p2, void *p3 )
         vFormat_Bootloader_Msg(&stTBTLCtrlMsg_t, &stTCANMsg);
         if(!stTBTLCtrlMsg_t.bIsMsgOk)
         {
-            vCAN_ACK_NACK( &stTBTLCtrlMsg_t, &stTCANMsg );
+            vCAN_ACK_NACK( &stTBTLCtrlMsg_t );
             memset(&stTBTLCtrlMsg_t, 0, sizeof(stTBTLCtrlMsg_t));
             continue;            
         }
 
-        vUpdateBootloader( &stTBTLCtrlMsg_t );
-
-        if(stTBTLCtrlMsg_t.bIsACKReq)
-        {
-            vCAN_ACK_NACK(&stTBTLCtrlMsg_t, &stTCANMsg);
-        }
-
+        vProcess_Bootloader_Messages( &stTBTLCtrlMsg_t );
         memset(&stTBTLCtrlMsg_t, 0, sizeof(stTBTLCtrlMsg_t));
+    }
+}
+
+static void vProcess_Bootloader_Messages( sT_Bootloader_CtrlMsg_t * pstBtlMsg )
+{
+    switch(pstBtlMsg->eCMD)
+    {
+        case eBootloader_CMD_FWUpReq:
+        case eBootloader_CMD_FWUpMsg:
+        case eBootloader_CMD_GetLostPacketInfo:
+        case eBootloader_CMD_FWUpEnd:
+        case eBootloader_CMD_FWUpPause:
+        case eBootloader_CMD_FWUpStop:
+            vUpdateBootloader( pstBtlMsg );
+            break;
+        case eBootloader_CMD_RetLostPacketInfo:
+            vHandle_HostAcknowledgements( pstBtlMsg );
+            break;
+        default:
+            FHALT("Invalid Bootloader Command");
+            break;
+    }
+
+    if(pstBtlMsg->bIsACKReq)
+    {
+        vCAN_ACK_NACK(pstBtlMsg);
     }
 }
 
@@ -165,6 +188,8 @@ void vUpdate_ACK_Requirement( sT_Bootloader_CtrlMsg_t * pstBtlMsg )
             vSet_BootloaderMsgStatus(pstBtlMsg, true, eBootloader_Error_None);
             break;
         case eBootloader_CMD_FWUpMsg:
+        case eBootloader_CMD_GetLostPacketInfo:
+        case eBootloader_CMD_RetLostPacketInfo:
             pstBtlMsg->bIsACKReq = false;
             vSet_BootloaderMsgStatus(pstBtlMsg, true, eBootloader_Error_None);
             break;       
@@ -175,9 +200,25 @@ void vUpdate_ACK_Requirement( sT_Bootloader_CtrlMsg_t * pstBtlMsg )
     }
 }
 
-void vCAN_ACK_NACK( const sT_Bootloader_CtrlMsg_t * pstBtlMsg, struct can_frame * pstcanMsg )
+void vCAN_ACK_NACK( const sT_Bootloader_CtrlMsg_t * pstBtlMsg )
 {
+    uint8_t uiaData[3] = {0};
 
+    if(pstBtlMsg == NULL)
+    {
+        FHALT("Null pointer reference");
+        return;
+    }
+
+    sT_CAN_TXMsg_t stTMsg = {0};
+    stTMsg.uiID = CAN_NODE_0_ID;
+    stTMsg.uiLen = 3;
+    stTMsg.puiData = uiaData;
+    stTMsg.puiData[0] = pstBtlMsg->eCMD;
+    stTMsg.puiData[1] = (pstBtlMsg->bIsMsgOk) ? eBootloader_ACK  : eBootloader_NACK;
+    stTMsg.puiData[2] = pstBtlMsg->eErrorCode;
+
+    vSend_CANMessage(&stTMsg);
 }
 
 static bool bGet_BootloaderExpectedPayloadLen( eT_Bootloader_Command eCMD, uint8_t *puiExpectedLen )
@@ -196,7 +237,11 @@ static bool bGet_BootloaderExpectedPayloadLen( eT_Bootloader_Command eCMD, uint8
         case eBootloader_CMD_FWUpEnd:
         case eBootloader_CMD_FWUpPause:
         case eBootloader_CMD_FWUpStop:
+        case eBootloader_CMD_GetLostPacketInfo:
             *puiExpectedLen = 0;
+            return true;
+        case eBootloader_CMD_RetLostPacketInfo:
+            *puiExpectedLen = 2;
             return true;
         default:
             return false;
@@ -206,6 +251,7 @@ static bool bGet_BootloaderExpectedPayloadLen( eT_Bootloader_Command eCMD, uint8
 void vCAN_RXCallback(const struct device *dev, struct can_frame *frame, void *user_data)
 {
     printk("%s-> Id: %d\n\r", __func__, frame->id);
+    vUART_CAN_Bridge_ForwardCANFrame(frame);
 }
 
 void vCAN_BusError_Callback(eT_CAN_BUSState eBusState, struct can_bus_err_cnt stBusErrCount)

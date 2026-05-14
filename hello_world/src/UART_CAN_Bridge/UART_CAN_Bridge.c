@@ -13,7 +13,10 @@
 #include "UART_CAN_Bridge.h"
 
 #define UART_CAN_BRIDGE_THREAD_STACK_SIZE_BYTEs       2048
+#define UART_CAN_BRIDGE_CAN_THREAD_STACK_SIZE_BYTEs   2048
 #define UART_CAN_BRIDGE_THREAD_PRIORITY               6
+#define UART_CAN_BRIDGE_CAN_THREAD_PRIORITY           7
+#define UART_CAN_BRIDGE_CAN_RX_QUEUE_DEPTH            8
 
 #define UART_CAN_BRIDGE_SOF_BYTE_0                    'B'
 #define UART_CAN_BRIDGE_SOF_BYTE_1                    'L'
@@ -53,17 +56,25 @@ typedef enum{
 
 static const struct device *pstUARTDev;
 static struct k_thread stUART_CAN_BridgeThread_t;
+static struct k_thread stUART_CAN_BridgeCANThread_t;
+static struct k_mutex stUARTTxMutex;
 static bool bUARTDebugNextFrame;
+static uint16_t uiUART_CANBridgeTxSeq;
 K_THREAD_STACK_DEFINE(thread_UART_CAN_BridgeStack, UART_CAN_BRIDGE_THREAD_STACK_SIZE_BYTEs);
+K_THREAD_STACK_DEFINE(thread_UART_CAN_BridgeCANStack, UART_CAN_BRIDGE_CAN_THREAD_STACK_SIZE_BYTEs);
+K_MSGQ_DEFINE(msgq_UART_CANBridgeRx, sizeof(struct can_frame), UART_CAN_BRIDGE_CAN_RX_QUEUE_DEPTH, 4);
 
 static void vThread_UART_CAN_Bridge( void *p1, void *p2, void *p3 );
+static void vThread_UART_CAN_Bridge_CANRx( void *p1, void *p2, void *p3 );
 static int iRead_UARTByte( uint8_t *puiByte );
-static bool bRead_UARTBytes( uint8_t *puiBuffer, uint16_t uiLen );
 static bool bRead_UARTBytesWithTimeout( uint8_t *puiBuffer, uint16_t uiLen, uint32_t uiTimeoutMs );
 static bool bRead_UARTFrame( uint8_t *puiCommand, uint8_t *puiPayload, uint16_t *puiPayloadLen, uint16_t *puiSeq );
 static bool bForward_FrameToCAN( uint8_t uiCommand, const uint8_t *puiPayload, uint16_t uiPayloadLen );
+static void vSend_UARTFrameToPC( const struct can_frame *pstFrame );
 static void vSend_UARTResponse( uint8_t uiStatus, uint8_t uiErrorCode );
 static void vSend_UARTDebugByte( uint8_t uiDebugByte );
+static void vUART_WriteByte( uint8_t uiByte );
+static void vUART_WriteBytes( const uint8_t *puiData, uint16_t uiLen );
 static uint16_t u16CRC16_CCITT_Update( uint16_t uiCRC, const uint8_t *puiData, uint32_t uiLen );
 
 void vInit_UART_CAN_Bridge( void )
@@ -75,6 +86,9 @@ void vInit_UART_CAN_Bridge( void )
         return;
     }
 
+    k_mutex_init(&stUARTTxMutex);
+    uiUART_CANBridgeTxSeq = 0;
+
     k_thread_create(&stUART_CAN_BridgeThread_t,
                     thread_UART_CAN_BridgeStack,
                     K_THREAD_STACK_SIZEOF(thread_UART_CAN_BridgeStack),
@@ -84,7 +98,27 @@ void vInit_UART_CAN_Bridge( void )
                     0,
                     K_NO_WAIT);
 
+    k_thread_create(&stUART_CAN_BridgeCANThread_t,
+                    thread_UART_CAN_BridgeCANStack,
+                    K_THREAD_STACK_SIZEOF(thread_UART_CAN_BridgeCANStack),
+                    vThread_UART_CAN_Bridge_CANRx,
+                    NULL, NULL, NULL,
+                    UART_CAN_BRIDGE_CAN_THREAD_PRIORITY,
+                    0,
+                    K_NO_WAIT);
+
     UART_CAN_BRIDGE_Print("UART CAN Bridge initialized\n\r");
+}
+
+void vUART_CAN_Bridge_ForwardCANFrame( const struct can_frame *pstFrame )
+{
+    if(pstFrame == NULL)
+        return;
+
+    if(k_msgq_put(&msgq_UART_CANBridgeRx, pstFrame, K_NO_WAIT) != 0)
+    {
+        UART_CAN_BRIDGE_Print("UART CAN Bridge: CAN RX forwarding queue full\n\r");
+    }
 }
 
 static void vThread_UART_CAN_Bridge( void *p1, void *p2, void *p3 )
@@ -114,6 +148,19 @@ static void vThread_UART_CAN_Bridge( void *p1, void *p2, void *p3 )
     }
 }
 
+static void vThread_UART_CAN_Bridge_CANRx( void *p1, void *p2, void *p3 )
+{
+    struct can_frame stFrame;
+
+    while(1)
+    {
+        if(k_msgq_get(&msgq_UART_CANBridgeRx, &stFrame, K_FOREVER) != 0)
+            continue;
+
+        vSend_UARTFrameToPC(&stFrame);
+    }
+}
+
 static int iRead_UARTByte( uint8_t *puiByte )
 {
     int ret = uart_poll_in(pstUARTDev, puiByte);
@@ -121,19 +168,6 @@ static int iRead_UARTByte( uint8_t *puiByte )
         k_msleep(1);
 
     return ret;
-}
-
-static bool bRead_UARTBytes( uint8_t *puiBuffer, uint16_t uiLen )
-{
-    for(uint16_t i = 0; i < uiLen; i++)
-    {
-        while(iRead_UARTByte(&puiBuffer[i]) != 0)
-        {
-            /* Wait for the next UART byte. */
-        }
-    }
-
-    return true;
 }
 
 static bool bRead_UARTBytesWithTimeout( uint8_t *puiBuffer, uint16_t uiLen, uint32_t uiTimeoutMs )
@@ -281,16 +315,73 @@ static bool bForward_FrameToCAN( uint8_t uiCommand, const uint8_t *puiPayload, u
     return true;
 }
 
+static void vSend_UARTFrameToPC( const struct can_frame *pstFrame )
+{
+    uint8_t uiLen = 0;
+    uint8_t uiPayloadLen = 0;
+    uint8_t uiaHeaderTail[UART_CAN_BRIDGE_HEADER_LENGTH - 4];
+    uint16_t uiCRC = 0xFFFF;
+
+    if(pstFrame == NULL)
+        return;
+
+    uiLen = can_dlc_to_bytes(pstFrame->dlc);
+    if(uiLen == 0)
+        return;
+
+    uiPayloadLen = uiLen - 1;
+    uiaHeaderTail[0] = UART_CAN_BRIDGE_VERSION;
+    uiaHeaderTail[1] = pstFrame->data[0];
+    uiaHeaderTail[2] = (uiUART_CANBridgeTxSeq >> 8) & 0xFF;
+    uiaHeaderTail[3] = uiUART_CANBridgeTxSeq & 0xFF;
+    uiaHeaderTail[4] = 0;
+    uiaHeaderTail[5] = uiPayloadLen;
+
+    uiCRC = u16CRC16_CCITT_Update(uiCRC, uiaHeaderTail, sizeof(uiaHeaderTail));
+    if(uiPayloadLen > 0)
+        uiCRC = u16CRC16_CCITT_Update(uiCRC, &pstFrame->data[1], uiPayloadLen);
+
+    k_mutex_lock(&stUARTTxMutex, K_FOREVER);
+    vUART_WriteBytes((const uint8_t *)"BLUP", 4);
+    vUART_WriteBytes(uiaHeaderTail, sizeof(uiaHeaderTail));
+    if(uiPayloadLen > 0)
+        vUART_WriteBytes(&pstFrame->data[1], uiPayloadLen);
+    vUART_WriteByte((uiCRC >> 8) & 0xFF);
+    vUART_WriteByte(uiCRC & 0xFF);
+    k_mutex_unlock(&stUARTTxMutex);
+
+    uiUART_CANBridgeTxSeq++;
+}
+
 static void vSend_UARTResponse( uint8_t uiStatus, uint8_t uiErrorCode )
 {
-    uart_poll_out(pstUARTDev, uiStatus);
-    uart_poll_out(pstUARTDev, uiErrorCode);
+    k_mutex_lock(&stUARTTxMutex, K_FOREVER);
+    vUART_WriteByte(uiStatus);
+    vUART_WriteByte(uiErrorCode);
+    k_mutex_unlock(&stUARTTxMutex);
 }
 
 static void vSend_UARTDebugByte( uint8_t uiDebugByte )
 {
     if(bUARTDebugNextFrame)
-        uart_poll_out(pstUARTDev, uiDebugByte);
+    {
+        k_mutex_lock(&stUARTTxMutex, K_FOREVER);
+        vUART_WriteByte(uiDebugByte);
+        k_mutex_unlock(&stUARTTxMutex);
+    }
+}
+
+static void vUART_WriteByte( uint8_t uiByte )
+{
+    uart_poll_out(pstUARTDev, uiByte);
+}
+
+static void vUART_WriteBytes( const uint8_t *puiData, uint16_t uiLen )
+{
+    for(uint16_t i = 0; i < uiLen; i++)
+    {
+        vUART_WriteByte(puiData[i]);
+    }
 }
 
 static uint16_t u16CRC16_CCITT_Update( uint16_t uiCRC, const uint8_t *puiData, uint32_t uiLen )

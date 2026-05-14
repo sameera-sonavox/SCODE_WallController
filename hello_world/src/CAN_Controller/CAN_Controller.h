@@ -10,6 +10,6 @@
 #define BOOTLOADER_DATA_PACKET_LENGTH                   16
 
 extern void vInit_CANController( void );
-extern void vSend_CANMessage( sT_CAN_TXMsg_t stTMsg );
+extern void vSend_CANMessage( sT_CAN_TXMsg_t *pstTMsg );
 
 #endif

@@ -18,7 +18,7 @@ int main(void)
 {
 	vInit_Amp();
 	vConfirm_MCUbootImage();
-	printk("Img Booting from FW over UART....\n\r");
+	printk("Missig FW Img Booting over UART....\n\r");
 /* 	uint8_t uiaData_Mgmt[4] = {0x34, 0x22, 0x55, 0xEE};
 	uint8_t uiaData_Boot[4] = {0x55, 0x66, 0x77, 0x88};
 

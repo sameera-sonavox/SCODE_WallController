@@ -59,6 +59,7 @@ typedef struct{
     int uiID;
     uint8_t uiLen;
     uint8_t * puiData;
+    eT_CAN_TxResult eTxResult;
 } sT_CAN_TXMsg_t;
 
 typedef void (*can_criticalbus_state_callback_t)(eT_CAN_BUSState eBusState, struct can_bus_err_cnt stBusErrCount);

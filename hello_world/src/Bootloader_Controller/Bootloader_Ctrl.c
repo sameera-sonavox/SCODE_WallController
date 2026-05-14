@@ -15,9 +15,12 @@
 sT_Bootloader_Mgmt_t stTBtlMgmt_t = {0};
 const struct flash_area *flashArea;
 static struct k_work_delayable stBtlStateTimeOut_Work_t;
+static struct k_work_delayable stBtlTxTimeOut_Work_t;
+static struct k_spinlock stBtlTxStateLock;
 
 #define IS_FWUpdate_InProgress()                (stTBtlMgmt_t.eBtlState == eBootloader_State_FWImgWrite_InProg)
 #define sTFWImg                                 stTBtlMgmt_t.stTFWImgCtrl_t
+#define sTTxLostPacketInfo                      sTFWImg.stTxLostPacketInfo
 
 #define vSet_FlashWriteFlag()                   sTFWImg.bIsFlashWritInProgress = true
 #define vClear_FlashWriteFlag()                 sTFWImg.bIsFlashWritInProgress = false
@@ -27,21 +30,45 @@ static struct k_work_delayable stBtlStateTimeOut_Work_t;
 #define vClear_LostPacketsDetected()            sTFWImg.bLostPacketDetected = false
 #define bIsLostPacketsDetected()                sTFWImg.bLostPacketDetected
 
-void vSet_BootloaderState( eT_Bootloader_State eState );
-eT_Bootloader_State eGet_BootloaderState( void );
-void vBtlState_TimeOutHandler( struct k_work *work );
-bool bIsValidFWImgWrite_Command( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
-void vErase_FlashArea( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
+#define vSet_LostPacketsState()                 sTFWImg.bLostPacketStateTriggered = true
+#define vClear_LostPacketsState()               sTFWImg.bLostPacketStateTriggered = false
+#define bIsLostPacketsStateTriggered()          sTFWImg.bLostPacketStateTriggered
 
-void vExecute_Bootloader_IdleState( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
-void vExecute_Bootloader_FWImgWrite_State( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
-void vExecute_Bootloader_FWImgWrite_Completed( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
-void vExecute_Bootloader_Reboot( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
-void vAbort_BootloaderSession( void );
-void vUpdate_FWImage( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
-void vFinalize_FWImageWrite( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
-void vStop_FWUpgradeProcess( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
-bool bCanHandleMissingPackets( sT_Bootloader_CtrlMsg_t * pstTBootMsg, uint16_t uipacketId );
+#define vSet_FirstLostPacketId(uiPacketId)      sTFWImg.uiFirstLostPacketId = uiPacketId
+
+static void vSet_BootloaderState( eT_Bootloader_State eState );
+static eT_Bootloader_State eGet_BootloaderState( void );
+static void vBtlState_TimeOutHandler( struct k_work *work );
+static bool bIsValidFWImgWrite_Command( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
+static void vErase_FlashArea( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
+
+static void vExecute_Bootloader_IdleState( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
+static void vExecute_Bootloader_FWImgWrite_State( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
+static void vExecute_Bootloader_FWImgWrite_Completed( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
+static void vExecute_Bootloader_Reboot( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
+static void vAbort_BootloaderSession( void );
+static void vUpdate_FWImage( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
+static void vFinalize_FWImageWrite( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
+static void vStop_FWUpgradeProcess( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
+
+//Missing Packet Handling
+static void vHandle_PacketId_Mismatch( sT_Bootloader_CtrlMsg_t * pstTBootMsg, uint16_t uipacketId, bool *bContinue );
+static bool bCanHandleMissingPackets( sT_Bootloader_CtrlMsg_t * pstTBootMsg, uint16_t uipacketId );
+static void vHandle_LostPacketRecovery( sT_Bootloader_CtrlMsg_t * pstTBootMsg, uint16_t uiPacketId );
+static void vValidate_FWImgCRC_FromFLash_AtLostPacketState( sT_Bootloader_CtrlMsg_t * pstTBootMsg, bool *bShouldMarkCompleted, eT_Bootloader_ErrorCode *eErrorCode );
+static uint8_t uiGet_PendingLostPacketCount( void );
+static void vGet_LostPacketInfo( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
+void vBtlTxTimeOutHandler( struct k_work *work );
+void vInitialize_RetryTxMechanism( void );
+
+//Bootloader Tx Error handling
+void vProcess_Bootloader_TxError( void );
+void vProcess_Bootloader_RetryTx( void );
+void vHandle_LostPacketInfo_TxResponse( eT_Bootloader_ACK eAck, uint8_t uiFrameSeq );
+void vSet_TxState( eT_Bootloader_TxState eState );
+eT_Bootloader_TxState eGet_TxState( void );
+bool bIs_LostPacketTx_Idle( void );
+void vHandle_ACK_ForLostPacketInfo( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
 
 static uint16_t u16CRC16_CCITT_Update(uint16_t crc, const uint8_t *data, uint32_t len);
 
@@ -73,7 +100,7 @@ void vUpdateBootloader( sT_Bootloader_CtrlMsg_t * pstTBootMsg)
     }
 }
 
-void vExecute_Bootloader_Reboot( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
+static void vExecute_Bootloader_Reboot( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
 {
     k_work_cancel_delayable(&stBtlStateTimeOut_Work_t);
     //It is better to indicate to the host via a dedicated HW pin here
@@ -82,7 +109,7 @@ void vExecute_Bootloader_Reboot( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
     sys_reboot(SYS_REBOOT_COLD);
 }
 
-void vExecute_Bootloader_FWImgWrite_Completed( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
+static void vExecute_Bootloader_FWImgWrite_Completed( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
 {
     int count = 0;
     if(pstTBootMsg == NULL)
@@ -124,7 +151,7 @@ void vExecute_Bootloader_FWImgWrite_Completed( sT_Bootloader_CtrlMsg_t * pstTBoo
     k_work_reschedule(&stBtlStateTimeOut_Work_t, K_MSEC(TIMEOUT_REBOOT_CONFIRMATION_ms));
 }
 
-void vExecute_Bootloader_FWImgWrite_State( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
+static void vExecute_Bootloader_FWImgWrite_State( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
 {
     if(!bIsBootloader_Initialized())
     {
@@ -156,13 +183,258 @@ void vExecute_Bootloader_FWImgWrite_State( sT_Bootloader_CtrlMsg_t * pstTBootMsg
         case eBootloader_CMD_FWUpMsg:
             vUpdate_FWImage(pstTBootMsg);
             break;
+        case eBootloader_CMD_GetLostPacketInfo:
+            vGet_LostPacketInfo(pstTBootMsg);
+            break;
         default:
             FHALT("Invalid ID at FW Image Write State");
     }
 
 }
 
-void vStop_FWUpgradeProcess( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
+void vHandle_HostAcknowledgements( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
+{
+    if(pstTBootMsg == NULL)
+    {
+        FHALT("Null pointer reference");
+        return;
+    }
+
+    switch (pstTBootMsg->eCMD)
+    {
+        case eBootloader_CMD_RetLostPacketInfo:
+            vHandle_ACK_ForLostPacketInfo(pstTBootMsg);
+            break;        
+        default:
+            vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_InvalidCommand);
+            break;
+    }
+}
+
+void vHandle_ACK_ForLostPacketInfo( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
+{
+    if(pstTBootMsg == NULL)
+    {
+        FHALT("Null pointer reference");
+        return;
+    }
+    if(pstTBootMsg->eCMD != eBootloader_CMD_RetLostPacketInfo)
+    {
+        FHALT("Invalid Command for handling ACK of Lost Packet Info Message");
+        vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_InvalidCommand);
+        return;
+    }
+
+    pstTBootMsg->bIsACKReq = false; //This message is only sent by the bootloader and should not require ACK. Setting this to false to avoid any unintended ACK response from the host
+    vHandle_LostPacketInfo_TxResponse(pstTBootMsg->uiaData[0], pstTBootMsg->uiaData[1]);
+}
+
+void vHandle_LostPacketInfo_TxResponse( eT_Bootloader_ACK eAck, uint8_t uiFrameSeq )
+{
+    if(eAck < eBootloader_ACK || eAck >= eNUMBER_OF_BOOTLOADER_ACKTYPEs)
+    {
+        FHALT("Invalid ACK Type : %d", eAck);
+        return;
+    }
+    if(eGet_TxState() == eBootloader_Tx_Idle)
+    {
+        FHALT("Received ACK/NACK for Lost Packet Info Message while Tx State is Idle");
+        return;
+    }
+
+    uint8_t uiExpectedFrameSeq = sTTxLostPacketInfo.stTCANTxMsg_t.puiData[2];
+    if(uiFrameSeq != uiExpectedFrameSeq)
+    {
+        FHALT("Invalid ACK Frame Seq. Expected: %d, Received: %d", uiExpectedFrameSeq, uiFrameSeq);
+        return;
+    }
+    
+    if(eAck == eBootloader_ACK)
+    {
+        k_work_cancel_delayable(&stBtlTxTimeOut_Work_t);
+        sTTxLostPacketInfo.uiRetryCount = 0;
+        vSet_TxState(eBootloader_Tx_Idle);
+        Bootloader_Print("ACK received for Lost Packet Info Message Tx\n\r");
+    }
+    else
+    {
+        vSet_TxState(eBootloader_Tx_RetryInProgress);
+        vProcess_Bootloader_RetryTx();
+        Bootloader_Print("NACK received for Lost Packet Info Message Tx\n\r");
+    }
+}
+
+static void vGet_LostPacketInfo( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
+{
+    sT_CAN_TXMsg_t stTLostPacketInfoMsg = {0};
+    uint8_t uiaLostPacketInfoData[CAN_MSG_MAX_SIZE] = {0};
+    uint8_t uiCount = 0, uiIndex = 0;
+
+    if(pstTBootMsg == NULL)
+    {
+        FHALT("Null pointer reference");
+        return;
+    }
+    if(pstTBootMsg->eCMD != eBootloader_CMD_GetLostPacketInfo)
+    {
+        FHALT("Invalid Command for Get Lost Packet Info");
+        vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_InvalidCommand);
+        return;
+    }
+    if(eGet_TxState() != eBootloader_Tx_Idle)
+    {
+        FHALT("Previous Lost Packet Info Tx is still in progress. Cannot process new request");
+        vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_UpgradeRequestFail);
+        return;
+    }
+
+    vSet_TxState(eBootloader_Tx_InProgress);
+    uint8_t pendingLostPacketCount = uiGet_PendingLostPacketCount();
+
+    stTLostPacketInfoMsg.uiID = FW_IMAGE_HOST_DEVICE_ID;
+    stTLostPacketInfoMsg.puiData = uiaLostPacketInfoData;
+    stTLostPacketInfoMsg.puiData[0] = eBootloader_CMD_RetLostPacketInfo;
+    stTLostPacketInfoMsg.puiData[1] = pendingLostPacketCount;
+    uiIndex = 4;
+
+    if(pendingLostPacketCount != 0)
+    {
+        while(uiCount < sTFWImg.uiLostPacketCount && (uiIndex + 1) < CAN_MSG_MAX_SIZE)
+        {
+            if(sTFWImg.staLostPacketIDs[uiCount].bIsHandled)
+            {
+                uiCount++;
+                continue;
+            }
+            stTLostPacketInfoMsg.puiData[uiIndex] = sTFWImg.staLostPacketIDs[uiCount].uiPacketId >> 8;
+            stTLostPacketInfoMsg.puiData[uiIndex + 1] = sTFWImg.staLostPacketIDs[uiCount].uiPacketId & 0xFF;
+            uiIndex += 2;
+            uiCount++;            
+        }
+    }
+
+    stTLostPacketInfoMsg.puiData[2] = sTTxLostPacketInfo.uiFrameSeq;
+    stTLostPacketInfoMsg.puiData[3] = uiIndex - 4; //Number of bytes of packet ID info in the message
+    stTLostPacketInfoMsg.uiLen = uiIndex;
+
+    vSend_CANMessage(&stTLostPacketInfoMsg);
+    if(stTLostPacketInfoMsg.eTxResult != eCAN_TxResult_Ok)
+    {
+        FHALT("Failed to send Lost Packet Info Message");
+        vSet_TxState(eBootloader_Tx_RetryInProgress);
+        memcpy(sTTxLostPacketInfo.uiaTxData, stTLostPacketInfoMsg.puiData, stTLostPacketInfoMsg.uiLen);
+        memcpy(&sTTxLostPacketInfo.stTCANTxMsg_t, &stTLostPacketInfoMsg, sizeof(sT_CAN_TXMsg_t));
+        sTTxLostPacketInfo.stTCANTxMsg_t.puiData = sTTxLostPacketInfo.uiaTxData;
+        sTTxLostPacketInfo.uiRetryCount++;
+        k_work_reschedule(&stBtlTxTimeOut_Work_t, K_MSEC(TIMEOUT_LOST_PACKET_TX_ms));
+        k_work_reschedule(&stBtlStateTimeOut_Work_t, K_MSEC(TIMEOUT_LOST_PACKET_RECOVERY_PROCESS_ms));
+        return;
+    }
+
+    sTTxLostPacketInfo.uiFrameSeq++;
+    memcpy(sTTxLostPacketInfo.uiaTxData, stTLostPacketInfoMsg.puiData, stTLostPacketInfoMsg.uiLen);
+    memcpy(&sTTxLostPacketInfo.stTCANTxMsg_t, &stTLostPacketInfoMsg, sizeof(sT_CAN_TXMsg_t));
+    sTTxLostPacketInfo.stTCANTxMsg_t.puiData = sTTxLostPacketInfo.uiaTxData;
+    k_work_reschedule(&stBtlTxTimeOut_Work_t, K_MSEC(TIMEOUT_LOST_PACKET_TX_ms));
+    k_work_reschedule(&stBtlStateTimeOut_Work_t, K_MSEC(TIMEOUT_LOST_PACKET_RECOVERY_PROCESS_ms));
+}
+
+void vBtlTxTimeOutHandler( struct k_work *work )
+{
+    if(eGet_TxState() != eBootloader_Tx_RetryInProgress && eGet_TxState() != eBootloader_Tx_InProgress)
+    {
+        k_work_cancel_delayable(&stBtlTxTimeOut_Work_t);
+        FHALT("Invalid Tx State for Lost Packet Info Message Retry");
+        return;
+    }
+
+    if(sTTxLostPacketInfo.uiRetryCount >= BOOTLOADER_TX_Retry_MAX_COUNT)
+    {
+        FHALT("Failed to send Lost Packet Info Message after (%d) retries. Aborting Lost Packet Recovery Process",
+              BOOTLOADER_TX_Retry_MAX_COUNT);
+        vProcess_Bootloader_TxError();
+        return;
+    }
+
+    vProcess_Bootloader_RetryTx();
+}
+
+void vProcess_Bootloader_TxError( void)
+{
+    eT_Bootloader_State eState = eGet_BootloaderState();
+
+    switch (eState)
+    {
+        case eBootloader_State_FWImgWrite_InProg:
+            k_work_cancel_delayable(&stBtlTxTimeOut_Work_t);
+            vAbort_BootloaderSession();
+            break;        
+        default:
+            FHALT("Unhandled Bootloader State for Tx Error. State: %d", eState);
+            break;
+    }
+}
+
+void vProcess_Bootloader_RetryTx( void )
+{
+    if(sTTxLostPacketInfo.uiRetryCount >= BOOTLOADER_TX_Retry_MAX_COUNT)
+    {
+        FHALT("Exceeded maximum retry count for Lost Packet Info Message");
+        vProcess_Bootloader_TxError();
+        return;
+    }
+
+    sT_CAN_TXMsg_t stTMsg = {0};
+    memcpy(&stTMsg, &sTTxLostPacketInfo.stTCANTxMsg_t, sizeof(sT_CAN_TXMsg_t));
+    vSend_CANMessage(&stTMsg);
+
+    if(stTMsg.eTxResult != eCAN_TxResult_Ok)
+    {
+        FHALT("Failed to send Lost Packet Info Message");
+    }
+    sTTxLostPacketInfo.uiRetryCount++;
+    vSet_TxState(eBootloader_Tx_RetryInProgress);
+    k_work_reschedule(&stBtlTxTimeOut_Work_t, K_MSEC(TIMEOUT_LOST_PACKET_TX_ms));
+    k_work_reschedule(&stBtlStateTimeOut_Work_t, K_MSEC(TIMEOUT_LOST_PACKET_RECOVERY_PROCESS_ms));
+}
+
+void vSet_TxState( eT_Bootloader_TxState eState )
+{
+    k_spinlock_key_t key = k_spin_lock(&stBtlTxStateLock);
+    sTTxLostPacketInfo.eTxState = eState;
+    k_spin_unlock(&stBtlTxStateLock, key);
+}
+
+eT_Bootloader_TxState eGet_TxState( void )
+{
+    k_spinlock_key_t key = k_spin_lock(&stBtlTxStateLock);
+    eT_Bootloader_TxState eState = sTTxLostPacketInfo.eTxState;
+    k_spin_unlock(&stBtlTxStateLock, key);
+    return eState;
+}
+
+bool bIs_LostPacketTx_Idle( void )
+{
+    k_spinlock_key_t key = k_spin_lock(&stBtlTxStateLock);
+    bool bIsIdle = (sTTxLostPacketInfo.eTxState == eBootloader_Tx_Idle);
+    k_spin_unlock(&stBtlTxStateLock, key);
+    return bIsIdle;
+}
+
+static uint8_t uiGet_PendingLostPacketCount( void )
+{
+    uint8_t count = 0;
+
+    for(uint8_t i = 0; i < sTFWImg.uiLostPacketCount; i++)
+    {
+        if(!sTFWImg.staLostPacketIDs[i].bIsHandled)
+            count++;
+    }
+
+    return count;
+}
+
+static void vStop_FWUpgradeProcess( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
 {
     if(pstTBootMsg == NULL)
     {
@@ -173,33 +445,70 @@ void vStop_FWUpgradeProcess( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
     vAbort_BootloaderSession();
 }
 
-void vFinalize_FWImageWrite( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
+void vInitialize_RetryTxMechanism( void )
 {
+    vSet_TxState(eBootloader_Tx_Idle);
+    sTTxLostPacketInfo.uiFrameSeq = 0;
+    sTTxLostPacketInfo.uiRetryCount = 0;
+    memset(&sTTxLostPacketInfo.stTCANTxMsg_t, 0, sizeof(sT_CAN_TXMsg_t));
+    k_work_reschedule(&stBtlStateTimeOut_Work_t, K_MSEC(TIMEOUT_LOST_PACKET_RECOVERY_PROCESS_ms));
+}
+
+static void vFinalize_FWImageWrite( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
+{
+    bool bShouldMarkCompleted = true;
+    eT_Bootloader_ErrorCode eErrorCode = eBootloader_Error_None;
+
     if(pstTBootMsg == NULL)
     {
         FHALT("Null Pointer reference");
         return;
     }
-    if(sTFWImg.uiReceivedByteCount != stTBtlMgmt_t.uiFWImgSize)
+    if(bIsLostPacketsStateTriggered())
+    { 
+        if(uiGet_PendingLostPacketCount() > 0)
+        {
+            FHALT("Cannot mark completed, because FW Lost Packets are pending...");
+            vInitialize_RetryTxMechanism();
+            vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_MissingPacketsPending);
+            return;
+        }        
+    }
+    else
     {
-        FHALT("FW Image is still not completed to mark it completed!!!");
-        vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_ImageIncomplete);
-        vAbort_BootloaderSession();
+        if(sTFWImg.uiReceivedByteCount != stTBtlMgmt_t.uiFWImgSize)
+        {
+            FHALT("FW Image is still not completed to mark it completed!!!");
+            vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_ImageIncomplete);
+            vAbort_BootloaderSession();
+            return;
+        }
+        if(sTFWImg.uiRunningCRC != stTBtlMgmt_t.uiCRC)
+        {
+            FHALT("CRC Mismatch (Calculated: %d, Received: %d)", sTFWImg.uiRunningCRC, stTBtlMgmt_t.uiCRC);
+            vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_CrcMismatch);
+            vAbort_BootloaderSession();
+            return;
+        }
+        vSet_BootloaderState(eBootloader_State_FWImgWrite_Completed);
+        vUpdateBootloader(pstTBootMsg);
         return;
     }
-    if(sTFWImg.uiRunningCRC != stTBtlMgmt_t.uiCRC)
+
+    vValidate_FWImgCRC_FromFLash_AtLostPacketState(pstTBootMsg, &bShouldMarkCompleted, &eErrorCode);
+    if (!bShouldMarkCompleted)
     {
-        FHALT("CRC Mismatch (Calculated: %d, Received: %d)", sTFWImg.uiRunningCRC, stTBtlMgmt_t.uiCRC);
-        vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_CrcMismatch);
+        FHALT("FW Image validation is not successful at Lost Packet State");
+        vSet_BootloaderMsgStatus(pstTBootMsg, false, eErrorCode);
         vAbort_BootloaderSession();
         return;
     }
 
     vSet_BootloaderState(eBootloader_State_FWImgWrite_Completed);
-    vUpdateBootloader(pstTBootMsg);
+    vUpdateBootloader(pstTBootMsg);    
 }
 
-void vUpdate_FWImage( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
+static void vUpdate_FWImage( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
 {
     if(pstTBootMsg == NULL)
         return;
@@ -216,12 +525,11 @@ void vUpdate_FWImage( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
         return;
     }
     
-    bool bIsFirstPacket = false;
+    bool bIsFirstPacket = false, bShouldContinue = true;
     int ret = 0;
     uint8_t uiIndex = 0;
     uint8_t uiaWriteBlock[FW_IMG_WRITE_BYTE_LENGTH];
-    uint32_t uiOffset = 0, uiWriteLen = 0;
-    uint32_t uiAvailableFlashSize = 0;
+    uint32_t uiOffset = 0, uiWriteLen = 0, uiAvailableFlashSize = 0, uiImageSize = 0;
     uint16_t uipacketId = (uint16_t)(pstTBootMsg->uiaData[0] << 8) | (uint16_t)pstTBootMsg->uiaData[1];
     uiIndex = 2;
 
@@ -247,13 +555,16 @@ void vUpdate_FWImage( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
 
     if(sTFWImg.uiNextId != uipacketId)
     {
-        if(!bCanHandleMissingPackets(pstTBootMsg, uipacketId))
+        vHandle_PacketId_Mismatch(pstTBootMsg, uipacketId, &bShouldContinue);
+        if(!bShouldContinue)
             return;
     }
     
     vSet_FlashWriteFlag();
     sTFWImg.uiLastId = uipacketId;
-    sTFWImg.uiNextId = uipacketId + 1;
+    if(uipacketId >= sTFWImg.uiNextId)
+        sTFWImg.uiNextId = uipacketId + 1;
+
     if(bIsFirstPacket)
     {
         ret = flash_area_open(FLASH_AREA_FW_IMAGE_STORE_ID, &flashArea);
@@ -268,7 +579,7 @@ void vUpdate_FWImage( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
 
     for(; uiIndex < pstTBootMsg->uiLen; uiIndex += FW_IMG_WRITE_BYTE_LENGTH)
     {
-        uiOffset = sTFWImg.uiReceivedByteCount;
+        uiOffset = (uipacketId * DATA_PAYLOAD_PER_ONE_IMAGE_FRAME) + (uiIndex - 2);//sTFWImg.uiReceivedByteCount;
         if(uiOffset > uiAvailableFlashSize)
         {
             FHALT("FW Bytes exceed available flash area");
@@ -278,10 +589,7 @@ void vUpdate_FWImage( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
         }
         if(uiOffset >= stTBtlMgmt_t.uiFWImgSize)
         {
-            FHALT("FW Offset exceed FW Image Size");
-            vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_ImageTooLarge);
-            vAbort_BootloaderSession();
-            return;            
+            break;
         }
 
         if(uiOffset + FW_IMG_WRITE_BYTE_LENGTH <= stTBtlMgmt_t.uiFWImgSize)
@@ -299,9 +607,12 @@ void vUpdate_FWImage( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
 
         memset(uiaWriteBlock, 0xFF, sizeof(uiaWriteBlock));
         memcpy(uiaWriteBlock, &pstTBootMsg->uiaData[uiIndex], uiWriteLen);
-        sTFWImg.uiRunningCRC = u16CRC16_CCITT_Update(sTFWImg.uiRunningCRC, &pstTBootMsg->uiaData[uiIndex], uiWriteLen);
 
-        ret = flash_area_write(flashArea, FW_IMAGE_SECONDARY_SLOT_WRITE_OFFSET + uiOffset, uiaWriteBlock, sizeof(uiaWriteBlock));
+        if(!bIsLostPacketsStateTriggered())
+            sTFWImg.uiRunningCRC = u16CRC16_CCITT_Update(sTFWImg.uiRunningCRC, &pstTBootMsg->uiaData[uiIndex], uiWriteLen);
+
+        uiImageSize = FW_IMAGE_SECONDARY_SLOT_WRITE_OFFSET + uiOffset;
+        ret = flash_area_write(flashArea, uiImageSize, uiaWriteBlock, sizeof(uiaWriteBlock));
         if(ret != 0)
         {
             FHALT("Flash Area write fail");
@@ -316,32 +627,159 @@ void vUpdate_FWImage( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
         }
     }
 
-    vClear_FlashWriteFlag();    
+    vClear_FlashWriteFlag();
+    vHandle_LostPacketRecovery(pstTBootMsg, uipacketId);
     k_work_reschedule(&stBtlStateTimeOut_Work_t, K_MSEC(TIMEOUT_FW_UPDATE_NextPacket_ms));
 }
 
-bool bCanHandleMissingPackets( sT_Bootloader_CtrlMsg_t * pstTBootMsg, uint16_t uipacketId )
+static void vHandle_LostPacketRecovery( sT_Bootloader_CtrlMsg_t * pstTBootMsg, uint16_t uiPacketId )
+{
+    if(!bIsLostPacketsStateTriggered())
+        return;
+
+    int i = 0;
+    for(i = 0; i < sTFWImg.uiLostPacketCount; i++)
+    {
+        if(sTFWImg.staLostPacketIDs[i].uiPacketId == uiPacketId)
+            break;
+    }
+    if(i == sTFWImg.uiLostPacketCount)
+    {
+        return;
+    }
+    if(sTFWImg.staLostPacketIDs[i].bIsHandled)
+    {
+        FHALT("Packet Id: %d is already handled as recovered packet", uiPacketId);
+        return;
+    }
+
+    sTFWImg.staLostPacketIDs[i].bIsHandled = true;
+    sTFWImg.uiRecoveredPacketCount++;
+    vClear_LostPacketsDetected();
+}
+
+static void vValidate_FWImgCRC_FromFLash_AtLostPacketState( sT_Bootloader_CtrlMsg_t * pstTBootMsg, bool *bShouldMarkCompleted, 
+                                                            eT_Bootloader_ErrorCode *eErrorCode )
+{
+    if(!bIsLostPacketsStateTriggered())
+    {
+        *bShouldMarkCompleted = false;
+        *eErrorCode = eBootloader_Error_UndefinedBehavior;
+        return;
+    }
+    if(sTFWImg.uiRecoveredPacketCount < sTFWImg.uiLostPacketCount)
+    {
+        *bShouldMarkCompleted = false;
+        *eErrorCode = eBootloader_Error_UndefinedBehavior;
+        return;
+    }
+
+    int ret = 0, iretryCount = 0;
+    uint8_t uiaBuffer[DATA_PAYLOAD_PER_ONE_IMAGE_FRAME] = {0};
+    uint32_t uiReadOffset = DATA_PAYLOAD_PER_ONE_IMAGE_FRAME * (sTFWImg.uiFirstLostPacketId) + 
+                            FW_IMAGE_SECONDARY_SLOT_WRITE_OFFSET;
+    uint32_t uiBytesToRead = stTBtlMgmt_t.uiFWImgSize - (DATA_PAYLOAD_PER_ONE_IMAGE_FRAME * (sTFWImg.uiFirstLostPacketId));
+
+    while(uiBytesToRead > 0)
+    {
+        uint32_t uiValidBytes = (uiBytesToRead >= sizeof(uiaBuffer)) ? sizeof(uiaBuffer) : uiBytesToRead;
+        ret = flash_area_read(flashArea, uiReadOffset, uiaBuffer, uiValidBytes);
+        if(ret != 0)
+        {
+            FHALT("Flash Area read fail @ Offset: %d(RetryCount: %d)", uiReadOffset, iretryCount);
+            iretryCount++;
+            if(iretryCount >= 3)
+            {
+                *bShouldMarkCompleted = false;
+                *eErrorCode = eBootloader_Error_FlashAreaReadFail;
+                return;
+            }
+            
+            k_msleep(5);
+            continue;
+        }
+        sTFWImg.uiRunningCRC = u16CRC16_CCITT_Update(sTFWImg.uiRunningCRC, uiaBuffer, uiValidBytes);
+        uiReadOffset += uiValidBytes;
+        uiBytesToRead -= uiValidBytes;
+    }
+    
+    if(sTFWImg.uiRunningCRC != stTBtlMgmt_t.uiCRC)
+    {
+        *eErrorCode = eBootloader_Error_CrcMismatch;
+        *bShouldMarkCompleted = false;
+    }
+    else
+    {
+        *eErrorCode = eBootloader_Error_None;
+        *bShouldMarkCompleted = true;
+    }
+    vClear_LostPacketsState();
+}
+
+static void vHandle_PacketId_Mismatch( sT_Bootloader_CtrlMsg_t * pstTBootMsg, uint16_t uipacketId, bool *bContinue )
+{
+    if(uipacketId > sTFWImg.uiNextId)
+    {
+        if(!bCanHandleMissingPackets(pstTBootMsg, uipacketId))
+        {
+            *bContinue = false;
+            return;
+        }
+        *bContinue = true;
+        return;
+    }
+
+    int i = 0;
+    for( i = 0; i < sTFWImg.uiLostPacketCount; i++)
+    {
+        if(sTFWImg.staLostPacketIDs[i].uiPacketId == uipacketId)
+        {
+            if(sTFWImg.staLostPacketIDs[i].bIsHandled == false)
+            {
+                *bContinue = true;
+                return;
+            }
+            vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_InvalidPacketId);
+            *bContinue = false;
+            return;
+        }
+    }
+
+    FHALT("Undefined at PacketId: %d", uipacketId);
+    vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_InvalidPacketId);
+    *bContinue = false;
+}
+
+static bool bCanHandleMissingPackets( sT_Bootloader_CtrlMsg_t * pstTBootMsg, uint16_t uipacketId )
 {
     int iDiff = uipacketId - sTFWImg.uiNextId;
 
     if((sTFWImg.uiLostPacketCount + iDiff) >= MAX_NUMBER_OF_ALLOWABLE_LOST_PACKETs)
     {
-        pstTBootMsg->bIsMsgOk = false;
         vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_InvalidPacketId);
         FHALT("Invalid Packet Id. Expected: %d, Received: %d", sTFWImg.uiNextId, uipacketId);
         vAbort_BootloaderSession();
         return false;        
     }
 
-    int i = 0
+    int i = 0;
+    uint8_t uiIndex = 0;
     for(i = 0; i < iDiff; i++)
     {
-        sTFWImg.uiaLostPacketIDs[sTFWImg.uiLostPacketCount] = sTFWImg.uiNextId + i;
+        uiIndex = sTFWImg.uiLostPacketCount;
+        sTFWImg.staLostPacketIDs[uiIndex].uiPacketId = sTFWImg.uiNextId + i;
+        sTFWImg.staLostPacketIDs[uiIndex].bIsHandled = false;
         sTFWImg.uiLostPacketCount++;
     }
 
+    if(!bIsLostPacketsStateTriggered())
+    {
+        vSet_FirstLostPacketId(sTFWImg.uiNextId);
+        vSet_LostPacketsState();
+    }    
     sTFWImg.uiNextId += i;
     vSet_LostPacketsDetected();
+
     return true;
 }
 
@@ -392,7 +830,7 @@ void vConfirm_MCUbootImage( void )
 	printk("MCUboot image confirmed\n\r");
 }
 
-void vAbort_BootloaderSession( void )
+static void vAbort_BootloaderSession( void )
 {
     k_work_cancel_delayable(&stBtlStateTimeOut_Work_t);
 
@@ -414,13 +852,17 @@ void vAbort_BootloaderSession( void )
     sTFWImg.uiReceivedByteCount = 0;
     sTFWImg.uiRunningCRC = 0xFFFF;
     sTFWImg.bIsFlashWritInProgress = false;
-    sTFWImg.bLostPacketDetected = false;
-    memset(sTFWImg.uiaLostPacketIDs, 0, sizeof(sTFWImg.uiaLostPacketIDs));
-    vSet_BootloaderState(eBootloader_State_Error);
+    sTFWImg.uiFirstLostPacketId = 0;
+    sTFWImg.uiRecoveredPacketCount = 0;
+    vClear_LostPacketsDetected();
+    vClear_LostPacketsState();
+    memset(sTFWImg.staLostPacketIDs, 0, sizeof(sTFWImg.staLostPacketIDs));
+    memset(&sTTxLostPacketInfo, 0, sizeof(sTTxLostPacketInfo));
 
+    vSet_BootloaderState(eBootloader_State_Error);
 }
 
-bool bIsValidFWImgWrite_Command( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
+static bool bIsValidFWImgWrite_Command( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
 {
     if(pstTBootMsg == NULL)
         return false;
@@ -428,10 +870,11 @@ bool bIsValidFWImgWrite_Command( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
     return (pstTBootMsg->eCMD == eBootloader_CMD_FWUpMsg ||
             pstTBootMsg->eCMD == eBootloader_CMD_FWUpEnd ||
             pstTBootMsg->eCMD == eBootloader_CMD_FWUpPause ||
-            pstTBootMsg->eCMD == eBootloader_CMD_FWUpStop);
+            pstTBootMsg->eCMD == eBootloader_CMD_FWUpStop ||
+            pstTBootMsg->eCMD == eBootloader_CMD_GetLostPacketInfo);
 }
 
-void vSet_BootloaderState( eT_Bootloader_State eState )
+static void vSet_BootloaderState( eT_Bootloader_State eState )
 {
     if(eState >= eNUMBER_OF_BOOTLOADER_STATEs)
     {
@@ -451,12 +894,12 @@ void vSet_BootloaderState( eT_Bootloader_State eState )
     stTBtlMgmt_t.eBtlState = eState;
 }
 
-eT_Bootloader_State eGet_BootloaderState( void )
+static eT_Bootloader_State eGet_BootloaderState( void )
 {
     return stTBtlMgmt_t.eBtlState;
 }
 
-void vExecute_Bootloader_IdleState( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
+static void vExecute_Bootloader_IdleState( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
 {
     if(pstTBootMsg == NULL)
     {
@@ -522,7 +965,11 @@ void vExecute_Bootloader_IdleState( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
     sTFWImg.uiLostPacketCount = 0;
     sTFWImg.uiNextId = 0;
     sTFWImg.uiReceivedByteCount = 0;
-    memset(stTBtlMgmt_t.stTFWImgCtrl_t.uiaLostPacketIDs, 0, sizeof(stTBtlMgmt_t.stTFWImgCtrl_t.uiaLostPacketIDs));
+    sTFWImg.uiFirstLostPacketId = 0;
+    sTFWImg.uiRecoveredPacketCount = 0;
+    vClear_LostPacketsDetected();
+    vClear_LostPacketsState();
+    memset(sTFWImg.staLostPacketIDs, 0, sizeof(sTFWImg.staLostPacketIDs));
 
     vErase_FlashArea(pstTBootMsg);
     if(!pstTBootMsg->bIsMsgOk)
@@ -530,7 +977,7 @@ void vExecute_Bootloader_IdleState( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
     vSet_BootloaderState(eBootloader_State_FWImgWrite_InProg);
 }
 
-void vErase_FlashArea( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
+static void vErase_FlashArea( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
 {
     int ret = flash_area_open(FLASH_AREA_FW_IMAGE_STORE_ID, &flashArea);
     if(ret != 0)
@@ -555,7 +1002,7 @@ void vErase_FlashArea( sT_Bootloader_CtrlMsg_t * pstTBootMsg )
     vSet_BootloaderMsgStatus(pstTBootMsg, true, eBootloader_Error_None);
 }
 
-void vBtlState_TimeOutHandler( struct k_work *work )
+static void vBtlState_TimeOutHandler( struct k_work *work )
 {
     eT_Bootloader_State estate = eGet_BootloaderState();
     if(estate == eBootloader_State_Reboot)
@@ -589,7 +1036,12 @@ void vInit_BootloaderController( void )
     sTFWImg.uiRunningCRC = 0xFFFF;    
     sTFWImg.bIsFlashWritInProgress = false;
     sTFWImg.bLostPacketDetected = false;
-    memset(sTFWImg.uiaLostPacketIDs, 0, sizeof(sTFWImg.uiaLostPacketIDs));
+    sTFWImg.uiFirstLostPacketId = 0;
+    sTFWImg.uiRecoveredPacketCount = 0;
+    vClear_LostPacketsDetected();
+    vClear_LostPacketsState();
+    memset(sTFWImg.staLostPacketIDs, 0, sizeof(sTFWImg.staLostPacketIDs));
+    memset(&sTTxLostPacketInfo, 0, sizeof(sTTxLostPacketInfo));
 
     int ret = flash_area_open(FLASH_AREA_FW_IMAGE_STORE_ID, &flashArea);
     if(ret != 0)
@@ -602,8 +1054,10 @@ void vInit_BootloaderController( void )
     flashArea = NULL;
 
     k_work_init_delayable(&stBtlStateTimeOut_Work_t, vBtlState_TimeOutHandler);
+    k_work_init_delayable(&stBtlTxTimeOut_Work_t, vBtlTxTimeOutHandler);
     stTBtlMgmt_t.eBtlState = eBootloader_State_Idle;
     stTBtlMgmt_t.bIsInitialized = true;
+    printk("Bootloader is initialized and in Idle State, waiting for FW Update Request...\n\r");
 }
 
 bool bIsBootloader_Initialized( void )

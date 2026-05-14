@@ -3,8 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-
-#define MAX_NUMBER_OF_ALLOWABLE_LOST_PACKETs    100
+#include "Bootloader_ProjDef.h"
 
 //Commands
 typedef enum{
@@ -23,6 +22,8 @@ typedef enum{
     eBootloader_CMD_FWUpEnd,
     eBootloader_CMD_FWUpPause,
     eBootloader_CMD_FWUpStop,
+    eBootloader_CMD_GetLostPacketInfo,
+    eBootloader_CMD_RetLostPacketInfo,
     eNUMBER_OF_BOOTLOADER_COMMANDs
 } eT_Bootloader_Command;
 
@@ -41,9 +42,25 @@ typedef enum{
     eBootloader_Error_FlashAreaOpenFail,
     eBootloader_Error_FlashAreaEraseFail,
     eBootloader_Error_FlashAreaWriteFail,
+    eBootloader_Error_FlashAreaReadFail,
     eBootloader_Error_FlashBoundsExceeded,
     eBootloader_Error_UpgradeRequestFail,
+    eBootloader_Error_MissingPacketsPending,
+    eBootloader_Error_UndefinedBehavior,
 } eT_Bootloader_ErrorCode;
+
+typedef enum{
+    eBootloader_ACK = 10,
+    eBootloader_NACK,
+    eNUMBER_OF_BOOTLOADER_ACKTYPEs
+} eT_Bootloader_ACK;
+
+typedef enum{
+    eBootloader_Tx_Idle = 0,
+    eBootloader_Tx_InProgress,
+    eBootloader_Tx_RetryInProgress,
+    eNUMBER_OF_BOOTLOADER_TX_STATEs
+} eT_Bootloader_TxState;
 
 typedef struct
 {
@@ -67,14 +84,31 @@ static inline void vSet_BootloaderMsgStatus(sT_Bootloader_CtrlMsg_t *pstBtlMsg,
 }
 
 typedef struct{
+    bool bIsHandled;
+    uint16_t uiPacketId;
+} sT_LostPacketCtrl_t;
+
+typedef struct{
+    eT_Bootloader_TxState eTxState;
+    uint8_t uiFrameSeq;
+    uint8_t uiRetryCount;
+    uint8_t uiaTxData[CAN_MSG_MAX_SIZE];
+    sT_CAN_TXMsg_t stTCANTxMsg_t;
+} sT_FWImg_LostPacketTx_t;
+
+typedef struct{
     bool bIsFlashWritInProgress;
+    bool bLostPacketStateTriggered;
     bool bLostPacketDetected;
     uint32_t uiReceivedByteCount;
     uint32_t uiRunningCRC;
     uint16_t uiNextId;
     uint16_t uiLastId;
-    uint16_t uiaLostPacketIDs[MAX_NUMBER_OF_ALLOWABLE_LOST_PACKETs];
+    uint16_t uiFirstLostPacketId;
+    sT_LostPacketCtrl_t staLostPacketIDs[MAX_NUMBER_OF_ALLOWABLE_LOST_PACKETs];
+    sT_FWImg_LostPacketTx_t stTxLostPacketInfo;
     uint8_t uiLostPacketCount;
+    uint8_t uiRecoveredPacketCount;
 } sT_FWImg_Ctrl_t;
 
 typedef struct{
