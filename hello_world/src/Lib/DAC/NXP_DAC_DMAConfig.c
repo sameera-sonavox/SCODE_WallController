@@ -15,6 +15,7 @@ typedef struct{
     struct dma_config stDACDMAConfig_t;
     struct dma_block_config stDACDMABlockConfig_t;
     edma_transfer_config_t stEDMATxConfig;
+    DACError_Callback_t pVErrorCallbackFn;
 } sT_DACDMAConfig_t;
 
 typedef struct{
@@ -45,7 +46,7 @@ static inline bool bIsDMAActive( void );
 
 bool bValidate_DMAConfigurations(const uint32_t *puiDMABuffer, uint16_t uiLen);
 
-bool bSetup_DAC_DMA_Circular(const uint32_t *puiDMABuffer, uint16_t uiLen, uintptr_t ptrDAC)
+bool bSetup_DAC_DMA_Circular(const uint32_t *puiDMABuffer, uint16_t uiLen, uintptr_t ptrDAC, DACError_Callback_t pvErrorCallback)
 {
     uint32_t uiTransferBytes = 0U;
 
@@ -77,6 +78,7 @@ bool bSetup_DAC_DMA_Circular(const uint32_t *puiDMABuffer, uint16_t uiLen, uintp
     steDMATxConfig.srcMajorLoopOffset = -(int32_t)uiTransferBytes;
     steDMATxConfig.dstMajorLoopOffset = 0;
     steDMATxConfig.enabledInterruptMask = 0U;
+    stTDACDMA_Ctrl.pVErrorCallbackFn = pvErrorCallback;
 
     EDMA_SetTransferConfig(DMA0, DAC_DMA_CHANNEL, &steDMATxConfig, NULL);
     EDMA_EnableAutoStopRequest(DMA0, DAC_DMA_CHANNEL, false);
@@ -146,19 +148,19 @@ void vDAC_DMAMonitor(struct k_work *work)
     uint32_t uiDMAFlags = stTFlags.uiDMAFlags;
     uint32_t uiDACFlags = stTFlags.uiDACFlags;
 
-    if((uiDMAFlags & kEDMA_ErrorFlag) != 0U)
+    if((uiDMAFlags & kEDMA_ErrorFlag) != 0U && stTDACDMA_Ctrl.pVErrorCallbackFn != NULL)
     {
-        /* mark error, stop waveform, or notify upper layer */
+        stTDACDMA_Ctrl.pVErrorCallbackFn(eDACErr_DMA_Error, NULL);
     }
 
     if((uiDACFlags & kDAC_FIFOUnderflowFlag) != 0U)
     {
-        /* FIFO starved: waveform integrity lost */
+        stTDACDMA_Ctrl.pVErrorCallbackFn(eDACErr_FIFO_UnderFlow, NULL);
     }
 
     if((uiDACFlags & kDAC_FIFOOverflowFlag) != 0U)
     {
-        /* DMA wrote when FIFO was full */
+        stTDACDMA_Ctrl.pVErrorCallbackFn(eDACErr_FIFO_OverFlow, NULL);
     }
 
     k_work_schedule(&stTDMACtrl.stDMAMonitor_Worker_t, K_MSEC(10));

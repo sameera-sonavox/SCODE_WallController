@@ -11,6 +11,14 @@
 
 typedef enum
 {
+    eDACErr_DMA_Error = 1,
+    eDACErr_FIFO_UnderFlow,
+    eDACErr_FIFO_OverFlow,
+    eNUMBER_OF_DAC_ERRORs
+} eDAC_Error;
+
+typedef enum
+{
     eDAC_RefVoltSrc_VREF_VDD_ANA = 0,    
     eDAC_RefVoltSrc_VREF_INTERNAL,      /* DACREF_2 reference source. */
     eDAC_RefVoltSrc_VREF_EXT,     /* DACREF_1 reference source. */
@@ -156,12 +164,15 @@ typedef struct{
     uint32_t uiOutputValue_mV;
 } sT_DCOutput_t;
 
+typedef void (*DACError_Callback_t)(eDAC_Error eError, void *pUserData);
+
 typedef struct{
     eDAC_FIFOWorkMode_t eFIFOWorkMode;
     sT_DAC_TrigSrc_Mux_t stTHWTrigSrc;
     uint32_t uiFrequencyHz;
     uint16_t uiAmplitude_mV;
     uint16_t uiDCOffset_mV;
+    DACError_Callback_t pvErrorCallback;
 } sT_WaveFormOutput_t;
 
 typedef struct

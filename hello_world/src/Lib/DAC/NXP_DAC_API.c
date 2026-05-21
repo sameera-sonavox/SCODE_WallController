@@ -99,7 +99,7 @@ void vCompute_DAC_OutputTiming(sT_DAC_Config_t *pstConfig, int *piret);
 void vConfigure_FIFOWorkMode(dac_config_t *pstDACConfig, sT_DAC_Config_t *pstConfig, int *piret);
 void vConfigure_FIFO_NormalMode(dac_config_t *pstDACConfig, sT_DAC_Config_t *pstConfig, int *piret);
 
-void vConfigure_DACTrigSrc_CTIMER(eDAC_TrigSrc_CTimer_t eTrigCTimer, int *piret);
+void vConfigure_DACTrigSrc_CTIMER(eDAC_TrigSrc_CTimer_t eTrigCTimer, int *piret, DACError_Callback_t vCallBackFn);
 void vConfigure_DACTrigSrc(sT_DAC_Config_t *pstConfig, int *piret);
 static void vStart_Timer( void );
 static void vStop_Timer( void );
@@ -468,7 +468,8 @@ void vConfigure_DACTrigSrc(sT_DAC_Config_t *pstConfig, int *piret)
     switch(stTrigSrcMux_t.eTrigSrcGroup)
     {
         case eDAC_TrigSrcGroup_CTIMER:
-            vConfigure_DACTrigSrc_CTIMER(stTrigSrcMux_t.uTrigSrc.eCTimerTrigSrc, piret);
+            vConfigure_DACTrigSrc_CTIMER(stTrigSrcMux_t.uTrigSrc.eCTimerTrigSrc, piret,
+                                         pstConfig->stOutputConfig.uOutputConfig.stWaveFormOutput.pvErrorCallback);
             break;
         case eDAC_TrigSrcGroup_LPTIMER:
             break;
@@ -491,12 +492,13 @@ void vConfigure_DACTrigSrc(sT_DAC_Config_t *pstConfig, int *piret)
         return;
 }
 
-void vConfigure_DACTrigSrc_CTIMER(eDAC_TrigSrc_CTimer_t eTrigCTimer, int *piret)
+void vConfigure_DACTrigSrc_CTIMER(eDAC_TrigSrc_CTimer_t eTrigCTimer, int *piret, DACError_Callback_t vCallBackFn)
 {
     ctimer_config_t stTimerConfig;
     ctimer_match_config_t stMatchConfig;
     uint32_t uiTimerClock_Hz;
     uint32_t uiMatchValue;
+    uint32_t uiTimerOutputToggleFrequency_Hz;
 
     vAssign_CTimer_ToConfig(eTrigCTimer, piret);
     if(*piret != 0)
@@ -515,7 +517,15 @@ void vConfigure_DACTrigSrc_CTIMER(eDAC_TrigSrc_CTimer_t eTrigCTimer, int *piret)
         *piret = -1;
         return;
     }
-    uiMatchValue = uiTimerClock_Hz / stTDACOutputCodeCtrl_t.uiTriggerFrequency_Hz;
+    if(stTDACOutputCodeCtrl_t.uiTriggerFrequency_Hz > (UINT32_MAX / 2U))
+    {
+        FHALT("CTimer[%d] Trigger frequency is too high", DACHWTrigCTIMER_t.uiCTimerId);
+        *piret = -1;
+        return;
+    }
+
+    uiTimerOutputToggleFrequency_Hz = stTDACOutputCodeCtrl_t.uiTriggerFrequency_Hz * 2U;
+    uiMatchValue = uiTimerClock_Hz / uiTimerOutputToggleFrequency_Hz;
     if(uiMatchValue == 0U)
     {
         FHALT("CTimer[%d] Match value is zero", DACHWTrigCTIMER_t.uiCTimerId);
@@ -544,7 +554,7 @@ void vConfigure_DACTrigSrc_CTIMER(eDAC_TrigSrc_CTimer_t eTrigCTimer, int *piret)
     
     if(!bSetup_DAC_DMA_Circular(stTDACOutputCodeCtrl_t.uiaBuffer, 
                        stTDACOutputCodeCtrl_t.uiNumberofSamples_Period, 
-                       (uintptr_t)DAC0))
+                       (uintptr_t)DAC0, vCallBackFn))
     {
         vDeInit_TimerConfiguration();
         *piret = -1;

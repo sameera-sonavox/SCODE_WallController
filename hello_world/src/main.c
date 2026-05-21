@@ -68,9 +68,10 @@ void vConfigure_DAC( void )
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.eFIFOWorkMode = eMode_FIFO;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.stTHWTrigSrc.eTrigSrcGroup = eDAC_TrigSrcGroup_CTIMER;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.stTHWTrigSrc.uTrigSrc.eCTimerTrigSrc = eDAC_TrigSrc_CTIMER0_MAT0;
-	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiAmplitude_mV = 3100;
+	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiAmplitude_mV = 3000;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiDCOffset_mV = 0;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiFrequencyHz = 1000;
+	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.pvErrorCallback = NULL;
 
 	vDAC_Init(&stDACConfig);
 
