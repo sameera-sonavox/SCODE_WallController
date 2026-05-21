@@ -1,0 +1,4 @@
+&dac0{
+    dmas = <&edma0 4 56>;
+    dma-names = "tx";
+};
