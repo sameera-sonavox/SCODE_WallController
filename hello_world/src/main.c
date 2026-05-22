@@ -18,8 +18,11 @@ void vConfigure_DAC( void );
 
 int main(void)
 {
+	uint32_t uiCount = 0;
+	uint8_t uiIndex = 0;
+
 	vInit_Amp();
-	//vConfirm_MCUbootImage();
+	vConfirm_MCUbootImage();
 	printk("Missig FW Img Booting over UART....\n\r");
 /* 	uint8_t uiaData_Mgmt[4] = {0x34, 0x22, 0x55, 0xEE};
 	uint8_t uiaData_Boot[4] = {0x55, 0x66, 0x77, 0x88};
@@ -38,10 +41,29 @@ int main(void)
 	while (1)
 	{
 		k_msleep(50);
-/*  		k_msleep(50);
-		vSend_CANMessage(stMsg);
-		k_msleep(50);
-		vSend_CANMessage(stMsg_Boot); */
+		if(uiCount < 100)
+			uiCount++;
+		if(uiCount >= 100)
+		{
+			switch (uiIndex)
+			{
+				case 0:
+					vUpdate_WaveForm_Volume(600);
+					uiIndex++;
+					break;
+				case 1:
+					vUpdate_WaveForm_Volume(300);
+					uiIndex++;
+					break;
+				case 2:
+					vUpdate_WaveForm_Volume(900);
+					uiIndex = 0;
+					break;				
+				default:
+					break;
+			}
+			uiCount = 0;
+		}
 	}
 	
 }
@@ -64,13 +86,13 @@ void vConfigure_DAC( void )
 	stDACConfig.eRefVoltSrc = eDAC_RefVoltSrc_VREF_VDD_ANA; // Adjust as needed based on actual hardware configuration
 	stDACConfig.stOutputBuffConfig.bEnableOutputBuffer = true;
 	stDACConfig.stOutputBuffConfig.eOutputBuffLowPowerMode = eDAC_OutputBuff_Higher_LowPowerMode;
-	stDACConfig.stOutputConfig.eWaveFormType = eDAC_WaveForm_Sawtooth;
+	stDACConfig.stOutputConfig.eWaveFormType = eDAC_WaveForm_Sine;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.eFIFOWorkMode = eMode_FIFO;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.stTHWTrigSrc.eTrigSrcGroup = eDAC_TrigSrcGroup_CTIMER;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.stTHWTrigSrc.uTrigSrc.eCTimerTrigSrc = eDAC_TrigSrc_CTIMER0_MAT0;
-	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiAmplitude_mV = 3000;
-	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiDCOffset_mV = 0;
-	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiFrequencyHz = 1000;
+	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiPeakVoltage_mV = 1000;
+	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiDCOffset_mV = 1010;
+	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiFrequencyHz = 2000;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.pvErrorCallback = NULL;
 
 	vDAC_Init(&stDACConfig);

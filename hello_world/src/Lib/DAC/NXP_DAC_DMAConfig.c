@@ -16,15 +16,23 @@ typedef struct{
     struct dma_block_config stDACDMABlockConfig_t;
     edma_transfer_config_t stEDMATxConfig;
     DACError_Callback_t pVErrorCallbackFn;
+    DACParam_UpdateComplete_Callback_t pvParamUpdateCallBackFn;
+    _Atomic bool bIsDMAError;
+    _Atomic bool bIsUpdateRequested;
+    uint32_t *puiDMAUpdateBuffer;
+    uint32_t uiUpdateLen;
 } sT_DACDMAConfig_t;
 
 typedef struct{
     _Atomic bool bIsDMAUsed;
+    edma_handle_t stDMATransferHandle;
     struct k_work_delayable stDMAMonitor_Worker_t;
 } sT_DMAControl_t;
 
 sT_DACDMAConfig_t stTDACDMA_Ctrl = {
     .DACModule = NULL,
+    .bIsDMAError = false,
+    .bIsUpdateRequested = false,
 };
 
 sT_DMAControl_t stTDMACtrl = {
@@ -43,10 +51,20 @@ static void vDAC_DMAMonitor(struct k_work *work);
 static inline void vSet_DMA_FlagForUse( void );
 static inline void vClear_DMA_FlagForUse( void );
 static inline bool bIsDMAActive( void );
+static inline void vSet_DMAError(eDAC_Error eError);
+static inline bool bIsDMAUpdateRequested( void );
+static inline void vClear_DMAUpdateRequest( void );
+static inline void vSet_DMAUpdateRequest( void );
 
 bool bValidate_DMAConfigurations(const uint32_t *puiDMABuffer, uint16_t uiLen);
+static void vDAC_DMA_CallBack(edma_handle_t *psHandle, void *pUserData, bool bTransferDone, uint32_t uiTcds);
+void vSwitch_DAC_DMA_Buffer( void );
 
-bool bSetup_DAC_DMA_Circular(const uint32_t *puiDMABuffer, uint16_t uiLen, uintptr_t ptrDAC, DACError_Callback_t pvErrorCallback)
+bool bSetup_DAC_DMA_Circular(const uint32_t *puiDMABuffer, 
+                            uint16_t uiLen, 
+                            uintptr_t ptrDAC, 
+                            DACError_Callback_t pvErrorCallback,
+                            DACParam_UpdateComplete_Callback_t pvUpdateCallback)
 {
     uint32_t uiTransferBytes = 0U;
 
@@ -77,16 +95,108 @@ bool bSetup_DAC_DMA_Circular(const uint32_t *puiDMABuffer, uint16_t uiLen, uintp
 
     steDMATxConfig.srcMajorLoopOffset = -(int32_t)uiTransferBytes;
     steDMATxConfig.dstMajorLoopOffset = 0;
-    steDMATxConfig.enabledInterruptMask = 0U;
+    steDMATxConfig.enabledInterruptMask = kEDMA_MajorInterruptEnable;
+    
     stTDACDMA_Ctrl.pVErrorCallbackFn = pvErrorCallback;
+    stTDACDMA_Ctrl.pvParamUpdateCallBackFn = pvUpdateCallback;
 
     EDMA_SetTransferConfig(DMA0, DAC_DMA_CHANNEL, &steDMATxConfig, NULL);
     EDMA_EnableAutoStopRequest(DMA0, DAC_DMA_CHANNEL, false);
+
+    EDMA_CreateHandle(&stTDMACtrl.stDMATransferHandle, DMA0, DAC_DMA_CHANNEL);
+    EDMA_SetCallback(&stTDMACtrl.stDMATransferHandle, vDAC_DMA_CallBack, NULL);
 
     DAC_EnableDMA(stDMADACModule, kDAC_FIFOWatermarkDMAEnable, true);
     EDMA_EnableChannelRequest(DMA0, DAC_DMA_CHANNEL);
     vInit_DMAError_Monitor();
     return true;
+}
+
+void vDAC_DMA_CallBack(edma_handle_t *psHandle, void *pUserData, bool bTransferDone, uint32_t uiTcds)
+{
+    ARG_UNUSED(psHandle);
+    ARG_UNUSED(pUserData);
+    ARG_UNUSED(uiTcds);
+
+    if(!bTransferDone)
+        return;
+    if(!bIsDMAUpdateRequested())
+        return;
+
+    vSwitch_DAC_DMA_Buffer();    
+}
+
+bool bRequest_DMA_BufferSwap(const uint32_t *puiDMABuffer, uint16_t uiLen, uint8_t uiBuffIndex)
+{
+    ARG_UNUSED(uiBuffIndex);
+
+    if(!bValidate_DMAConfigurations(puiDMABuffer, uiLen))
+    {
+        FHALT("DMA Buffer Validation Failed");
+        return false;
+    }
+    if(stDMADACModule == NULL)
+    {
+        FHALT("DAC DMA module is not initialized.");
+        return false;
+    }
+
+    stTDACDMA_Ctrl.puiDMAUpdateBuffer = puiDMABuffer;
+    stTDACDMA_Ctrl.uiUpdateLen = uiLen;
+    vSet_DMAUpdateRequest();
+    return true;
+}
+
+static inline bool bIsDMAUpdateRequested( void )
+{
+    bool bisrequested = atomic_load_explicit(&stTDACDMA_Ctrl.bIsUpdateRequested, memory_order_acquire);
+    return bisrequested;
+}
+
+static inline void vClear_DMAUpdateRequest( void )
+{
+    atomic_store_explicit(&stTDACDMA_Ctrl.bIsUpdateRequested, false, memory_order_release);
+}
+
+static inline void vSet_DMAUpdateRequest( void )
+{
+    atomic_store_explicit(&stTDACDMA_Ctrl.bIsUpdateRequested, true, memory_order_release);
+}
+
+void vSwitch_DAC_DMA_Buffer( void )
+{
+    uint32_t uiTransferBytes = 0;
+
+    uiTransferBytes = (uint32_t)stTDACDMA_Ctrl.uiUpdateLen * DAC_DMA_WORD_BYTES;
+
+    EDMA_DisableChannelRequest(DMA0, DAC_DMA_CHANNEL);//Disable requests from DAC to DMA controller
+
+    EDMA_ClearChannelStatusFlags(DMA0, DAC_DMA_CHANNEL, 
+                                kEDMA_DoneFlag | kEDMA_ErrorFlag | kEDMA_InterruptFlag);
+    
+    EDMA_PrepareTransfer(&steDMATxConfig,
+                         (void *)stTDACDMA_Ctrl.puiDMAUpdateBuffer,
+                         DAC_DMA_WORD_BYTES,
+                         (void *)&stDMADACModule->DATA,
+                         DAC_DMA_WORD_BYTES,
+                         DAC_DMA_WORD_BYTES,
+                         uiTransferBytes,
+                         kEDMA_MemoryToPeripheral);
+    
+    steDMATxConfig.srcMajorLoopOffset = -(int32_t)uiTransferBytes;
+    steDMATxConfig.dstMajorLoopOffset = 0;
+    steDMATxConfig.enabledInterruptMask = 0U;
+
+    EDMA_SetTransferConfig(DMA0, DAC_DMA_CHANNEL, &steDMATxConfig, NULL);
+    EDMA_EnableAutoStopRequest(DMA0, DAC_DMA_CHANNEL, false);
+
+    EDMA_EnableChannelRequest(DMA0, DAC_DMA_CHANNEL);
+    vClear_DMAUpdateRequest();
+
+    if(stTDACDMA_Ctrl.pvParamUpdateCallBackFn != NULL)
+    {
+        stTDACDMA_Ctrl.pvParamUpdateCallBackFn(true, NULL);
+    }
 }
 
 void vDisable_DAC_DMA_Circular( void )
@@ -125,6 +235,7 @@ static void vInit_DMAError_Monitor( void )
     }
     
     vSet_DMA_FlagForUse();
+    stTDACDMA_Ctrl.bIsDMAError = false;
     k_work_init_delayable(&stTDMACtrl.stDMAMonitor_Worker_t, vDAC_DMAMonitor);
     k_work_schedule(&stTDMACtrl.stDMAMonitor_Worker_t, K_MSEC(10));
 }
@@ -150,21 +261,27 @@ void vDAC_DMAMonitor(struct k_work *work)
 
     if((uiDMAFlags & kEDMA_ErrorFlag) != 0U && stTDACDMA_Ctrl.pVErrorCallbackFn != NULL)
     {
-        stTDACDMA_Ctrl.pVErrorCallbackFn(eDACErr_DMA_Error, NULL);
+        vSet_DMAError(eDACErr_DMA_Error);
     }
 
-    if((uiDACFlags & kDAC_FIFOUnderflowFlag) != 0U)
+    if((uiDACFlags & kDAC_FIFOUnderflowFlag) != 0U && stTDACDMA_Ctrl.pVErrorCallbackFn != NULL)
     {
-        stTDACDMA_Ctrl.pVErrorCallbackFn(eDACErr_FIFO_UnderFlow, NULL);
+        vSet_DMAError(eDACErr_FIFO_UnderFlow);
     }
 
-    if((uiDACFlags & kDAC_FIFOOverflowFlag) != 0U)
+    if((uiDACFlags & kDAC_FIFOOverflowFlag) != 0U && stTDACDMA_Ctrl.pVErrorCallbackFn != NULL)
     {
-        stTDACDMA_Ctrl.pVErrorCallbackFn(eDACErr_FIFO_OverFlow, NULL);
+        vSet_DMAError(eDACErr_FIFO_OverFlow);
     }
 
     k_work_schedule(&stTDMACtrl.stDMAMonitor_Worker_t, K_MSEC(10));
 
+}
+
+static inline void vSet_DMAError(eDAC_Error eError)
+{
+    stTDACDMA_Ctrl.pVErrorCallbackFn(eError, NULL);
+    atomic_store_explicit(&stTDACDMA_Ctrl.bIsDMAError, true, memory_order_release);
 }
 
 bool bValidate_DMAConfigurations(const uint32_t *puiDMABuffer, uint16_t uiLen)

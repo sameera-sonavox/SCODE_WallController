@@ -165,12 +165,13 @@ typedef struct{
 } sT_DCOutput_t;
 
 typedef void (*DACError_Callback_t)(eDAC_Error eError, void *pUserData);
+typedef void (*DACParam_UpdateComplete_Callback_t)(bool status, void *pUserData);
 
 typedef struct{
     eDAC_FIFOWorkMode_t eFIFOWorkMode;
     sT_DAC_TrigSrc_Mux_t stTHWTrigSrc;
     uint32_t uiFrequencyHz;
-    uint16_t uiAmplitude_mV;
+    uint16_t uiPeakVoltage_mV;
     uint16_t uiDCOffset_mV;
     DACError_Callback_t pvErrorCallback;
 } sT_WaveFormOutput_t;
