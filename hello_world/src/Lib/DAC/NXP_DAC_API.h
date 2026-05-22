@@ -15,5 +15,6 @@ extern void vDAC_Enable( void );
 extern void vDAC_Disable( void );
 extern bool bDAC_UpdateOutputValue(uint16_t uiOutput_mV);
 extern void vUpdate_WaveForm_Volume(uint16_t uiPeakVolt_mV);
+extern void vUpdate_WaveForm_Frequency(uint16_t uiFreq_Hz);
 
 #endif /* NXP_DAC_API_H */

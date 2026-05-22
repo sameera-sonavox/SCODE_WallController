@@ -41,24 +41,44 @@ int main(void)
 	while (1)
 	{
 		k_msleep(50);
-		if(uiCount < 100)
+		if(uiCount < 25)
 			uiCount++;
-		if(uiCount >= 100)
+		if(uiCount >= 25)
 		{
 			switch (uiIndex)
 			{
 				case 0:
-					vUpdate_WaveForm_Volume(600);
+					vUpdate_WaveForm_Frequency(2000);
 					uiIndex++;
 					break;
 				case 1:
-					vUpdate_WaveForm_Volume(300);
+					vUpdate_WaveForm_Frequency(3000);
 					uiIndex++;
 					break;
 				case 2:
-					vUpdate_WaveForm_Volume(900);
+					vUpdate_WaveForm_Frequency(4000);
+					uiIndex++;
+					break;
+				case 3:
+					vUpdate_WaveForm_Frequency(5000);
+					uiIndex++;
+					break;
+				case 4:
+					vUpdate_WaveForm_Frequency(4000);
+					uiIndex++;
+					break;
+				case 5:
+					vUpdate_WaveForm_Frequency(3000);
+					uiIndex++;
+					break;
+				case 6:
+					vUpdate_WaveForm_Frequency(2000);
+					uiIndex++;
+					break;
+				case 7:
+					vUpdate_WaveForm_Frequency(1000);
 					uiIndex = 0;
-					break;				
+					break;						
 				default:
 					break;
 			}
@@ -92,7 +112,7 @@ void vConfigure_DAC( void )
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.stTHWTrigSrc.uTrigSrc.eCTimerTrigSrc = eDAC_TrigSrc_CTIMER0_MAT0;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiPeakVoltage_mV = 1000;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiDCOffset_mV = 1010;
-	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiFrequencyHz = 2000;
+	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiFrequencyHz = 1000;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.pvErrorCallback = NULL;
 
 	vDAC_Init(&stDACConfig);

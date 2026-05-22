@@ -391,6 +391,59 @@ static bool bConfigure_ReferenceSource(sT_DAC_Config_t *pstConfig, dac_config_t 
     return true;
 }
 
+void vUpdate_WaveForm_Frequency(uint16_t uiFreq_Hz)
+{
+    int iret = 0;
+
+    if(!IsDACConfigured() || (eGetDACOperationMode() != eDAC_InternalMode_WaveGen))
+    {
+        FHALT("DAC is not properly configured for waveform generation. Cannot update waveform volume.");
+        return;
+    }
+    if(bIsUpdatePending())
+        return;
+
+    k_spinlock_key_t key = k_spin_lock(&stLock_WaveFormParamUpdate);
+
+    uint32_t *puiInactiveBuffer = NULL;
+
+    memcpy(&stTBuffSwapData.stTDACConfigTemp, &stTDACConfig_t, sizeof(sT_DAC_Config_t));
+    vLoad_DACOutputCtrlMetadata(&stTBuffSwapData.stTNewBuffConfigs, &stTDACOutputCodeCtrl_t);
+    stTBuffSwapData.eReqBuffSwapId = eNUMBER_OF_DAC_BUFFERs;
+
+    sT_DAC_OutputCode_Metadata_t *pstTempDACOut = &stTBuffSwapData.stTNewBuffConfigs;
+    sT_DAC_Config_t *pstTempDACConfig = &stTBuffSwapData.stTDACConfigTemp;
+
+    sT_WaveFormOutput_t *pstWaveOutput = &pstTempDACConfig->stOutputConfig.uOutputConfig.stWaveFormOutput;
+    pstWaveOutput->uiFrequencyHz = uiFreq_Hz;
+
+    vConfigure_DAC_StructsForParam_Update(pstTempDACOut, pstTempDACConfig, &stTBuffSwapData.eReqBuffSwapId, &puiInactiveBuffer, &iret);
+    if(iret != 0)
+    {
+        k_spin_unlock(&stLock_WaveFormParamUpdate, key);
+        return;
+    }
+
+    vSet_DMAUpdate_Pending(&iret);
+    if(iret != 0)
+    {
+        k_spin_unlock(&stLock_WaveFormParamUpdate, key);
+        return;        
+    }
+    if(!bRequest_DMA_BufferSwap(puiInactiveBuffer, 
+                              pstTempDACOut->uiNumberofSamples_Period,
+                              (uint8_t)stTBuffSwapData.eReqBuffSwapId))
+    {
+        vClear_DMAUpdate_Pending();
+        k_spin_unlock(&stLock_WaveFormParamUpdate, key);
+        FHALT("Failed to switch DAC DMA buffer.");
+        return;        
+    }
+
+    k_spin_unlock(&stLock_WaveFormParamUpdate, key);     
+    
+}
+
 void vUpdate_WaveForm_Volume(uint16_t uiPeakVolt_mV)
 {
     int iret = 0;
@@ -414,7 +467,20 @@ void vUpdate_WaveForm_Volume(uint16_t uiPeakVolt_mV)
     sT_DAC_OutputCode_Metadata_t *pstTempDACOut = &stTBuffSwapData.stTNewBuffConfigs;
     sT_DAC_Config_t *pstTempDACConfig = &stTBuffSwapData.stTDACConfigTemp;
 
-    pstTempDACConfig->stOutputConfig.uOutputConfig.stWaveFormOutput.uiPeakVoltage_mV = uiPeakVolt_mV;
+    sT_WaveFormOutput_t *pstWaveOutput = &pstTempDACConfig->stOutputConfig.uOutputConfig.stWaveFormOutput;
+    pstWaveOutput->uiPeakVoltage_mV = uiPeakVolt_mV;
+    switch(pstTempDACConfig->stOutputConfig.eWaveFormType)
+    {
+        case eDAC_WaveForm_Sawtooth:
+            pstWaveOutput->uiDCOffset_mV = pstTempDACOut->uiMinOutput_mv;
+            break;
+        case eDAC_WaveForm_Sine:
+            pstWaveOutput->uiDCOffset_mV = pstTempDACOut->uiMinOutput_mv + uiPeakVolt_mV;
+            break;
+        default:
+            break;
+    }
+
     vConfigure_DAC_StructsForParam_Update(pstTempDACOut, pstTempDACConfig, &stTBuffSwapData.eReqBuffSwapId, &puiInactiveBuffer, &iret);
     if(iret != 0)
     {
