@@ -17,5 +17,7 @@ extern bool bSetup_DAC_DMA_Circular(const uint32_t *puiDMABuffer,
 extern void vDisable_DAC_DMA_Circular( void );
 extern sT_DAC_DMA_Flags stGet_DAC_DMA_Status( void );
 extern bool bRequest_DMA_BufferSwap(const uint32_t *puiDMABuffer, uint16_t uiLen, uint8_t uiBuffIndex);
+extern void vStop_DAC_To_DMA_Request( void );
+extern void vSet_DMA_ReStart_Request( void );
 
 #endif

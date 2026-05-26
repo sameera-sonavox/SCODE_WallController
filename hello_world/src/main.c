@@ -6,6 +6,7 @@
 
 #include <stdio.h>
 #include <zephyr/dfu/mcuboot.h>
+#include "Lib/CPULoad/NXP_CPU_LoadMon.h"
 #include "GPIO/Amp_GPIO.h"
 #include "Lib/PWM/NXP_PWM_API.h"
 #include "CAN_Controller/CAN_Controller.h"
@@ -18,8 +19,9 @@ void vConfigure_DAC( void );
 
 int main(void)
 {
-	uint32_t uiCount = 0;
+	uint32_t uiCount = 0, turn = 0;
 	uint8_t uiIndex = 0;
+	bool bispaused = false;
 
 	vInit_Amp();
 	vConfirm_MCUbootImage();
@@ -48,11 +50,15 @@ int main(void)
 			switch (uiIndex)
 			{
 				case 0:
+					vPrint_CPU_Load("before update");
 					vUpdate_WaveForm_Frequency(2000);
+					vPrint_CPU_Load("after update");
 					uiIndex++;
 					break;
 				case 1:
+					vGet_Execution_Time_uS("DAC BENCH", eGetTime_T0, eTime_mS);
 					vUpdate_WaveForm_Frequency(3000);
+					vGet_Execution_Time_uS("DAC BENCH", eGetTime_T1, eTime_mS);
 					uiIndex++;
 					break;
 				case 2:
@@ -64,21 +70,62 @@ int main(void)
 					uiIndex++;
 					break;
 				case 4:
-					vUpdate_WaveForm_Frequency(4000);
+					vUpdate_WaveForm_Frequency(6000);
 					uiIndex++;
 					break;
 				case 5:
-					vUpdate_WaveForm_Frequency(3000);
+					vUpdate_WaveForm_Frequency(7000);
 					uiIndex++;
 					break;
 				case 6:
-					vUpdate_WaveForm_Frequency(2000);
+					vUpdate_WaveForm_Frequency(8000);
 					uiIndex++;
 					break;
 				case 7:
-					vUpdate_WaveForm_Frequency(1000);
+					vUpdate_WaveForm_Frequency(7000);
+					uiIndex++;
+					break;
+				case 8:
+					vUpdate_WaveForm_Frequency(6000);
+					uiIndex++;
+					break;
+				case 9:
+					vUpdate_WaveForm_Frequency(5000);
+					uiIndex++;
+					break;
+				case 10:
+					vUpdate_WaveForm_Frequency(4000);
+					uiIndex++;
+					break;
+				case 11:
+					vUpdate_WaveForm_Frequency(3000);
+					uiIndex++;
+					break;
+				case 12:
+					vUpdate_WaveForm_Frequency(2000);
+					uiIndex++;
+					break;
+				case 13:
+					if(!bispaused)
+					{
+						vUpdate_WaveForm_Frequency(1000);
+						vStop_WaveGen(eDAC_DefaultOut_Custom, 1000);						
+						printk("Waveform Generation Paused.\n");
+						turn = 0;
+						bispaused = true;
+						break;
+					}
+					if(bispaused && turn < 20)
+					{
+						turn++;
+						printk("Waveform Generation Paused @Restart Counting = %d.\n", turn);
+						break;
+					}
+					bispaused = false;
+					vReStart_WaveGen();
+					printk("Waveform Generation Resumed.\n");
 					uiIndex = 0;
-					break;						
+					break;					
 				default:
 					break;
 			}

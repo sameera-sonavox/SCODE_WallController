@@ -3,8 +3,9 @@
 
 #include <zephyr/device.h>
 
-/* #define DEBUG_DAC_WAVEGEN_SAWTOOTH */
-#define DEBUG_DAC_WAVEGEN_SINE
+// #define DEBUG_DAC_WAVEGEN_SAWTOOTH
+// #define DEBUG_DAC_WAVEGEN_SINE
+#define DEBUG_DAC_WAVEGEN_NOISE
 
 #define DAC_NODE                DT_NODELABEL(dac0)
 #define DAC_DMA_CTLR_NODE       DT_DMAS_CTLR_BY_NAME(DAC_NODE, tx)

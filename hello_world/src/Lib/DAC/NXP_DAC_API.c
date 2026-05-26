@@ -21,11 +21,20 @@
 #else
     #define Print_Sawtooth(...)
 #endif
+
 #if defined(DEBUG_DAC_WAVEGEN_SINE)
     #define Print_Sine                      printk
 #else
     #define Print_Sine(...)
 #endif
+
+#if defined(DEBUG_DAC_WAVEGEN_NOISE)
+    #define Print_Noise                     printk
+#else
+    #define Print_Noise(...)
+#endif
+
+static uint32_t uiNoiseSeed = 0x12345678U;
 
 typedef struct
 {
@@ -52,9 +61,21 @@ typedef enum
     eNUMBER_OF_DAC_BUFFERs
 } eDAC_Buffer_t;
 
+typedef enum
+{
+    eDAC_InternalMode_Direct = 0,
+    eDAC_InternalMode_WaveGen_CTimer,
+    eDAC_InternalMode_Unsupported
+} eDAC_InternalMode_t;
+
 typedef struct
 {
+    bool bIsDACStopped;
+    bool bIsDACDisabled;
+    bool bIsDACPaused;
     uint32_t uiTriggerFrequency_Hz;
+    uint32_t uiSampleRate_S_s;    
+    uint32_t uiBlockRepeatTime_us;
     eDAC_Buffer_t eCurrentBuffer;
     uint32_t uiaBuffer_A[DAC_MAX_CODE_VALUE + 1];
     uint32_t uiaBuffer_B[DAC_MAX_CODE_VALUE + 1];
@@ -66,12 +87,15 @@ typedef struct
     float fSettlingTime_us;
     _Atomic bool bIsUpdatePending;
     _Atomic bool bParamUpdateStatus;
+    eDAC_InternalMode_t eTDACInternalMode;
     sT_DACHWTrigConfig_t stTDACHWConfig;
 } sT_DAC_OutputCode_Ctrl_t;
 
 typedef struct
 {
     uint32_t uiTriggerFrequency_Hz;
+    uint32_t uiSampleRate_S_s;//Sample rate for White/Pink Noise
+    uint32_t uiBlockRepeatTime_us;
     eDAC_Buffer_t eCurrentBuffer;
     uint16_t uiMaxOutput_mV;
     uint16_t uiMinOutput_mv;
@@ -114,19 +138,23 @@ sT_DAC_Config_t stTDACConfig_t = {0};
 sT_DAC_OutputCode_Ctrl_t stTDACOutputCodeCtrl_t = {0};
 sT_DACBuffSwap_t stTBuffSwapData = {0};
 
-typedef enum
-{
-    eDAC_InternalMode_Direct = 0,
-    eDAC_InternalMode_WaveGen,
-    eDAC_InternalMode_Unsupported
-} eDAC_InternalMode_t;
-
 #define DACHWTrigCTIMER_t                   (stTDACOutputCodeCtrl_t.stTDACHWConfig.stTrigSrcConfig_t.stTCTimerConfig)
 
-static eDAC_InternalMode_t eTDACInternalMode = eDAC_InternalMode_Unsupported;
-
 #define IsDACConfigured()                   (stTDACConfig_t.bIsConfigured)
-#define eGetDACOperationMode()              (eTDACInternalMode)
+#define eGetDACOperationMode()              (stTDACOutputCodeCtrl_t.eTDACInternalMode)
+#define vSetDACOperationMode(eOpMode)       (stTDACOutputCodeCtrl_t.eTDACInternalMode = eOpMode)
+
+#define bIsDACDisabled()                    (stTDACOutputCodeCtrl_t.bIsDACDisabled)
+#define vSet_DAC_Disable()                  (stTDACOutputCodeCtrl_t.bIsDACDisabled = true)
+#define vClear_DAC_Disable()                (stTDACOutputCodeCtrl_t.bIsDACDisabled = false)
+
+#define bIsDACStopped()                     (stTDACOutputCodeCtrl_t.bIsDACStopped)
+#define vSet_DACStop_Flag()                 (stTDACOutputCodeCtrl_t.bIsDACStopped = true)
+#define vClear_DACStop_Flag()               (stTDACOutputCodeCtrl_t.bIsDACStopped = false)
+
+#define bIsDACPaused()                      (stTDACOutputCodeCtrl_t.bIsDACPaused)
+#define vSet_DAC_Pause()                    (stTDACOutputCodeCtrl_t.bIsDACPaused = true)
+#define vClear_DAC_Pause()                  (stTDACOutputCodeCtrl_t.bIsDACPaused = false)
 
 static struct k_spinlock stLock_DACOutputCodeCtrl;
 static struct k_spinlock stLock_WaveFormParamUpdate;
@@ -144,6 +172,10 @@ void vCompute_SawtoothDataBuffer(int *piret, uint32_t *puiBuffer, const sT_DAC_O
 
 static void vConfigure_DAC_SineWaveMode(sT_DAC_Config_t *pstConfig);
 void vCompute_SineWaveDataBuffer(int *piret, uint32_t *puiBuffer, const sT_DAC_OutputCode_Metadata_t *pstDACOutCtrl);
+
+static void vConfigure_DAC_WhiteNoiseMode(sT_DAC_Config_t *pstConfig);
+static void vCompute_WhiteNoiseDataBuffer(uint32_t *puiBuffer, const sT_DAC_OutputCode_Metadata_t *pstDACOutCtrl, int *piret);
+static uint32_t uiRandom_Range(uint32_t uiMin, uint32_t uiMax);
 
 void vCompute_DAC_OutputTiming(sT_DAC_Config_t *pstConfig, sT_DAC_OutputCode_Metadata_t *pstDACOutCodeCtrl, int *piret);
 void vConfigure_FIFOWorkMode(dac_config_t *pstDACConfig, sT_DAC_Config_t *pstConfig, int *piret);
@@ -168,10 +200,10 @@ static inline bool bIs_DMAUpdate_Success( void );
 
 void vConfigure_DACTrigSrc_CTIMER(eDAC_TrigSrc_CTimer_t eTrigCTimer, int *piret, DACError_Callback_t vCallBackFn);
 void vConfigure_DACTrigSrc(sT_DAC_Config_t *pstConfig, int *piret);
-static void vStart_Timer( void );
-static void vStop_Timer( void );
+static void vStart_CTimer( void );
+static void vStop_CTimer( void );
 
-void vDeInit_TimerConfiguration(void);
+void vDeInit_CTimer_Configuration(void);
 void vAssign_CTimer_ToConfig(eDAC_TrigSrc_CTimer_t eTrigCTimer, int *piret);
 
 static bool bConfigure_ReferenceSource(sT_DAC_Config_t *pstConfig, dac_config_t *pstDACConfig);
@@ -182,6 +214,12 @@ static bool bConfigure_RouteToCMP(sT_DAC_Config_t *pstConfig, dac_config_t *pstD
 
 static struct k_work stWorker_ParamUpdateExecute;
 static void vDAC_ParamUpdateExecute(struct k_work *work);
+
+static struct k_work stWorker_NoiseBlockRefill;
+static void vDAC_NoiseBlockRefill(struct k_work *work);
+
+static void vDisable_DACConfig_with_CTimer( void );
+static void vForce_DAC_FIFO_Output(uint32_t uiDACCode);
 
 bool bDAC_UpdateOutputValue( uint16_t uiOutput_mV )
 {
@@ -395,11 +433,16 @@ void vUpdate_WaveForm_Frequency(uint16_t uiFreq_Hz)
 {
     int iret = 0;
 
-    if(!IsDACConfigured() || (eGetDACOperationMode() != eDAC_InternalMode_WaveGen))
+    if(!IsDACConfigured() || (eGetDACOperationMode() != eDAC_InternalMode_WaveGen_CTimer))
     {
         FHALT("DAC is not properly configured for waveform generation. Cannot update waveform volume.");
         return;
     }
+    if(bIsDACDisabled() || bIsDACStopped() || bIsDACPaused())
+    {
+        FHALT("Wavegen is not running. Start/resume before updating waveform parameters.");
+        return;
+    }    
     if(bIsUpdatePending())
         return;
 
@@ -448,11 +491,17 @@ void vUpdate_WaveForm_Volume(uint16_t uiPeakVolt_mV)
 {
     int iret = 0;
 
-    if(!IsDACConfigured() || (eGetDACOperationMode() != eDAC_InternalMode_WaveGen))
+    if(!IsDACConfigured() || (eGetDACOperationMode() != eDAC_InternalMode_WaveGen_CTimer))
     {
         FHALT("DAC is not properly configured for waveform generation. Cannot update waveform volume.");
         return;
     }
+    if(bIsDACDisabled() || bIsDACStopped() || bIsDACPaused())
+    {
+        FHALT("Wavegen is not running. Start/resume before updating waveform parameters.");
+        return;
+    }
+
     if(bIsUpdatePending())
         return;
 
@@ -547,7 +596,7 @@ void vDAC_ParamUpdateExecute(struct k_work *work)
     memset(&stTBuffSwapData, 0, sizeof(stTBuffSwapData));
     vClear_DMAUpdate_Pending();
     vClear_DMAUpdate_Status();
-    printf("DAC Update Status : %d\n\r", status);
+    //printf("DAC Update Status : %d\n\r", status);
     k_spin_unlock(&stLock_WaveFormParamUpdate, key);
 }
 
@@ -648,30 +697,147 @@ void vDAC_Init(sT_DAC_Config_t *pstConfig)
 
     memcpy(&stTDACConfig_t, pstConfig, sizeof(sT_DAC_Config_t));
     stTDACConfig_t.bIsConfigured = false;
+    vClear_DAC_Disable();
+    vClear_DACStop_Flag();
+    vClear_DAC_Pause();
+
     vSet_ActiveBuffer(eDAC_Buffer_A, &stTDACOutputCodeCtrl_t);
-    eTDACInternalMode = eDAC_InternalMode_Unsupported;
+    vSetDACOperationMode(eDAC_InternalMode_Unsupported);
 
     switch (stTDACConfig_t.stOutputConfig.eWaveFormType)
     {
         case eDAC_WaveForm_DC:
-            eTDACInternalMode = eDAC_InternalMode_Direct;
+            vSetDACOperationMode(eDAC_InternalMode_Direct);
             vConfigure_DAC_DirectMode(&stTDACConfig_t);
             break;
         case eDAC_WaveForm_Sawtooth:
-            eTDACInternalMode = eDAC_InternalMode_WaveGen;
             vConfigure_DAC_SawtoothMode(&stTDACConfig_t);
             break;
         case eDAC_WaveForm_Sine:
-            eTDACInternalMode = eDAC_InternalMode_WaveGen;
             vConfigure_DAC_SineWaveMode(&stTDACConfig_t);
-            break;        
+            break;
+        case eDAC_WaveForm_WhiteNoise:
+            vConfigure_DAC_WhiteNoiseMode(&stTDACConfig_t);
+            break;      
         default:
             stTDACConfig_t.bIsConfigured = false;
             FHALT("Unsupported DAC output waveform.");
             break;
     }
-    printk("DAC initialized in %d mode.\n", eTDACInternalMode);
+    printk("DAC initialized in %d mode.\n", eGetDACOperationMode());
     pstConfig->bIsConfigured = stTDACConfig_t.bIsConfigured;
+}
+
+static void vConfigure_DAC_WhiteNoiseMode(sT_DAC_Config_t *pstConfig)
+{
+    int iret = 0;    
+    dac_config_t stDACConfig;
+
+    if(pstConfig == NULL)
+    {
+        FHALT("Invalid pointer to DAC configuration structure.");
+        return;
+    }
+    Print_Sine("Wavegen -> Pink Noise Started...\n\r");
+
+    sT_DAC_OutputCode_Metadata_t stTempDACOutCtrl;
+    vLoad_DACOutputCtrlMetadata(&stTempDACOutCtrl, &stTDACOutputCodeCtrl_t);
+    vCompute_Waveform_Params(pstConfig, &stTempDACOutCtrl, &iret);
+    if(iret != 0)
+    {
+        FHALT("Failed to compute buffer control values for DAC sawtooth mode.");
+        pstConfig->bIsConfigured = false;
+        return;
+    }
+    vCommit_DACOutputCtrlMetadata(&stTDACOutputCodeCtrl_t, &stTempDACOutCtrl);
+        
+    uint32_t *puiBuffer = puiGetDACBuffer(stTDACOutputCodeCtrl_t.eCurrentBuffer, &stTDACOutputCodeCtrl_t);
+    if(puiBuffer == NULL)
+    {
+        FHALT("Invalid Data Buffer in Sawtooth Mode.");
+        pstConfig->bIsConfigured = false;
+        return;        
+    }    
+    vCompute_WhiteNoiseDataBuffer(puiBuffer, &stTempDACOutCtrl, &iret);
+    if(iret != 0)    {
+        pstConfig->bIsConfigured = false;
+        FHALT("Failed to compute SineWave data buffer.");
+        return;
+    }
+    Print_Noise("Wavegen -> Parameters Configured\n\r");
+
+    DAC_GetDefaultConfig(&stDACConfig);
+    stDACConfig.enableOpampBuffer = true;    
+    stDACConfig.enableLowerLowPowerMode = 
+                        (pstConfig->stOutputBuffConfig.eOutputBuffLowPowerMode == eDAC_OutputBuff_Lower_LowPowerMode) ? true : false;
+    stDACConfig.syncTime = 1U;
+    if(!bConfigure_ReferenceSource(pstConfig, &stDACConfig))
+    {
+        FHALT("Failed to configure DAC reference voltage source.");
+        pstConfig->bIsConfigured = false;
+        return;
+    }
+    Print_Noise("Wavegen -> Reference Source Configured\n\r");
+
+    vConfigure_FIFOWorkMode(&stDACConfig, pstConfig, &iret);
+    if(iret != 0)
+    {
+        pstConfig->bIsConfigured = false;
+        return;
+    }
+    Print_Noise("Wavegen -> WorkMode Configured\n\r");
+
+    DAC_Init(DAC0, &stDACConfig);
+    DAC_Enable(DAC0, true);
+
+    vConfigure_DACTrigSrc(pstConfig, &iret);
+    if(iret != 0)
+    {
+        pstConfig->bIsConfigured = false;
+        return;
+    }
+    Print_Sine("Wavegen -> Trigger Source Configured\n\r");
+
+    k_work_init(&stWorker_NoiseBlockRefill, vDAC_NoiseBlockRefill);
+    pstConfig->bIsConfigured = true;      
+}
+
+static void vDAC_NoiseBlockRefill(struct k_work *work)
+{
+    ARG_UNUSED(work);
+}
+
+static void vCompute_WhiteNoiseDataBuffer(uint32_t *puiBuffer, const sT_DAC_OutputCode_Metadata_t *pstDACOutCtrl, int *piret)
+{
+    k_spinlock_key_t key = k_spin_lock(&stLock_DACOutputCodeCtrl);
+
+    if(puiBuffer == NULL || piret == NULL || pstDACOutCtrl == NULL)
+    {
+        FHALT("Invalid pointer to DAC configuration structure or return value pointer.");
+        if(piret != NULL)
+        {
+            *piret = -1;
+        }
+        k_spin_unlock(&stLock_DACOutputCodeCtrl, key);
+        return;
+    }
+
+    memset(puiBuffer, 0, sizeof(stTDACOutputCodeCtrl_t.uiaBuffer_A));    
+    for(uint16_t i = 0; i < pstDACOutCtrl->uiNumberofSamples_Period; i++)
+    {
+        puiBuffer[i] = uiRandom_Range(pstDACOutCtrl->uiMinCode, pstDACOutCtrl->uiMaxCode);
+    }
+    
+    k_spin_unlock(&stLock_DACOutputCodeCtrl, key);
+    *piret = 0;
+}
+
+static uint32_t uiRandom_Range(uint32_t uiMin, uint32_t uiMax)
+{
+    uiNoiseSeed = (1664525U * uiNoiseSeed) + 1013904223U;
+
+    uint32_t uiRange = uiMax - uiMin + 1U;
+    return uiMin + (uiNoiseSeed % uiRange);
 }
 
 static void vConfigure_DAC_SineWaveMode(sT_DAC_Config_t *pstConfig)
@@ -964,6 +1130,7 @@ void vConfigure_DACTrigSrc(sT_DAC_Config_t *pstConfig, int *piret)
     switch(stTrigSrcMux_t.eTrigSrcGroup)
     {
         case eDAC_TrigSrcGroup_CTIMER:
+            vSetDACOperationMode(eDAC_InternalMode_WaveGen_CTimer);
             vConfigure_DACTrigSrc_CTIMER(stTrigSrcMux_t.uTrigSrc.eCTimerTrigSrc, piret,
                                          pstConfig->stOutputConfig.uOutputConfig.stWaveFormOutput.pvErrorCallback);
             break;
@@ -1052,7 +1219,7 @@ void vConfigure_DACTrigSrc_CTIMER(eDAC_TrigSrc_CTimer_t eTrigCTimer, int *piret,
     if(puiBuffer == NULL)
     {
         FHALT("Failed to get active buffer for DAC output.");
-        vDeInit_TimerConfiguration();
+        vDeInit_CTimer_Configuration();
         *piret = -1;
         return;
     }
@@ -1061,17 +1228,17 @@ void vConfigure_DACTrigSrc_CTIMER(eDAC_TrigSrc_CTimer_t eTrigCTimer, int *piret,
                        stTDACOutputCodeCtrl_t.uiNumberofSamples_Period, 
                        (uintptr_t)DAC0, vCallBackFn, vNotify_DACParameterUpdate_Callback))
     {
-        vDeInit_TimerConfiguration();
+        vDeInit_CTimer_Configuration();
         *piret = -1;
         return;         
     }
 
-    vStart_Timer();
+    vStart_CTimer();
     k_busy_wait(100U);
     *piret = 0;
 }
 
-static void vStart_Timer( void )
+static void vStart_CTimer( void )
 {
     if(DACHWTrigCTIMER_t.pstCTimerBase == NULL)
     {
@@ -1081,25 +1248,24 @@ static void vStart_Timer( void )
     CTIMER_StartTimer(DACHWTrigCTIMER_t.pstCTimerBase);
 }
 
-static void vStop_Timer( void )
+static void vStop_CTimer( void )
 {
     if(DACHWTrigCTIMER_t.pstCTimerBase == NULL)
     {
         FHALT("Invalid Operation : Timer is NULL");
         return;
     }
-
     CTIMER_StopTimer(DACHWTrigCTIMER_t.pstCTimerBase);
 }
 
-void vDeInit_TimerConfiguration(void)
+void vDeInit_CTimer_Configuration(void)
 {
     if (DACHWTrigCTIMER_t.pstCTimerBase == NULL)
     {
         return;
     }
 
-    vStop_Timer();
+    vStop_CTimer();
     CTIMER_Reset(DACHWTrigCTIMER_t.pstCTimerBase);
     CTIMER_Deinit(DACHWTrigCTIMER_t.pstCTimerBase);
 
@@ -1207,6 +1373,17 @@ void vCompute_Waveform_Params(sT_DAC_Config_t *pstConfig, sT_DAC_OutputCode_Meta
             }
             pstDACOutCtrl->uiMinOutput_mv = (uint32_t)iDiff;
             break;
+        case eDAC_WaveForm_PinkNoise:
+        case eDAC_WaveForm_WhiteNoise:
+             pstDACOutCtrl->uiMinOutput_mv = outputConfig->uiDCOffset_mV - outputConfig->uiPeakVoltage_mV;
+             if((int32_t)pstDACOutCtrl->uiMinOutput_mv < 0)
+             {
+                FHALT("DC Offset for pink noise waveform cannot be less than the peak voltage.");
+                *piret = -1;
+                pstConfig->bIsConfigured = false;
+                return;                
+             }
+             break;
         default:
             FHALT("Unsupported waveform type for computing buffer control values.");
             *piret = -1;
@@ -1371,6 +1548,8 @@ static void vLoad_DACOutputCtrlMetadata(sT_DAC_OutputCode_Metadata_t *pstDest,
     }
 
     pstDest->uiTriggerFrequency_Hz = pstSrc->uiTriggerFrequency_Hz;
+    pstDest->uiSampleRate_S_s = pstSrc->uiSampleRate_S_s;
+    pstDest->uiBlockRepeatTime_us = pstSrc->uiBlockRepeatTime_us;
     pstDest->eCurrentBuffer = pstSrc->eCurrentBuffer;
     pstDest->uiMaxOutput_mV = pstSrc->uiMaxOutput_mV;
     pstDest->uiMinOutput_mv = pstSrc->uiMinOutput_mv;
@@ -1399,11 +1578,15 @@ static void vCommit_DACOutputCtrlMetadata(sT_DAC_OutputCode_Ctrl_t *pstDest,
     pstDest->uiNumberofSamples_Period = pstSrc->uiNumberofSamples_Period;
     pstDest->fSettlingTime_us = pstSrc->fSettlingTime_us;
     pstDest->stTDACHWConfig = pstSrc->stTDACHWConfig;
+    pstDest->uiBlockRepeatTime_us = pstSrc->uiBlockRepeatTime_us;
+    pstDest->uiSampleRate_S_s = pstSrc->uiSampleRate_S_s;
 }
 
 void vCompute_DAC_OutputTiming(sT_DAC_Config_t *pstConfig, sT_DAC_OutputCode_Metadata_t *pstDACOutCodeCtrl, int *piret)
 {
-    float ffreq_hz = 0.0f;
+    float ffreq_hz = 0.0f, fMaxSampleRate = 0.0f;
+    uint32_t uiMaxSampleRate = 0;
+
     if(pstConfig == NULL || piret == NULL)
     {
         FHALT("Invalid pointer to DAC configuration structure or return value pointer.");
@@ -1418,6 +1601,7 @@ void vCompute_DAC_OutputTiming(sT_DAC_Config_t *pstConfig, sT_DAC_OutputCode_Met
     }
 
     #define ePowerMode        (pstConfig->stOutputBuffConfig.eOutputBuffLowPowerMode)
+    #define eWaveformType     (pstConfig->stOutputConfig.eWaveFormType)
     switch (ePowerMode)
     {
         case eDAC_OutputBuff_Lower_LowPowerMode:
@@ -1431,17 +1615,49 @@ void vCompute_DAC_OutputTiming(sT_DAC_Config_t *pstConfig, sT_DAC_OutputCode_Met
             *piret = -1;
             return;
     }
+    
     pstDACOutCodeCtrl->fSettlingTime_us += (pstDACOutCodeCtrl->fSettlingTime_us * fSETTLING_TIME_MARGIN_PERCENTAGE);
-    ffreq_hz = 1.0f / (pstDACOutCodeCtrl->fSettlingTime_us * 1e-6f);
-    pstDACOutCodeCtrl->uiTriggerFrequency_Hz = (uint32_t)ffreq_hz;
-    pstDACOutCodeCtrl->uiNumberofSamples_Period = (uint16_t)(pstDACOutCodeCtrl->uiTriggerFrequency_Hz / 
-                                                      pstConfig->stOutputConfig.uOutputConfig.stWaveFormOutput.uiFrequencyHz);
-    if(pstDACOutCodeCtrl->uiNumberofSamples_Period < DAC_MIN_WAVEFORM_SAMPLES_PER_PERIOD)
+
+    switch(eWaveformType)
     {
-        FHALT("Calculated number of samples per period for sawtooth waveform is less than the minimum required.");
-        *piret = -1;
-        return;
+        case eDAC_WaveForm_Sawtooth:
+        case eDAC_WaveForm_Sine:
+            ffreq_hz = 1.0f / (pstDACOutCodeCtrl->fSettlingTime_us * 1e-6f);
+            pstDACOutCodeCtrl->uiTriggerFrequency_Hz = (uint32_t)ffreq_hz;
+            pstDACOutCodeCtrl->uiSampleRate_S_s = 0;
+            pstDACOutCodeCtrl->uiNumberofSamples_Period = (uint16_t)(pstDACOutCodeCtrl->uiTriggerFrequency_Hz / 
+                                                            pstConfig->stOutputConfig.uOutputConfig.stWaveFormOutput.uiFrequencyHz);
+            if(pstDACOutCodeCtrl->uiNumberofSamples_Period < DAC_MIN_WAVEFORM_SAMPLES_PER_PERIOD)
+            {
+                FHALT("Calculated number of samples per period for %s is less than the minimum required.", 
+                    (eWaveformType == eDAC_WaveForm_Sawtooth)? "sawtooth waveform": "sine waveform");
+                *piret = -1;
+                return;
+            }
+            break;
+        case eDAC_WaveForm_PinkNoise:
+        case eDAC_WaveForm_WhiteNoise:
+            fMaxSampleRate = 1.0f / (pstDACOutCodeCtrl->fSettlingTime_us * 1e-6f);
+            uiMaxSampleRate = (uint32_t)fMaxSampleRate;
+            pstDACOutCodeCtrl->uiSampleRate_S_s = (uint32_t)(2.5f * (float)pstConfig->stOutputConfig.uOutputConfig.stWaveFormOutput.uiFrequencyHz);
+            pstDACOutCodeCtrl->uiSampleRate_S_s = min(pstDACOutCodeCtrl->uiSampleRate_S_s, uiMaxSampleRate);
+            pstDACOutCodeCtrl->uiTriggerFrequency_Hz = pstDACOutCodeCtrl->uiSampleRate_S_s;
+            pstDACOutCodeCtrl->uiNumberofSamples_Period = DAC_MAX_CODE_VALUE + 1;
+            if(pstDACOutCodeCtrl->uiNumberofSamples_Period < DAC_MIN_WAVEFORM_SAMPLES_PER_PERIOD)
+            {
+                FHALT("Block is too small for Noise");
+                *piret = -1;
+                return;
+            }
+            pstDACOutCodeCtrl->uiBlockRepeatTime_us = (uint32_t)(((uint64_t)pstDACOutCodeCtrl->uiNumberofSamples_Period * 1000000ULL) /
+                                                       pstDACOutCodeCtrl->uiSampleRate_S_s);           
+            break;
+        default:
+            FHALT("Not Implemented for Waveform : %d", eWaveformType);
+            *piret = -1;
+            return;
     }
+
     *piret = 0;
 }
 
@@ -1457,5 +1673,223 @@ void vDAC_Enable(void)
 
 void vDAC_Disable(void)
 {
+    if(!stTDACConfig_t.bIsConfigured)
+    {
+        DAC_Enable(DAC0, false);
+        return;
+    }
+
+    switch(eGetDACOperationMode())
+    {
+        case eDAC_InternalMode_WaveGen_CTimer:
+            vDisable_DACConfig_with_CTimer();
+            break;
+        case eDAC_InternalMode_Direct:
+            DAC_SetData(DAC0, 0U);
+            break;
+        case eDAC_InternalMode_Unsupported:
+        default:
+            break;
+    }
+
     DAC_Enable(DAC0, false);
+    stTDACConfig_t.bIsConfigured = false;
+    vClear_DACStop_Flag();
+    vClear_DAC_Pause();
+    vSet_DAC_Disable();
+    vSetDACOperationMode(eDAC_InternalMode_Unsupported);
+}
+
+void vDisable_DACConfig_with_CTimer( void )
+{
+    vDeInit_CTimer_Configuration();
+    vDisable_DAC_DMA_Circular();
+    vClear_DMAUpdate_Pending();
+    vClear_DMAUpdate_Status();
+    memset(&stTBuffSwapData, 0, sizeof(stTBuffSwapData));
+}
+
+void vStop_WaveGen(eDAC_DefaultOutLevel_t eDefaultLevel, uint32_t uiCustomVal_mV)
+{
+    int iret = 0;
+    if(bIsDACDisabled())
+    {
+        FHALT("DAC already disabled");
+        return;
+    }
+    if(bIsDACStopped())
+    {
+        FHALT("Wavegen is already stopped.");
+        return;
+    }
+    
+    switch(eGetDACOperationMode())
+    {
+        case eDAC_InternalMode_WaveGen_CTimer:
+            vStop_CTimer();//Stop the timer operation
+            vDisable_DAC_DMA_Circular();//Stop DAC DMA request and force restart to rebuild DMA
+            DAC_ClearStatusFlags(DAC0,
+                                kDAC_FIFOOverflowFlag | kDAC_FIFOUnderflowFlag);
+
+            vClear_DAC_Pause();
+            vSet_DACStop_Flag();
+            vClear_DMAUpdate_Pending();
+            vClear_DMAUpdate_Status();
+            memset(&stTBuffSwapData, 0, sizeof(stTBuffSwapData));
+            break;
+        default:
+            FHALT("Not Implemented yet.");
+            return;
+    }
+
+    switch(eDefaultLevel)
+    {
+        case eDAC_DefaultOut_Low:
+            vForce_DAC_FIFO_Output(0U);
+            break;
+        case eDAC_DefaultOut_High:
+            vForce_DAC_FIFO_Output(stTDACOutputCodeCtrl_t.uiMaxCode);
+            break;
+        case eDAC_DefaultOut_Custom:
+            vForce_DAC_FIFO_Output( uiCalculateDACCode(uiCustomVal_mV, &iret) );
+            break;
+        default:
+            FHALT("Invalid default output level selection for stopping wavegen.");
+            break;
+    }
+}
+
+static void vForce_DAC_FIFO_Output(uint32_t uiDACCode)
+{
+    uint32_t uiGCR = DAC0->GCR;
+    uint32_t uiDirectModeGCR = uiGCR & ~(LPDAC_GCR_FIFOEN_MASK | LPDAC_GCR_TRGSEL_MASK);
+
+    DAC_Enable(DAC0, false);
+
+    DAC_SetReset(DAC0, kDAC_ResetLogic);
+    DAC_ClearReset(DAC0, kDAC_ResetLogic);
+
+    DAC0->GCR = uiDirectModeGCR;
+    DAC_Enable(DAC0, true);
+    DAC_SetData(DAC0, uiDACCode);
+    k_busy_wait(20U);
+}
+
+void vReStart_WaveGen( void )
+{
+    if(bIsDACDisabled())
+    {
+        FHALT("DAC is disabled. You need to re-configure the DAC Module.");
+        return;        
+    }
+    if(!bIsDACStopped())
+    {
+        FHALT("DAC is not stopped to perform a restart!!!");
+        return;
+    }
+    
+    switch(eGetDACOperationMode())
+    {
+        case eDAC_InternalMode_WaveGen_CTimer:
+        {
+            uint32_t *puiBuffer = puiGetDACBuffer(stTDACOutputCodeCtrl_t.eCurrentBuffer, &stTDACOutputCodeCtrl_t);
+            DACError_Callback_t pvErrorCallback =
+                stTDACConfig_t.stOutputConfig.uOutputConfig.stWaveFormOutput.pvErrorCallback;
+
+            if(puiBuffer == NULL)
+            {
+                FHALT("Failed to get active DAC buffer for waveform restart.");
+                return;
+            }
+
+            DAC_SetReset(DAC0, kDAC_ResetFIFO);
+            DAC_ClearReset(DAC0, kDAC_ResetFIFO);
+            DAC_ClearStatusFlags(DAC0,
+                                 kDAC_FIFOOverflowFlag | kDAC_FIFOUnderflowFlag);
+            DAC0->FCR = LPDAC_FCR_WML(4U);
+            DAC0->GCR = (DAC0->GCR | LPDAC_GCR_FIFOEN_MASK) & ~LPDAC_GCR_TRGSEL_MASK;
+
+            if(!bSetup_DAC_DMA_Circular(puiBuffer,
+                                        stTDACOutputCodeCtrl_t.uiNumberofSamples_Period,
+                                        (uintptr_t)DAC0,
+                                        pvErrorCallback,
+                                        vNotify_DACParameterUpdate_Callback))
+            {
+                FHALT("Failed to rebuild DAC DMA for waveform restart.");
+                return;
+            }
+
+            vStart_CTimer();            
+            break;
+        }
+        default:
+            FHALT("Not Implemented yet.");
+            return;
+    }
+    
+    vClear_DACStop_Flag();
+    vClear_DAC_Pause();
+    vClear_DAC_Disable();
+}
+
+void vPause_WaveGen( void )
+{
+    if(bIsDACDisabled())
+    {
+        FHALT("DAC is disabled. You need to re-configure the DAC Module.");
+        return;        
+    }
+    if(bIsDACStopped())
+    {
+        FHALT("DAC is already Stopped. If you want to start the wavegen, then perform a restart!!!");
+        return;
+    }
+    if(bIsDACPaused())
+    {
+        FHALT("Wavegen is already paused.");
+        return;
+    }
+
+    switch(eGetDACOperationMode())
+    {
+        case eDAC_InternalMode_WaveGen_CTimer:
+            vStop_CTimer();            
+            break;
+        default:
+            FHALT("Not Implemented yet.");
+            return;
+    }
+
+    vSet_DAC_Pause();
+}
+
+void vResume_WaveGen( void )
+{
+    if(bIsDACDisabled())
+    {
+        FHALT("DAC is disabled. You need to re-configure the DAC Module.");
+        return;        
+    }
+    if(bIsDACStopped())
+    {
+        FHALT("DAC is already Stopped. If you want to start the wavegen, then perform a restart!!!");
+        return;
+    }
+    if(!bIsDACPaused())
+    {
+        FHALT("Wavegen is not paused.");
+        return;
+    }
+
+    switch(eGetDACOperationMode())
+    {
+        case eDAC_InternalMode_WaveGen_CTimer:
+            vStart_CTimer();            
+            break;
+        default:
+            FHALT("Not Implemented yet.");
+            return;
+    }
+
+    vClear_DAC_Pause();
 }

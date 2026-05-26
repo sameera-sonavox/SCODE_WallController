@@ -21,4 +21,5 @@ target_sources(app PRIVATE
                 src/Bootloader_Controller/Bootloader_Ctrl.c
                 src/UART_CAN_Bridge/UART_CAN_Bridge.c 
                 src/Lib/DAC/NXP_DAC_API.c 
-                src/Lib/DAC/NXP_DAC_DMAConfig.c)
+                src/Lib/DAC/NXP_DAC_DMAConfig.c 
+                src/Lib/CPULoad/NXP_CPU_LoadMon.c)

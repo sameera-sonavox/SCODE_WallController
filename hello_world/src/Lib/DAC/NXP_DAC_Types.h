@@ -111,8 +111,9 @@ typedef enum
     eDAC_WaveForm_DC = 0,
     eDAC_WaveForm_Triangle,
     eDAC_WaveForm_Sawtooth,
-    eDAC_WaveForm_Noise,
     eDAC_WaveForm_Sine,
+    eDAC_WaveForm_WhiteNoise,
+    eDAC_WaveForm_PinkNoise,
     eNUMBER_OF_DAC_WAVEFORMs
 } eDAC_WaveFormType_t;
 
@@ -153,6 +154,14 @@ typedef enum
     eMode_SwingBackWithPeriodic,
     eNUMBER_OF_DAC_FIFO_WORK_MODEs
 } eDAC_FIFOWorkMode_t;
+
+typedef enum
+{
+    eDAC_DefaultOut_Low = 0,
+    eDAC_DefaultOut_High,
+    eDAC_DefaultOut_Custom,
+    eNUMBER_OF_DAC_DEFAULT_OUT_LEVELs
+} eDAC_DefaultOutLevel_t;
 
 typedef struct
 {

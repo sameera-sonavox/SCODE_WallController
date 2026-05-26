@@ -251,6 +251,41 @@ void vDisable_DAC_DMA_Circular( void )
     stDMADACModule = NULL;
 }
 
+void vStop_DAC_To_DMA_Request( void )
+{
+    if(stDMADACModule == NULL)
+    {
+        FHALT("DAC is not enabled to stop it!!!");
+        return;
+    }
+
+    vCancel_DMAError_Monitor();
+    DAC_EnableDMA(stDMADACModule, kDAC_FIFOWatermarkDMAEnable, false);
+    EDMA_DisableChannelRequest(DMA0, DAC_DMA_CHANNEL);
+    EDMA_ClearChannelStatusFlags(DMA0,
+                                 DAC_DMA_CHANNEL,
+                                 kEDMA_DoneFlag | kEDMA_ErrorFlag | kEDMA_InterruptFlag);
+}
+
+void vSet_DMA_ReStart_Request( void )
+{
+    if(stDMADACModule == NULL)
+    {
+        FHALT("DAC DMA module is not initialized.");
+        return;
+    }
+        
+    EDMA_ClearChannelStatusFlags(DMA0,
+                                 DAC_DMA_CHANNEL,
+                                 kEDMA_DoneFlag | kEDMA_ErrorFlag | kEDMA_InterruptFlag);
+
+    DAC_ClearStatusFlags(DAC0,
+                         kDAC_FIFOOverflowFlag | kDAC_FIFOUnderflowFlag);
+
+    DAC_EnableDMA(stDMADACModule, kDAC_FIFOWatermarkDMAEnable, true);
+    EDMA_EnableChannelRequest(DMA0, DAC_DMA_CHANNEL);    
+}
+
 static inline void vSet_DMA_FlagForUse( void )
 {
     atomic_store_explicit(&stTDMACtrl.bIsDMAUsed, true, memory_order_release);
