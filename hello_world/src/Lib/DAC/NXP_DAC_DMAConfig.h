@@ -7,10 +7,25 @@
 
 #include "NXP_DAC_Types.h"
 
+/*
+ * Noise TCD buffer ownership:
+ * Free    : not used by DMA, CPU may claim for refill/update.
+ * Filling : owned by CPU worker/update path.
+ * Ready   : complete buffer, available for DMA queueing.
+ * Queued  : submitted to DMA, CPU must not modify.
+ * Active  : initial/running DMA buffer ownership, CPU must not modify.
+ *
+ * Only Free/Ready buffers may be claimed by CPU-side update/refill logic.
+ * Only Ready buffers may be claimed for DMA queueing.
+ * Stop/disable must stop DMA and flush the refill worker before clearing states.
+ */
+
 #define DAC_DMA_WORD_BYTES          sizeof(uint32_t)
 
 extern bool bSetup_DAC_DMA_Circular(const uint32_t *puiDMABuffer, 
-                                    uint16_t uiLen, 
+                                    uint16_t uiLen,
+                                    eDAC_WaveFormType_t eWaveType,
+                                    eT_TCDBuff_t eTCDBuffId, 
                                     uintptr_t ptrDAC, 
                                     DACError_Callback_t pvErrorCallback,
                                     DACParam_UpdateComplete_Callback_t pvUpdateCallback);
@@ -19,5 +34,6 @@ extern sT_DAC_DMA_Flags stGet_DAC_DMA_Status( void );
 extern bool bRequest_DMA_BufferSwap(const uint32_t *puiDMABuffer, uint16_t uiLen, uint8_t uiBuffIndex);
 extern void vStop_DAC_To_DMA_Request( void );
 extern void vSet_DMA_ReStart_Request( void );
+extern void vReset_TCDBuffer_Management( void );
 
 #endif

@@ -50,82 +50,26 @@ int main(void)
 			switch (uiIndex)
 			{
 				case 0:
-					vPrint_CPU_Load("before update");
-					vUpdate_WaveForm_Frequency(2000);
-					vPrint_CPU_Load("after update");
+					vGet_Execution_Time_uS("NoiseGen", eGetTime_T0, eTime_mS);
+					vUpdate_WaveForm_Volume(500);
+					vGet_Execution_Time_uS("NoiseGen", eGetTime_T1, eTime_mS);
 					uiIndex++;
 					break;
 				case 1:
-					vGet_Execution_Time_uS("DAC BENCH", eGetTime_T0, eTime_mS);
-					vUpdate_WaveForm_Frequency(3000);
-					vGet_Execution_Time_uS("DAC BENCH", eGetTime_T1, eTime_mS);
+					vUpdate_WaveForm_Volume(800);
 					uiIndex++;
 					break;
 				case 2:
-					vUpdate_WaveForm_Frequency(4000);
+					vDAC_DisableWaveGen(eDAC_DefaultOut_Low, 0);
 					uiIndex++;
 					break;
 				case 3:
-					vUpdate_WaveForm_Frequency(5000);
 					uiIndex++;
 					break;
 				case 4:
-					vUpdate_WaveForm_Frequency(6000);
-					uiIndex++;
-					break;
-				case 5:
-					vUpdate_WaveForm_Frequency(7000);
-					uiIndex++;
-					break;
-				case 6:
-					vUpdate_WaveForm_Frequency(8000);
-					uiIndex++;
-					break;
-				case 7:
-					vUpdate_WaveForm_Frequency(7000);
-					uiIndex++;
-					break;
-				case 8:
-					vUpdate_WaveForm_Frequency(6000);
-					uiIndex++;
-					break;
-				case 9:
-					vUpdate_WaveForm_Frequency(5000);
-					uiIndex++;
-					break;
-				case 10:
-					vUpdate_WaveForm_Frequency(4000);
-					uiIndex++;
-					break;
-				case 11:
-					vUpdate_WaveForm_Frequency(3000);
-					uiIndex++;
-					break;
-				case 12:
-					vUpdate_WaveForm_Frequency(2000);
-					uiIndex++;
-					break;
-				case 13:
-					if(!bispaused)
-					{
-						vUpdate_WaveForm_Frequency(1000);
-						vStop_WaveGen(eDAC_DefaultOut_Custom, 1000);						
-						printk("Waveform Generation Paused.\n");
-						turn = 0;
-						bispaused = true;
-						break;
-					}
-					if(bispaused && turn < 20)
-					{
-						turn++;
-						printk("Waveform Generation Paused @Restart Counting = %d.\n", turn);
-						break;
-					}
-					bispaused = false;
-					vReStart_WaveGen();
-					printk("Waveform Generation Resumed.\n");
+					vDAC_EnableWaveGen();
 					uiIndex = 0;
-					break;					
+					break;
 				default:
 					break;
 			}
@@ -153,17 +97,17 @@ void vConfigure_DAC( void )
 	stDACConfig.eRefVoltSrc = eDAC_RefVoltSrc_VREF_VDD_ANA; // Adjust as needed based on actual hardware configuration
 	stDACConfig.stOutputBuffConfig.bEnableOutputBuffer = true;
 	stDACConfig.stOutputBuffConfig.eOutputBuffLowPowerMode = eDAC_OutputBuff_Higher_LowPowerMode;
-	stDACConfig.stOutputConfig.eWaveFormType = eDAC_WaveForm_Sine;
+	stDACConfig.stOutputConfig.eWaveFormType = eDAC_WaveForm_WhiteNoise;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.eFIFOWorkMode = eMode_FIFO;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.stTHWTrigSrc.eTrigSrcGroup = eDAC_TrigSrcGroup_CTIMER;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.stTHWTrigSrc.uTrigSrc.eCTimerTrigSrc = eDAC_TrigSrc_CTIMER0_MAT0;
-	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiPeakVoltage_mV = 1000;
+	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiPeakVoltage_mV = 100;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiDCOffset_mV = 1010;
-	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiFrequencyHz = 1000;
+	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiFrequencyHz = 148000;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.pvErrorCallback = NULL;
 
 	vDAC_Init(&stDACConfig);
-
+	k_msleep(2000);
 	//bDAC_UpdateOutputValue(2500U);
 	// Configure other fields of stDACConfig as needed
 }

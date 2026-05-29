@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "DAC_ProjDef.h"
 
 #define DAC_RESOLUTION_BITS                 (12U)
 #define DAC_MAX_CODE_VALUE                  (4095U)
@@ -130,6 +131,15 @@ typedef enum{
     eNUMBER_OF_DAC_INTERNAL_ROUTEs
 } eDAC_InternalRoute_t;
 
+typedef enum
+{
+    eNoiseBuf_Free = 0,      // CPU may write
+    eNoiseBuf_Filling,       // CPU is generating samples
+    eNoiseBuf_Ready,         // filled, ready for DMA
+    eNoiseBuf_Queued,        // handed to DMA/TCD queue
+    eNoiseBuf_Active        // currently being consumed
+} eNoiseBufState_t;
+
 typedef struct 
 {
     eDAC_OUT_RouteType_t eOutRouteType;
@@ -172,6 +182,12 @@ typedef struct
 typedef struct{
     uint32_t uiOutputValue_mV;
 } sT_DCOutput_t;
+
+typedef struct{
+    eT_TCDBuff_t eBuffId;
+    _Atomic eNoiseBufState_t eBuffState;
+    uint32_t uiBuffer[DMA_NOISEGEN_SAMPLE_COUNT];
+} sT_TCDBuffCtrl_t;
 
 typedef void (*DACError_Callback_t)(eDAC_Error eError, void *pUserData);
 typedef void (*DACParam_UpdateComplete_Callback_t)(bool status, void *pUserData);
