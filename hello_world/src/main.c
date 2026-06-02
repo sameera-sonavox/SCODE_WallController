@@ -19,62 +19,21 @@ void vConfigure_DAC( void );
 
 int main(void)
 {
-	uint32_t uiCount = 0, turn = 0;
-	uint8_t uiIndex = 0;
-	bool bispaused = false;
-
 	vInit_Amp();
 	vConfirm_MCUbootImage();
 	printk("Missig FW Img Booting over UART....\n\r");
 /* 	uint8_t uiaData_Mgmt[4] = {0x34, 0x22, 0x55, 0xEE};
-	uint8_t uiaData_Boot[4] = {0x55, 0x66, 0x77, 0x88};
 
 	sT_CAN_TXMsg_t stMsg = {
 		.uiID = CAN_NODE_0_ID,
 		.uiLen = 4,
 		.puiData = uiaData_Mgmt
-	};
-	sT_CAN_TXMsg_t stMsg_Boot = {
-		.uiID = CAN_RX_BOOTLOADER_ID,
-		.uiLen = 4,
-		.puiData = uiaData_Boot
 	}; */
 
 	while (1)
 	{
 		k_msleep(50);
-		if(uiCount < 25)
-			uiCount++;
-		if(uiCount >= 25)
-		{
-			switch (uiIndex)
-			{
-				case 0:
-					vGet_Execution_Time_uS("NoiseGen", eGetTime_T0, eTime_mS);
-					vUpdate_WaveForm_Volume(500);
-					vGet_Execution_Time_uS("NoiseGen", eGetTime_T1, eTime_mS);
-					uiIndex++;
-					break;
-				case 1:
-					vUpdate_WaveForm_Volume(800);
-					uiIndex++;
-					break;
-				case 2:
-					vDAC_DisableWaveGen(eDAC_DefaultOut_Low, 0);
-					uiIndex++;
-					break;
-				case 3:
-					uiIndex++;
-					break;
-				case 4:
-					vDAC_EnableWaveGen();
-					uiIndex = 0;
-					break;
-				default:
-					break;
-			}
-			uiCount = 0;
-		}
+		//vSend_CANMessage(&stMsg);
 	}
 	
 }
@@ -83,8 +42,8 @@ void vInit_Amp( void )
 {
 	//vInit_BootloaderController();
 	vInit_Amp_GPIO();
-	//vInit_CANController();
-	//vInit_UART_CAN_Bridge();
+	vInit_CANController();
+	vInit_UART_CAN_Bridge();
 	vConfigure_DAC();
 
 	SET_AMP_SD();
