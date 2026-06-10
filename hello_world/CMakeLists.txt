@@ -10,6 +10,11 @@ list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/DACC
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(hello_world)
 
+set(MCUX_SDK_NG_DIR "${WEST_TOPDIR}/modules/hal/nxp/mcux/mcux-sdk-ng")
+
+target_include_directories(app PRIVATE
+                ${MCUX_SDK_NG_DIR}/drivers/lpadc)
+
 target_sources(app PRIVATE 
                 src/main.c 
                 src/Lib/PWM/NXP_PWM_API.c 
@@ -23,4 +28,8 @@ target_sources(app PRIVATE
                 src/Lib/DAC/NXP_DAC_API.c 
                 src/Lib/DAC/NXP_DAC_DMAConfig.c 
                 src/Lib/CPULoad/NXP_CPU_LoadMon.c 
-                src/Lib/ADC/NXP_ADC_API.c)
+                src/Lib/ADC/NXP_ADC_API.c 
+                src/Lib/ADC/NXP_ADC_LinkedList.c 
+                src/ADC_Controller/ADC_Controller.c 
+                src/Lib/ADC/NXP_ADC_CHMap.c 
+                ${MCUX_SDK_NG_DIR}/drivers/lpadc/fsl_lpadc.c)

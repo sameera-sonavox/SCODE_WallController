@@ -250,7 +250,17 @@ static bool bGet_BootloaderExpectedPayloadLen( eT_Bootloader_Command eCMD, uint8
 
 void vCAN_RXCallback(const struct device *dev, struct can_frame *frame, void *user_data)
 {
-    printk("%s-> Id: %d\n\r", __func__, frame->id);
+    if(frame == NULL)
+        return;
+
+    uint8_t uiLen = can_dlc_to_bytes(frame->dlc);
+    if(frame->id != CAN_NODE_0_ID || uiLen == 0)
+        return;
+
+    eT_Bootloader_Command eCMD = (eT_Bootloader_Command)frame->data[0];
+    if(eCMD < eBootloader_CMD_FWUpReq || eCMD >= eNUMBER_OF_BOOTLOADER_COMMANDs)
+        return;
+
     vUART_CAN_Bridge_ForwardCANFrame(frame);
 }
 

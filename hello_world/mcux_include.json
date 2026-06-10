@@ -15,7 +15,12 @@
         "PATH": "$env{MCUX_VENV_PATH}${pathListSep}$penv{PATH}",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       },
-      "cacheVariables": {}
+      "cacheVariables": {
+        "Zephyr-sdk_DIR": {
+          "value": "C:/Users/sameera.SONAVOX/nxp_dev/tools/zephyr-sdk/zephyr-sdk-1.0.1_windows-x86_64_gnu/zephyr-sdk-1.0.1/cmake",
+          "type": "PATH"
+        }
+      }
     },
     {
       "name": "release-env",
@@ -28,7 +33,12 @@
         "PATH": "$env{MCUX_VENV_PATH}${pathListSep}$penv{PATH}",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       },
-      "cacheVariables": {}
+      "cacheVariables": {
+        "Zephyr-sdk_DIR": {
+          "value": "C:/Users/sameera.SONAVOX/nxp_dev/tools/zephyr-sdk/zephyr-sdk-1.0.1_windows-x86_64_gnu/zephyr-sdk-1.0.1/cmake",
+          "type": "PATH"
+        }
+      }
     }
   ],
   "buildPresets": []

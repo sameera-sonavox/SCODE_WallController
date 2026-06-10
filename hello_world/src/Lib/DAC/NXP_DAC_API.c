@@ -2487,7 +2487,6 @@ void vDisable_DACConfig_with_CTimer( void )
 
 void vStop_WaveGen(eDAC_DefaultOutLevel_t eDefaultLevel, uint32_t uiCustomVal_mV)
 {
-    int iret = 0;
     if(bIsDACDisabled())
     {
         FHALT("DAC already disabled");

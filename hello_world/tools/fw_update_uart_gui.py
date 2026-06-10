@@ -56,6 +56,13 @@ CMD_FW_UP_MSG = 21
 CMD_FW_UP_END = 22
 CMD_GET_LOST_PACKET_INFO = 25
 CMD_RET_LOST_PACKET_INFO = 26
+VALID_BOOTLOADER_REPLY_COMMANDS = {
+    CMD_FW_UP_REQ,
+    CMD_FW_UP_MSG,
+    CMD_FW_UP_END,
+    CMD_GET_LOST_PACKET_INFO,
+    CMD_RET_LOST_PACKET_INFO,
+}
 
 BOOTLOADER_ACK = 10
 BOOTLOADER_NACK = 11
@@ -228,6 +235,14 @@ class BridgeClient:
         return command, sequence, payload
 
     def _log_slave_frame(self, command: int, sequence: int, payload: bytes) -> None:
+        if command not in VALID_BOOTLOADER_REPLY_COMMANDS:
+            payload_text = " ".join(f"{byte:02X}" for byte in payload)
+            self._log(
+                f"Ignored non-bootloader CAN frame: cmd={command}, seq={sequence}, payload=[{payload_text}]",
+                "bridge",
+            )
+            return
+
         if len(payload) >= 2 and payload[0] in (BOOTLOADER_ACK, BOOTLOADER_NACK):
             status = "ACK" if payload[0] == BOOTLOADER_ACK else "NACK"
             category = "slave" if payload[0] == BOOTLOADER_ACK else "error"
