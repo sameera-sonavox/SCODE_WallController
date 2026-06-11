@@ -1,3 +1,6 @@
 syntax: glob
 hello_world/__repo__
 hello_world/debug
+hello_world/release
+custom setup
+hello_world/format-prompt
