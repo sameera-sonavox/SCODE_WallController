@@ -4,18 +4,21 @@
 #include "NXP_ADC_Types.h"
 #include "NXP_ADC_LinkedList.h"
 
-#define ADC_MAX_ADCLK_FREQ_Hz                   96000000
-#define ADC_MAX_POWER_SENSITIVE_FREQ_Hz         24000000
-#define ADC_MAX_COV_RATE_12bit_S_s              4000000
-#define ADC_MAX_COV_RATE_16bit_S_s              3200000
+#define ADC_MAX_ADCLK_FREQ_Hz                   96000000U
+#define ADC_MAX_POWER_SENSITIVE_FREQ_Hz         24000000U
+#define ADC_MAX_COV_RATE_12bit_S_s              4000000U
+#define ADC_MAX_COV_RATE_16bit_S_s              3200000U
 
+#define ADC_MIN_ADCLK_FREQ_Hz                   6000000U
+#define ADC_MAX_ADCLK_FREQ_AT_LOW_PW_MODE       24000000U
+#define ADC_MAX_ADCLK_FREQ_AT_HIGH_PW_MODE      64000000U
 
-#define ADC_MAX_WATERMARK_LEVEL                 8
-#define ADC_MAX_LOOP_COUNT                      15
-#define ADC_MAX_TRIG_DELAY_ADC_CLK_CYCLEs       16
-#define ADC_TRIG_COMPLETE_MASK                  0x000F0000
-#define ADC_TRIG_EXCEPTION_MASK                 0x0000000F
-#define ADC_IDLE_TIMEOUT_MS                     2
+#define ADC_MAX_WATERMARK_LEVEL                 8U
+#define ADC_MAX_LOOP_COUNT                      15U
+#define ADC_MAX_TRIG_DELAY_ADC_CLK_CYCLEs       16U
+#define ADC_TRIG_COMPLETE_MASK                  0x000F0000U
+#define ADC_TRIG_EXCEPTION_MASK                 0x0000000FU
+#define ADC_IDLE_TIMEOUT_MS                     2U
 
 extern void vInit_ADC(sT_ADC_ModuleConfig_t *pstADCModuleConfig);//Once this is called, all the pointers are handled by the API. It means memory release will be done by the API
                                                                  //Application should not engage with memory or reference any command config after the initialization.

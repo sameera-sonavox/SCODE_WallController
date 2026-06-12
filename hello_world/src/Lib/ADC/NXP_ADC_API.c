@@ -4,7 +4,6 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/dma.h>
-#include <math.h>
 #include "fsl_lpadc.h"
 #include "fsl_common.h"
 #include "fsl_inputmux.h"
@@ -84,11 +83,12 @@ static struct k_thread kADC_Statistic_Thread_t;
 static k_tid_t kADC_ThreadId;
 static void vCompute_ADC_Statistics_ForThread( void *p1, void *p2, void *p3 );
 static void vCompute_AVG_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlotCtrl_t *pstTrigSlot,
-                               sT_ADC_StatisticsSample_t *pstTADCSample);
+                               const sT_ADC_StatisticsSample_t *pstTADCSample);
 static void vCompute_RMS_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlotCtrl_t *pstTrigSlot,
-                               sT_ADC_StatisticsSample_t *pstTADCSample);
-static void vCompute_Max_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlotCtrl_t *pstTrigSlot, sT_ADC_StatisticsSample_t *pstTADCSample);
-static void vCompute_Min_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlotCtrl_t *pstTrigSlot, sT_ADC_StatisticsSample_t *pstTADCSample);
+                               const sT_ADC_StatisticsSample_t *pstTADCSample);
+static void vCompute_Max_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlotCtrl_t *pstTrigSlot, const sT_ADC_StatisticsSample_t *pstTADCSample);
+static void vCompute_Min_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlotCtrl_t *pstTrigSlot, const sT_ADC_StatisticsSample_t *pstTADCSample);
+static uint16_t uiADC_IntegerSqrt(uint64_t uiValue);
 
 K_MSGQ_DEFINE(kADCMeasDataQueue, sizeof(sT_ADC_StatisticsSample_t), ADC_MSGQ_LENGTH, 4);
 K_MUTEX_DEFINE(kADCStatisticsMutex);
@@ -206,12 +206,14 @@ bool bGet_ADCValue(eADC_Module_t eModule, eADC_Channel_t eChannel, uint16_t *pui
     stADC_HWmodConfig_t *pstADCModule = pstGetADCModule(eModule);
     if(pstADCModule == NULL)
     {
+        FHALT("Null Pointer reference for ADC Module");
         return false;
     }
 
     sT_ADC_ChannelMap_t *pstChData = pstGetADCChannelData(eModule, eChannel);
     if(pstChData == NULL)
     {
+        FHALT("Null Pointer reference for channel map");
         return false;
     }
     sT_ADC_ChMinMax_t *pstMin = &pstChData->stStats.stTMinVal;
@@ -224,25 +226,38 @@ bool bGet_ADCValue(eADC_Module_t eModule, eADC_Channel_t eChannel, uint16_t *pui
             break;
         case eADC_Max:
             if(bIs_Msgq_Full())
+            {
+                FHALT("Message queue full");
                 return false;
+            }
             *puiValue = atomic_load_explicit(&pstMax->uiADCVal, memory_order_acquire);
             break;
         case eADC_Min:
             if(bIs_Msgq_Full())
+            {
+                FHALT("Message queue full");
                 return false;
+            }
             *puiValue = atomic_load_explicit(&pstMin->uiADCVal, memory_order_acquire);
             break;
         case eADC_Avg:
             if(bIs_Msgq_Full())
+            {
+                FHALT("Message queue full");
                 return false;
+            }
             *puiValue = atomic_load_explicit(&pstChData->stStats.stTAvgVal.uiADCVal, memory_order_acquire);
             break;
         case eADC_RMS:
             if(bIs_Msgq_Full())
+            {
+                FHALT("Message queue full");
                 return false;
+            }
             *puiValue = atomic_load_explicit(&pstChData->stStats.stTRMSVal.uiADCVal, memory_order_acquire);
             break;      
         default:
+            FHALT("Invalid Value Type : %d", eValType);
             *puiValue = 0;
             return false;
     }
@@ -667,7 +682,7 @@ static void vCompute_ADC_Statistics_ForThread( void *p1, void *p2, void *p3 )
     {
         if(k_msgq_get(&kADCMeasDataQueue, &stTADCSample, K_FOREVER) != 0)
             continue;
-        
+
         sT_ADC_ChannelMap_t *pstChData = pstGetADCChannelData(stTADCSample.eModule, stTADCSample.eChannel);
         if(pstChData == NULL)
             continue;
@@ -675,7 +690,7 @@ static void vCompute_ADC_Statistics_ForThread( void *p1, void *p2, void *p3 )
         k_mutex_lock(&kADCStatisticsMutex, K_FOREVER);
 
         if(stTADCSample.uiGeneration != atomic_load_explicit(&uiaADCStatisticsGeneration[stTADCSample.eModule],
-                                                              memory_order_acquire))
+                                                            memory_order_acquire))
         {
             k_mutex_unlock(&kADCStatisticsMutex);
             continue;
@@ -694,7 +709,7 @@ static void vCompute_ADC_Statistics_ForThread( void *p1, void *p2, void *p3 )
 }
 
 static void vCompute_RMS_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlotCtrl_t *pstTrigSlot,
-                               sT_ADC_StatisticsSample_t *pstTADCSample)
+                               const sT_ADC_StatisticsSample_t *pstTADCSample)
 {
     sT_ADC_ChAvgRMS_t *pstRMS = &pstStatistics->stTRMSVal;
 
@@ -705,7 +720,7 @@ static void vCompute_RMS_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlot
     if(pstRMS->uiSampleCount >= uiMaxSampleCount && !bIsTigSlot_Paused(pstTrigSlot))
     {
         pstRMS->uiSampleCount = (pstRMS->uiSampleCount > 0U) ? pstRMS->uiSampleCount : 1U;
-        uint16_t uiADCRMSVal = sqrt((double)(pstRMS->uiADCVal_Sum / pstRMS->uiSampleCount));
+        uint16_t uiADCRMSVal = uiADC_IntegerSqrt(pstRMS->uiADCVal_Sum / pstRMS->uiSampleCount);
         atomic_store_explicit(&pstRMS->uiADCVal, uiADCRMSVal, memory_order_release);
         
         pstRMS->uiSampleCount = 0U;
@@ -719,8 +734,33 @@ static void vCompute_RMS_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlot
 
 }
 
+static uint16_t uiADC_IntegerSqrt(uint64_t uiValue)
+{
+    uint64_t uiResult = 0U;
+    uint64_t uiBit = 1ULL << 62U;
+
+    while(uiBit > uiValue)
+        uiBit >>= 2U;
+
+    while(uiBit != 0U)
+    {
+        if(uiValue >= (uiResult + uiBit))
+        {
+            uiValue -= uiResult + uiBit;
+            uiResult = (uiResult >> 1U) + uiBit;
+        }
+        else
+        {
+            uiResult >>= 1U;
+        }
+        uiBit >>= 2U;
+    }
+
+    return (uiResult > UINT16_MAX) ? UINT16_MAX : (uint16_t)uiResult;
+}
+
 static void vCompute_AVG_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlotCtrl_t *pstTrigSlot,
-                               sT_ADC_StatisticsSample_t *pstTADCSample)
+                               const sT_ADC_StatisticsSample_t *pstTADCSample)
 {
     sT_ADC_ChAvgRMS_t *pstAvg = &pstStatistics->stTAvgVal;
 
@@ -745,7 +785,7 @@ static void vCompute_AVG_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlot
 }
 
 
-static void vCompute_Min_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlotCtrl_t *pstTrigSlot, sT_ADC_StatisticsSample_t *pstTADCSample)
+static void vCompute_Min_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlotCtrl_t *pstTrigSlot, const sT_ADC_StatisticsSample_t *pstTADCSample)
 {
     if(pstStatistics == NULL || pstTADCSample == NULL || pstTrigSlot == NULL)
     {
@@ -778,7 +818,7 @@ static void vCompute_Min_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlot
     pstMin->uiLastTriggerTime_ms = k_uptime_get();    
 }
 
-static void vCompute_Max_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlotCtrl_t *pstTrigSlot, sT_ADC_StatisticsSample_t *pstTADCSample)
+static void vCompute_Max_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlotCtrl_t *pstTrigSlot, const sT_ADC_StatisticsSample_t *pstTADCSample)
 {
     if(pstStatistics == NULL || pstTADCSample == NULL || pstTrigSlot == NULL)
     {
@@ -1322,6 +1362,7 @@ static bool bValidate_TriggerSrc_Frequency(const stADC_HWmodConfig_t *pstHWConfi
     uint64_t uiLongestSegmentCycles;
     uint64_t uiTriggerOverheadCycles;
     const sT_ADC_CommandConfig_t *pstCmdNode;
+    bool bIsHardwareTrigger;
 
     if(pstHWConfig == NULL || pstTrigConfig == NULL)
     {
@@ -1329,11 +1370,9 @@ static bool bValidate_TriggerSrc_Frequency(const stADC_HWmodConfig_t *pstHWConfi
         return false;
     }
 
-    if(pstTrigConfig->stTADCTrigCtrl.eTrigSrcType != eADC_TrigSrcCtrl_Hardware)
-    {
-        return true;
-    }
-    if(pstTrigConfig->stTADCTrigCtrl.uiTrigFrequency_Hz == 0U)
+    bIsHardwareTrigger =
+        (pstTrigConfig->stTADCTrigCtrl.eTrigSrcType == eADC_TrigSrcCtrl_Hardware);
+    if(bIsHardwareTrigger && (pstTrigConfig->stTADCTrigCtrl.uiTrigFrequency_Hz == 0U))
     {
         FHALT("Hardware trigger slot[%d] frequency cannot be zero", pstTrigConfig->eTrigSlot);
         return false;
@@ -1384,13 +1423,24 @@ static bool bValidate_TriggerSrc_Frequency(const stADC_HWmodConfig_t *pstHWConfi
     while(pstCmdNode != NULL)
     {
         const sT_ADC_CMDData_t *pstCmdData = &pstCmdNode->stTCMDData;
+        uint64_t uiCyclesPerConversion;
         uint64_t uiCommandCycles;
+        uint32_t uiMaxConversionRate;
 
         if((pstCmdData->eResolution >= eNUMBER_OF_ADC_RESOLUTIONs) ||
            (pstCmdData->eSampleTime >= eNUMBER_OF_ADC_SAMPLE_TIMEs) ||
            (pstCmdData->eHWAvgSampleCount >= eNUMBER_OF_ADC_AVG_CONVCOUNTs))
         {
             FHALT("Invalid timing configuration in command[%d]", pstCmdData->eCommandId);
+            return false;
+        }
+
+        if((pstCmdData->eResolution == eADC_Resolution_12Bit) &&
+           (uiTune == (uint32_t)kLPADC_TuneValue2))
+        {
+            FHALT("ADC[%d] command[%d]: CFG2 TUNE=2 is not allowed in 12-bit mode because it can produce missing codes",
+                  uiADCId,
+                  pstCmdData->eCommandId);
             return false;
         }
 
@@ -1402,12 +1452,28 @@ static bool bValidate_TriggerSrc_Frequency(const stADC_HWmodConfig_t *pstHWConfi
             uiCurrentSegmentCycles = uiTriggerOverheadCycles;
         }
 
+        uiCyclesPerConversion =
+            (uint64_t)uiaBaseConversionCycles[pstHWConfig->stHighSpeedConfig.bIsHighSpeed_Enabled ? 1U : 0U]
+                                             [pstHWConfig->stHighSpeedConfig.bIsHighSpeedExtra_Enabled ? 1U : 0U]
+                                             [uiTune]
+                                             [pstCmdData->eResolution] +
+            (uint64_t)uiaSampleTimeExtraCycles[pstCmdData->eSampleTime];
+        uiMaxConversionRate = (pstCmdData->eResolution == eADC_Resolution_12Bit) ?
+                              ADC_MAX_COV_RATE_12bit_S_s :
+                              ADC_MAX_COV_RATE_16bit_S_s;
+        if((uint64_t)uiClkFreq > ((uint64_t)uiMaxConversionRate * uiCyclesPerConversion))
+        {
+            FHALT("ADC[%d] command[%d] conversion rate[%d S/s] exceeds %d-bit limit[%d S/s]",
+                  uiADCId,
+                  pstCmdData->eCommandId,
+                  (uint32_t)((uint64_t)uiClkFreq / uiCyclesPerConversion),
+                  (pstCmdData->eResolution == eADC_Resolution_12Bit) ? 12U : 16U,
+                  uiMaxConversionRate);
+            return false;
+        }
+
         uiCommandCycles =
-            ((uint64_t)uiaBaseConversionCycles[pstHWConfig->stHighSpeedConfig.bIsHighSpeed_Enabled ? 1U : 0U]
-                                               [pstHWConfig->stHighSpeedConfig.bIsHighSpeedExtra_Enabled ? 1U : 0U]
-                                               [uiTune]
-                                               [pstCmdData->eResolution] +
-             (uint64_t)uiaSampleTimeExtraCycles[pstCmdData->eSampleTime]) *
+            uiCyclesPerConversion *
             (uint64_t)uiaAverageMultipliers[pstCmdData->eHWAvgSampleCount] *
             ((uint64_t)pstCmdData->uiLoopCount + 1U);
         uiCurrentSegmentCycles += uiCommandCycles;
@@ -1417,7 +1483,8 @@ static bool bValidate_TriggerSrc_Frequency(const stADC_HWmodConfig_t *pstHWConfi
     if(uiCurrentSegmentCycles > uiLongestSegmentCycles)
         uiLongestSegmentCycles = uiCurrentSegmentCycles;
 
-    if(((uint64_t)pstTrigConfig->stTADCTrigCtrl.uiTrigFrequency_Hz * uiLongestSegmentCycles) > uiClkFreq)
+    if(bIsHardwareTrigger &&
+       (((uint64_t)pstTrigConfig->stTADCTrigCtrl.uiTrigFrequency_Hz * uiLongestSegmentCycles) > uiClkFreq))
     {
         FHALT("ADC[%d] slot[%d] trigger[%d Hz] exceeds timing limit[%d Hz], cycles[%d]",
               uiADCId,
@@ -1891,7 +1958,19 @@ static bool bADC_Init(ADC_Type *pstADCBase, stADC_HWmodConfig_t *pstHWConfig, sT
             return false;
     }
     pstADCConfig->enableAnalogPreliminary = true;//ADC remains power one while being idle
-    //pstADCConfig->powerLevelMode
+    
+    switch(pstADCModuleConfig->eADCPWlevel)
+    {
+        case eADC_PW_Lev_Low:
+            pstADCConfig->powerLevelMode = kLPADC_PowerLevelAlt1;
+            break;
+        case eADC_PW_Lev_High:
+            pstADCConfig->powerLevelMode = kLPADC_PowerLevelAlt2;
+            break;
+        default:
+            FHALT("Invalid ADC Power Level : %d", pstADCModuleConfig->eADCPWlevel);
+            return false;
+    }
 
     LPADC_Init(pstADCBase, pstADCConfig);
     LPADC_EnableHighSpeedConversionMode(pstADCBase, pstHWConfig->stHighSpeedConfig.bIsHighSpeed_Enabled);
@@ -1930,6 +2009,39 @@ static void vValidate_ADCConfig(sT_ADC_ModuleConfig_t *pstADCModuleConfig)
         FHALT("Invalid ADC CLK Divisions : %d", pstADCModuleConfig->eADCCLK_Div);
         pstADCModuleConfig->bIsConfigOk = false;
         return;
+    }
+
+    if(pstADCModuleConfig->eADCPWlevel >= eNUMBER_OF_ADC_POWER_LEVELs)
+    {
+        FHALT("Invalid ADC Power Mode Settings : %d", pstADCModuleConfig->eADCPWlevel);
+        pstADCModuleConfig->bIsConfigOk = false;
+        return;        
+    }
+
+    uint32_t uiADCLK = (pstADCModuleConfig->eADCClk_Src == eADC_SRC_CLK_12MHz)? 12000000U : 96000000U;
+    uiADCLK = (uint32_t)(uiADCLK / pstADCModuleConfig->eADCCLK_Div);
+    switch(pstADCModuleConfig->eADCPWlevel)
+    {
+        case eADC_PW_Lev_Low:
+            if(uiADCLK < ADC_MIN_ADCLK_FREQ_Hz || uiADCLK > ADC_MAX_ADCLK_FREQ_AT_LOW_PW_MODE)
+            {
+                FHALT("Invalid ADCLK Freq : %d Hz", uiADCLK);
+                pstADCModuleConfig->bIsConfigOk = false;
+                return;
+            }
+            break;
+        case eADC_PW_Lev_High:
+            if(uiADCLK < ADC_MIN_ADCLK_FREQ_Hz || uiADCLK > ADC_MAX_ADCLK_FREQ_AT_HIGH_PW_MODE)
+            {
+                FHALT("Invalid ADCLK Freq : %d Hz", uiADCLK);
+                pstADCModuleConfig->bIsConfigOk = false;
+                return;
+            }
+            break;
+        default:
+            FHALT("Invalid Power Mode : %d", pstADCModuleConfig->eADCPWlevel);
+            pstADCModuleConfig->bIsConfigOk = false;
+            return;
     }
 
     if(!bValidate_TrigSourceCompCallbackFn(pstADCModuleConfig))
