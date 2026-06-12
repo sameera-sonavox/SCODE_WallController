@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "DAC_ProjDef.h"
+#include "../TrigSrcControl/TrigSrcControl_Types.h"
 
 #define DAC_RESOLUTION_BITS                 (12U)
 #define DAC_MAX_CODE_VALUE                  (4095U)
@@ -28,10 +29,10 @@ typedef enum
 
 typedef enum
 {
-    eDAC_TrigSrc_Hardware = 0,
-    eDAC_TrigSrc_Software,
+    eTrigSrc_Hardware = 0,
+    eTrigSrc_Software,
     eNUMBER_OF_DAC_TRIG_SRCs
-} eDAC_TrigSrc_t;
+} eTrigSrc_t;
 
 typedef enum
 {
@@ -42,45 +43,6 @@ typedef enum
     eNUMBER_OF_DAC_BUFFER_WATERMARKs
 } eDAC_BufferWatermark_t;
 
-typedef enum
-{
-    eDAC_TrigSrcGroup_None = 0,
-    eDAC_TrigSrcGroup_CTIMER,
-    eDAC_TrigSrcGroup_LPTIMER,
-    eDAC_TrigSrcGroup_AOI,
-    eDAC_TrigSrcGroup_GPIO,
-    eDAC_TrigSrcGroup_CPU,
-    eDAC_TrigSrcGroup_ADC,
-    eNUMBER_OF_DAC_TRIG_SRC_GROUPs
-} eDAC_TrigSrcGroup_t;
-
-typedef enum
-{
-    eDAC_TrigSrc_CTIMER0_MAT0 = 0,
-    eDAC_TrigSrc_CTIMER0_MAT1,
-    eDAC_TrigSrc_CTIMER1_MAT0,
-    eDAC_TrigSrc_CTIMER1_MAT1,
-    eDAC_TrigSrc_CTIMER2_MAT0,
-    eDAC_TrigSrc_CTIMER2_MAT1,
-    eDAC_TrigSrc_CTIMER3_MAT0,
-    eDAC_TrigSrc_CTIMER3_MAT1,
-    eNUMBER_OF_DAC_CTIMER_TRIG_SRCs
-} eDAC_TrigSrc_CTimer_t;
-
-typedef enum
-{
-    eDAC_TrigSrc_AOI_0 = 0,
-    eDAC_TrigSrc_AOI_1,
-    eNUMBER_OF_DAC_AOI_TRIG_SRCs
-} eDAC_TrigSrc_AOI_t;
-
-typedef enum
-{
-    eDAC_TrigSrc_WUU = 0,
-    eDAC_TrigSrc_ARM_TXEV,
-    eNUMBER_OF_DAC_CPU_TRIG_SRCs
-} eDAC_TrigSrc_CPU_t;
-
 typedef struct
 {
     uint8_t uiGPIONum;
@@ -89,20 +51,20 @@ typedef struct
 
 typedef enum
 {
-    eDAC_TrigSrc_ADC_0 = 0,
-    eDAC_TrigSrc_ADC_1,
+    eTrigSrc_ADC_0 = 0,
+    eTrigSrc_ADC_1,
     eNUMBER_OF_DAC_ADC_TRIG_SRCs
-} eDAC_TrigSrc_ADC_t;
+} eTrigSrc_ADC_t;
 
 typedef struct
 {
-    eDAC_TrigSrcGroup_t eTrigSrcGroup;
+    eTrigSrcGroup_t eTrigSrcGroup;
     union
     {
-        eDAC_TrigSrc_CTimer_t eCTimerTrigSrc;
-        eDAC_TrigSrc_AOI_t eAOITrigSrc;
-        eDAC_TrigSrc_CPU_t eCPUTrigSrc;
-        eDAC_TrigSrc_ADC_t eADCTrigSrc;
+        eTrigSrc_CTimer_t eCTimerTrigSrc;
+        eTrigSrc_AOI_t eAOITrigSrc;
+        eTrigSrc_CPU_t eCPUTrigSrc;
+        eTrigSrc_ADC_t eADCTrigSrc;
         sT_DAC_TrigSrc_GPIO_t stGPIOTrigSrc;
     } uTrigSrc;
 } sT_DAC_TrigSrc_Mux_t;

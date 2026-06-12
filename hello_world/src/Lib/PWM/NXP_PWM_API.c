@@ -4,6 +4,7 @@
 
 #include "NXP_PWM_API.h"
 #include "NXP_PWM_ProjDef.h"
+#include "../TrigSrcControl/TrigSrcControl.h"
 #include "../GenericMacro.h"
 
 typedef enum{
@@ -62,10 +63,27 @@ eCTPWM_Channel_t eCTIMER_Module_To_PWMChannel_Map[eNUMBER_OF_CTIMER_MODULES][4] 
     {eCTPWM17, eCTPWM18, eCTPWM19, eCTPWM20},
 };
 
+static const eTrigSrc_CTimer_t eaCTimerReservationSource[eNUMBER_OF_CTIMER_MODULES] = {
+    eTrigSrc_CTIMER0_MAT0,
+    eTrigSrc_CTIMER1_MAT0,
+    eTrigSrc_CTIMER2_MAT0,
+    eTrigSrc_CTIMER3_MAT0,
+    eTrigSrc_CTIMER4_MAT0,
+};
+
+static const eTrigSrcConsumer_t eaCTimerReservationConsumer[eNUMBER_OF_CTIMER_MODULES] = {
+    eTrigConsumer_PWM_CTimer0,
+    eTrigConsumer_PWM_CTimer1,
+    eTrigConsumer_PWM_CTimer2,
+    eTrigConsumer_PWM_CTimer3,
+    eTrigConsumer_PWM_CTimer4,
+};
+
 static uint32_t uiGetInitial_PWM_Frequency(eCTPWM_Channel_t ePWMID);
 static ePWM_IdleLevel_t eGet_PWM_IdleLevel(eCTPWM_Channel_t ePWMID);
 static const struct pwm_dt_spec * pstIsValid_PWM_Channel(eCTPWM_Channel_t ePWMID);
 static void vCheck_For_ValidFrequencyUpdate(eT_CTIMER_Module_t eCTIMER_Module);
+static bool bReserve_PWM_CTimer(eCTPWM_Channel_t ePWMID);
 
 void vInit_PWM(void)
 {    
@@ -80,6 +98,14 @@ void vInit_PWM(void)
             if((pstPWM == NULL) || !pwm_is_ready_dt(pstPWM))
             {
                 FHALT("PWM channel %d is enabled but not properly initialized in the device tree", i);
+                continue;
+            }
+
+            if(!bReserve_PWM_CTimer((eCTPWM_Channel_t)i))
+            {
+                FHALT("PWM channel %d cannot exclusively acquire its CTIMER module", i);
+                staPWM_Config[i].ePWMID = (eCTPWM_Channel_t)i;
+                staPWM_Config[i].eState = ePWM_Disabled;
                 continue;
             }
 
@@ -102,6 +128,17 @@ void vInit_PWM(void)
             staPWM_Config[i].uiDutyCycle_percent = 0;
         }
     }
+}
+
+static bool bReserve_PWM_CTimer(eCTPWM_Channel_t ePWMID)
+{
+    if(ePWMID >= eNUMBER_OF_CTPWM_CHANNELS)
+        return false;
+
+    eT_CTIMER_Module_t eModule = eTimerSub_To_CTIMER_Module_Map[ePWMID];
+    return bTrigSrc_AcquireCTimer(eaCTimerReservationSource[eModule],
+                                  eaCTimerReservationConsumer[eModule],
+                                  eTrigShareMode_Exclusive);
 }
 
 static ePWM_IdleLevel_t eGet_PWM_IdleLevel(eCTPWM_Channel_t ePWMID)

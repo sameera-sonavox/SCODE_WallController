@@ -4,13 +4,14 @@
 #include "ADC_Controller.h"
 #include "../Lib/ADC/NXP_ADC_API.h"
 #include "../Lib/ADC/NXP_ADC_ProjDef.h"
+#include "../Lib/TrigSrcControl/TrigSrcControl.h"
 #include "../Lib/GenericMacro.h"
+
+#define ADC0_TRIGGER_FREQUENCY_HZ 40000U
 
 _Atomic bool bADCOverflow = false;
 
-struct k_work_delayable kADC_SW_TrigSlot_0;
-static void vTrigger_ADC_Slot_0( struct k_work *work );
-
+static bool bSetup_TriggerSource( void );
 void vADC_0_TrigCompleteCallback(eADC_Module_t eADCmodule, uint32_t uiTrigMask, void *pvUserdata);
 
 void vInitialize_ADCModule( void )
@@ -31,8 +32,9 @@ void vInitialize_ADCModule( void )
     pstTrigSrc->bIsTrigSlotEnabled = true;
     pstTrigSrc->bEnTrigCompletionNotifyReq = true;
     pstTrigSrc->eTrigSlot = eTrig_Slot_0;
-    pstTrigSrc->eTrigSrcType = eTrigSrc_Software;
-    pstTrigSrc->eTrigSrc = eADC_TrigSrc_None;
+    pstTrigSrc->stTADCTrigCtrl.eTrigSrcType = eADC_TrigSrcCtrl_Hardware;
+    pstTrigSrc->stTADCTrigCtrl.eTrigSrc = eADC_TrigSrc_CTimer1_MAT0;
+    pstTrigSrc->stTADCTrigCtrl.uiTrigFrequency_Hz = ADC0_TRIGGER_FREQUENCY_HZ;
     pstTrigSrc->uiTrigDelay = 3;
     pstTrigSrc->ePrioLevel = eTrig_Prio_Lev_0;
 
@@ -77,37 +79,25 @@ void vInitialize_ADCModule( void )
         return;
     }
 
-    sT_ADC_CommandConfig_t *pstCmd = pstGetCommandData(eADC_ADC0, eADC_Ch_1);
-    if(pstCmd != NULL)
+    if(!bSetup_TriggerSource())
     {
-        printf("Cmd : Id[%d], Ch[%d] @Res: %d\n\r", pstCmd->stTCMDData.eCommandId, pstCmd->stTCMDData.eChannel, pstCmd->stTCMDData.eResolution);
-    }
-    pstCmd->stTCMDData.eResolution = eADC_Resolution_12Bit;
-
-    pstCmd = pstGetCommandData(eADC_ADC0, eADC_Ch_1);
-    if(pstCmd != NULL)
-    {
-        printf("Cmd : Id[%d], Ch[%d] @Res: %d\n\r", pstCmd->stTCMDData.eCommandId, pstCmd->stTCMDData.eChannel, pstCmd->stTCMDData.eResolution);
-    }
-    else
-    {
-        printf("Error : CMD NULL\n\r");
-    }
-/*     k_work_init_delayable(&kADC_SW_TrigSlot_0, vTrigger_ADC_Slot_0);
-    k_work_schedule(&kADC_SW_TrigSlot_0, K_USEC(100)); */
-}
-
-static void vTrigger_ADC_Slot_0( struct k_work *work )
-{
-    ARG_UNUSED(work);
-    bool bRes = bSet_ADCSW_Trig(eADC_ADC0, eTrig_Slot_0);
-    if(bRes)
-    {
-        k_work_schedule(&kADC_SW_TrigSlot_0, K_MSEC(10));
+        FHALT("ADC trigger source setup failed");
+        vDeInit_ADC(eADC_ADC0);
         return;
     }
+}
 
-    FHALT("SW Trigger Failed");
+static bool bSetup_TriggerSource( void )
+{
+    if(!bTrigSrc_ConfigureCTimer(eTrigSrc_CTIMER1_MAT0,
+                                  eTrigConsumer_ADC0_Slot0,
+                                  ADC0_TRIGGER_FREQUENCY_HZ))
+    {
+        return false;
+    }
+
+    return bTrigSrc_StartCTimer(eTrigSrc_CTIMER1_MAT0,
+                                eTrigConsumer_ADC0_Slot0);
 }
 
 void vADC_0_TrigCompleteCallback(eADC_Module_t eADCmodule, uint32_t uiTrigMask, void *pvUserdata)

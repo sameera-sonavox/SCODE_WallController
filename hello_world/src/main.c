@@ -60,8 +60,8 @@ void vConfigure_DAC( void )
 	stDACConfig.stOutputBuffConfig.eOutputBuffLowPowerMode = eDAC_OutputBuff_Higher_LowPowerMode;
 	stDACConfig.stOutputConfig.eWaveFormType = eDAC_WaveForm_Sine;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.eFIFOWorkMode = eMode_FIFO;
-	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.stTHWTrigSrc.eTrigSrcGroup = eDAC_TrigSrcGroup_CTIMER;
-	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.stTHWTrigSrc.uTrigSrc.eCTimerTrigSrc = eDAC_TrigSrc_CTIMER0_MAT0;
+	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.stTHWTrigSrc.eTrigSrcGroup = eTrigSrcGroup_CTIMER;
+	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.stTHWTrigSrc.uTrigSrc.eCTimerTrigSrc = eTrigSrc_CTIMER0_MAT0;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiPeakVoltage_mV = 1000;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiDCOffset_mV = 1010;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiFrequencyHz = 10000;
@@ -69,6 +69,9 @@ void vConfigure_DAC( void )
 
 	vDAC_Init(&stDACConfig);
 	k_msleep(2000);
+	vUpdate_WaveForm_Volume(500);
+	k_msleep(4000);
+	vUpdate_WaveForm_Frequency(4000);
 	//bDAC_UpdateOutputValue(2500U);
 	// Configure other fields of stDACConfig as needed
 }

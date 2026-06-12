@@ -12,6 +12,7 @@
 #include "NXP_ADC_API.h"
 #include "NXP_ADC_Types.h"
 #include "NXP_ADC_CHMap.h"
+#include "../TrigSrcControl/TrigSrcControl.h"
 #include "../GenericMacro.h"
 #include "../CPULoad/NXP_CPU_LoadMon.h"
 #include "NXP_ADC_ProjDef.h"
@@ -53,6 +54,8 @@ typedef struct
     bool bIsEnabled;
     _Atomic bool bIsPaused;
     eADC_TrigSrcType_t eaTrigSlotType;
+    bool bHasCentralTrigReservation;
+    eTrigSrc_CTimer_t eCentralTrigSource;
     struct sT_ADC_CommandConfig_t *pstCMDHead;
 } sT_TrigSlotCtrl_t;
 
@@ -61,6 +64,9 @@ typedef struct
     bool bIsADCInitialized;
     bool baCommandConfigStat[eNUMBER_OF_ADC_COMMANDs];
     _Atomic bool *pbOverflowFlag;
+    eADC_CLK_Src_t eADCClk_Src;
+    eADC_Clk_Div_t eADCCLK_Div;
+    sT_ADC_HighSpeedConfig_t stHighSpeedConfig;
     uint32_t uiGlobalIntrMask;
     sT_TrigSlotCtrl_t staTrigSlotCtrl[eNUMBER_OF_ADC_TRIG_SLOTs];
     ADC_Type *pstADCBase;
@@ -112,6 +118,8 @@ static bool bADC_Init(ADC_Type *pstADCBase, stADC_HWmodConfig_t *pstHWConfig,sT_
 static bool bADC_InitCommandConfig(ADC_Type *pstADCBase, 
                                    stADC_HWmodConfig_t *pstHWConfig, 
                                    sT_ADC_ModuleConfig_t *pstADCModuleConfig);
+static bool bValidate_TriggerSrc_Frequency(const stADC_HWmodConfig_t *pstHWConfig,
+                                           const sT_ADC_TrigConfig_t *pstTrigConfig);
 
 static bool bConfig_ADCCommand(lpadc_conv_command_config_t *pstlpadc_CmdConfig, sT_ADC_CMDData_t *pstCmdData, sT_ADC_ModuleConfig_t *pstADCModuleConfig);                                   
 static bool bMap_ADCChannel(eADC_Module_t eModule, eADC_Channel_t eChannel, uint32_t *puiMappedChannel);
@@ -119,7 +127,9 @@ static bool bAssign_ADCResolution(eADC_ResolutionType_t eResolution, lpadc_conve
 static bool bAssign_LoopBehavior(eADC_Module_t eADCModule, lpadc_conv_command_config_t *pstlpadc_CmdConfig, sT_ADC_CMDData_t *pstCmdData);
 static bool bAssign_HWAverageMode(lpadc_conv_command_config_t *pstlpadc_CmdConfig, sT_ADC_CMDData_t *pstCmdData);
 static bool bAssign_SampleTime(lpadc_conv_command_config_t *pstlpadc_CmdConfig, sT_ADC_CMDData_t *pstCmdData);
-static bool bHW_TrigSrc_Setup(ADC_Type *pstADCBase, eADC_Module_t eADCmodule, sT_ADC_TrigConfig_t *pstTrigConfig);
+static bool bMap_ADC_CTimerTrigSource(eADC_TrigSource_t eADCSource, eTrigSrc_CTimer_t *peCentralSource);
+static eTrigSrcConsumer_t eGet_ADCTrigConsumer(eADC_Module_t eADCModule, eADC_TrigSlot_t eTrigSlot);
+static void vRelease_ADCTrigSourceReservations(eADC_Module_t eADCModule, sT_TrigSlotCtrl_t *pstaTrigSlotCtrl);
 static void vSet_TrigSlot_TrigType(eADC_Module_t eADCModule, sT_ADC_TrigConfig_t *pstTrigConfig);
 static eADC_TrigSrcType_t eGet_TrigSlot_TrigType(eADC_Module_t eADCModule, eADC_TrigSlot_t eTrigSlot);
 static bool bIs_TrigSlotEnabled(eADC_Module_t eADCModule, eADC_TrigSlot_t eTrigSlot);
@@ -127,6 +137,10 @@ static void vInit_ADC_Thread( void );
 static void vDeInit_ADC_Thread( void );
 static void vRelease_CMDMemory_AtFailure(sT_ADC_ModuleConfig_t *pstADCModuleConfig);
 static void vRelease_CommandMemoryBuffers(sT_TrigSlotCtrl_t *pstaTrigSlotCtrl);
+
+static bool bHW_TrigSrc_Setup(ADC_Type *pstADCBase, eADC_Module_t eADCmodule, sT_ADC_TrigConfig_t *pstTrigConfig);
+static bool bConfigure_ADC_TrigSource( eADC_Module_t eADCmodule, sT_ADC_TrigConfig_t *pstTrigConfig);
+static bool bSetup_CTimer_ForTrigSource(eADC_Module_t eADCmodule, sT_ADC_TrigConfig_t *pstTrigConfig);
 
 static bool bADC_ResultReadBackConfig(ADC_Type *pstADCBase, eADC_Module_t eADCModule, sT_ADC_ModuleConfig_t *pstADCModuleConfig);
 static bool bSet_TrigCompletionInterrupts(ADC_Type *pstADCBase, eADC_Module_t eADCModule, sT_ADC_ModuleConfig_t *pstADCModuleConfig);
@@ -287,7 +301,7 @@ bool bSet_ADCSW_Trig(eADC_Module_t eADCModule, eADC_TrigSlot_t eTrigSlot)
     }
 
     eADC_TrigSrcType_t eTrigType = eGet_TrigSlot_TrigType(eADCModule, eTrigSlot);
-    if(eTrigType != eTrigSrc_Software)
+    if(eTrigType != eADC_TrigSrcCtrl_Software)
     {
         FHALT("ADC[%d] HW Trig enabled for TrigSlot[%d]", eADCModule, eTrigSlot);
         return false;
@@ -994,10 +1008,10 @@ static bool bPause_ADCModule(eADC_Module_t eModule)
 
         switch(pstTrigSlotCtrl->eaTrigSlotType)
         {
-            case eTrigSrc_Software:
+            case eADC_TrigSrcCtrl_Software:
                 vPasue_ActiveTrigSlot(pstTrigSlotCtrl);
                 break;
-            case eTrigSrc_Hardware:
+            case eADC_TrigSrcCtrl_Hardware:
                 pstADCBase->TCTRL[pstTrigSlotCtrl->eSlotId] &= ~ADC_TCTRL_HTEN_MASK;
                 vPasue_ActiveTrigSlot(pstTrigSlotCtrl);
                 break;
@@ -1041,10 +1055,10 @@ static void vResume_ADCModule(eADC_Module_t eModule)
 
         switch(pstTrigSlotCtrl->eaTrigSlotType)
         {
-            case eTrigSrc_Software:
+            case eADC_TrigSrcCtrl_Software:
                 vResume_PausedTrigSlot(pstTrigSlotCtrl);
                 break;
-            case eTrigSrc_Hardware:
+            case eADC_TrigSrcCtrl_Hardware:
                 pstADCBase->TCTRL[pstTrigSlotCtrl->eSlotId] |= ADC_TCTRL_HTEN_MASK;
                 vResume_PausedTrigSlot(pstTrigSlotCtrl);
                 break;
@@ -1159,12 +1173,12 @@ static bool bADC_InitCommandConfig(ADC_Type *pstADCBase,
         if(!pstTrigConfig[uiTrigSlotIndex].bIsTrigSlotEnabled)
             continue;
 
-        if(pstTrigConfig[uiTrigSlotIndex].eTrigSrcType <= eTrigSrc_None ||
-           pstTrigConfig[uiTrigSlotIndex].eTrigSrcType >= eNUMBER_OF_TRIGGER_TYPEs)
+        if(pstTrigConfig[uiTrigSlotIndex].stTADCTrigCtrl.eTrigSrcType <= eADC_TrigSrcCtrl_None ||
+           pstTrigConfig[uiTrigSlotIndex].stTADCTrigCtrl.eTrigSrcType >= eNUMBER_OF_TRIGGER_TYPEs)
         {
             FHALT("Invalid trigger source type for trigger slot[%d]: %d",
                 uiTrigSlotIndex,
-                pstTrigConfig[uiTrigSlotIndex].eTrigSrcType);
+                pstTrigConfig[uiTrigSlotIndex].stTADCTrigCtrl.eTrigSrcType);
             return false;
         }        
         if(pstTrigConfig[uiTrigSlotIndex].ePrioLevel < 0 || pstTrigConfig[uiTrigSlotIndex].ePrioLevel >= eNUMBER_OF_PRIORITY_LEVELs)
@@ -1182,6 +1196,11 @@ static bool bADC_InitCommandConfig(ADC_Type *pstADCBase,
         if(pstCmdNode == NULL)
         {
             FHALT("ADC Command Config pointer is NULL for trigger slot %d. Cannot initialize ADC command configuration.\n", uiTrigSlotIndex);
+            return false;
+        }
+
+        if(!bValidate_TriggerSrc_Frequency(pstHWConfig, &pstTrigConfig[uiTrigSlotIndex]))
+        {
             return false;
         }
 
@@ -1252,7 +1271,7 @@ static bool bADC_InitCommandConfig(ADC_Type *pstADCBase,
         lpadc_conv_trigger_config_t stTrigConfig;        
         LPADC_GetDefaultConvTriggerConfig(&stTrigConfig);
 
-        stTrigConfig.enableHardwareTrigger = (pstTrigConfig[uiTrigSlotIndex].eTrigSrcType == eTrigSrc_Hardware)? true: false;
+        stTrigConfig.enableHardwareTrigger = (pstTrigConfig[uiTrigSlotIndex].stTADCTrigCtrl.eTrigSrcType == eADC_TrigSrcCtrl_Hardware)? true: false;
         stTrigConfig.targetCommandId = pstCmdNode->stTCMDData.eCommandId;
         stTrigConfig.priority = (uint32_t)pstTrigConfig[uiTrigSlotIndex].ePrioLevel;
         stTrigConfig.delayPower = pstTrigConfig[uiTrigSlotIndex].uiTrigDelay;        
@@ -1273,6 +1292,145 @@ static bool bADC_InitCommandConfig(ADC_Type *pstADCBase,
     return true;
 }
 
+static bool bValidate_TriggerSrc_Frequency(const stADC_HWmodConfig_t *pstHWConfig,
+                                           const sT_ADC_TrigConfig_t *pstTrigConfig)
+{
+    /* Table 321: base ADCK cycles including the minimum 3.5 ADCK sample time.
+     * Index order: [HS][HSEXTRA][TUNE][resolution: 12-bit, 16-bit]. */
+    static const uint8_t uiaBaseConversionCycles[2][2][3][2] = {
+        {
+            {{20U, 24U}, {19U, 23U}, {18U, 22U}},
+            {{20U, 24U}, {19U, 23U}, {18U, 22U}},
+        },
+        {
+            {{17U, 21U}, {16U, 20U}, {15U, 19U}},
+            {{18U, 22U}, {17U, 21U}, {16U, 20U}},
+        },
+    };
+    /* Tables 322 and 323. */
+    static const uint8_t uiaSampleTimeExtraCycles[eNUMBER_OF_ADC_SAMPLE_TIMEs] = {
+        0U, 2U, 4U, 8U, 16U, 32U, 64U, 128U
+    };
+    static const uint16_t uiaAverageMultipliers[eNUMBER_OF_ADC_AVG_CONVCOUNTs] = {
+        1U, 2U, 4U, 8U, 16U, 32U, 64U, 128U, 256U, 512U, 1024U
+    };
+    const uint32_t uiTriggerRecognitionCycles = 9U;
+    uint32_t uiADCId;
+    uint32_t uiClkFreq;
+    uint32_t uiTune;
+    uint64_t uiCurrentSegmentCycles;
+    uint64_t uiLongestSegmentCycles;
+    uint64_t uiTriggerOverheadCycles;
+    const sT_ADC_CommandConfig_t *pstCmdNode;
+
+    if(pstHWConfig == NULL || pstTrigConfig == NULL)
+    {
+        FHALT("Null reference pointer");
+        return false;
+    }
+
+    if(pstTrigConfig->stTADCTrigCtrl.eTrigSrcType != eADC_TrigSrcCtrl_Hardware)
+    {
+        return true;
+    }
+    if(pstTrigConfig->stTADCTrigCtrl.uiTrigFrequency_Hz == 0U)
+    {
+        FHALT("Hardware trigger slot[%d] frequency cannot be zero", pstTrigConfig->eTrigSlot);
+        return false;
+    }
+    if(pstTrigConfig->pstTHeadCmdConfig == NULL)
+    {
+        FHALT("Trigger slot[%d] has no command chain", pstTrigConfig->eTrigSlot);
+        return false;
+    }
+
+    if(pstHWConfig->pstADCBase == ADC0)
+        uiADCId = 0U;
+    else if(pstHWConfig->pstADCBase == ADC1)
+        uiADCId = 1U;
+    else
+    {
+        FHALT("Invalid ADC base address");
+        return false;
+    }
+
+    uiClkFreq = CLOCK_GetAdcClkFreq(uiADCId);
+    if(uiClkFreq == 0U)
+    {
+        FHALT("ADC[%d] clock frequency is zero", uiADCId);
+        return false;
+    }
+
+    uiTune = (uint32_t)(pstHWConfig->stHighSpeedConfig.stConvCycleTune.uiValue >> 6U);
+    if(uiTune > (uint32_t)kLPADC_TuneValue2)
+    {
+        FHALT("ADC[%d] CFG2 TUNE value[%d] is reserved", uiADCId, uiTune);
+        return false;
+    }
+
+    uiTriggerOverheadCycles = uiTriggerRecognitionCycles;
+    if(!pstHWConfig->stADCConfig.enableAnalogPreliminary)
+    {
+        uiTriggerOverheadCycles += ((uint64_t)pstHWConfig->stADCConfig.powerUpDelay * 4U);
+    }
+    if(pstTrigConfig->uiTrigDelay != 0U)
+    {
+        uiTriggerOverheadCycles += (1ULL << pstTrigConfig->uiTrigDelay);
+    }
+
+    uiCurrentSegmentCycles = uiTriggerOverheadCycles;
+    uiLongestSegmentCycles = 0U;
+    pstCmdNode = pstTrigConfig->pstTHeadCmdConfig;
+    while(pstCmdNode != NULL)
+    {
+        const sT_ADC_CMDData_t *pstCmdData = &pstCmdNode->stTCMDData;
+        uint64_t uiCommandCycles;
+
+        if((pstCmdData->eResolution >= eNUMBER_OF_ADC_RESOLUTIONs) ||
+           (pstCmdData->eSampleTime >= eNUMBER_OF_ADC_SAMPLE_TIMEs) ||
+           (pstCmdData->eHWAvgSampleCount >= eNUMBER_OF_ADC_AVG_CONVCOUNTs))
+        {
+            FHALT("Invalid timing configuration in command[%d]", pstCmdData->eCommandId);
+            return false;
+        }
+
+        if((pstCmdNode != pstTrigConfig->pstTHeadCmdConfig) &&
+           pstCmdData->bIsNewTrig_Req_For_NextConv)
+        {
+            if(uiCurrentSegmentCycles > uiLongestSegmentCycles)
+                uiLongestSegmentCycles = uiCurrentSegmentCycles;
+            uiCurrentSegmentCycles = uiTriggerOverheadCycles;
+        }
+
+        uiCommandCycles =
+            ((uint64_t)uiaBaseConversionCycles[pstHWConfig->stHighSpeedConfig.bIsHighSpeed_Enabled ? 1U : 0U]
+                                               [pstHWConfig->stHighSpeedConfig.bIsHighSpeedExtra_Enabled ? 1U : 0U]
+                                               [uiTune]
+                                               [pstCmdData->eResolution] +
+             (uint64_t)uiaSampleTimeExtraCycles[pstCmdData->eSampleTime]) *
+            (uint64_t)uiaAverageMultipliers[pstCmdData->eHWAvgSampleCount] *
+            ((uint64_t)pstCmdData->uiLoopCount + 1U);
+        uiCurrentSegmentCycles += uiCommandCycles;
+        pstCmdNode = pstCmdNode->pstNextCommandConfig;
+    }
+
+    if(uiCurrentSegmentCycles > uiLongestSegmentCycles)
+        uiLongestSegmentCycles = uiCurrentSegmentCycles;
+
+    if(((uint64_t)pstTrigConfig->stTADCTrigCtrl.uiTrigFrequency_Hz * uiLongestSegmentCycles) > uiClkFreq)
+    {
+        FHALT("ADC[%d] slot[%d] trigger[%d Hz] exceeds timing limit[%d Hz], cycles[%d]",
+              uiADCId,
+              pstTrigConfig->eTrigSlot,
+              pstTrigConfig->stTADCTrigCtrl.uiTrigFrequency_Hz,
+              (uint32_t)((uint64_t)uiClkFreq / uiLongestSegmentCycles),
+              (uint32_t)uiLongestSegmentCycles);
+        return false;
+    }
+
+    return true;
+}
+
 static void vSet_TrigSlot_TrigType(eADC_Module_t eADCModule, sT_ADC_TrigConfig_t *pstTrigConfig)
 {
     stADC_HWmodConfig_t *pstADCModule = pstGetADCModule(eADCModule);
@@ -1282,7 +1440,7 @@ static void vSet_TrigSlot_TrigType(eADC_Module_t eADCModule, sT_ADC_TrigConfig_t
     sT_TrigSlotCtrl_t *pstTrigSlotCtrl = &pstADCModule->staTrigSlotCtrl[pstTrigConfig->eTrigSlot];
     pstTrigSlotCtrl->eSlotId = pstTrigConfig->eTrigSlot;
     pstTrigSlotCtrl->bIsEnabled = true;
-    pstTrigSlotCtrl->eaTrigSlotType = pstTrigConfig->eTrigSrcType;
+    pstTrigSlotCtrl->eaTrigSlotType = pstTrigConfig->stTADCTrigCtrl.eTrigSrcType;
     pstTrigSlotCtrl->pstCMDHead = pstTrigConfig->pstTHeadCmdConfig;
     pstTrigConfig->pstTHeadCmdConfig = NULL;
 }
@@ -1335,17 +1493,99 @@ static bool bHW_TrigSrc_Setup(ADC_Type *pstADCBase, eADC_Module_t eADCmodule, sT
         return false;
     }
 
-    inputmux_connection_t eMuxConnection = eGetInputMuxConnection(eADCmodule, pstTrigConfig->eTrigSrc);
+    inputmux_connection_t eMuxConnection = eGetInputMuxConnection(eADCmodule, pstTrigConfig->stTADCTrigCtrl.eTrigSrc);
     if(eMuxConnection == 0U)
     {
         FHALT("Invalid Input Mux Connection(%d)", eMuxConnection);
         return false;
     }
 
+    if(!bConfigure_ADC_TrigSource(eADCmodule, pstTrigConfig))
+        return false;
+
     INPUTMUX_Init(INPUTMUX0);
     INPUTMUX_AttachSignal(INPUTMUX0, (uint16_t)pstTrigConfig->eTrigSlot, eMuxConnection);
 
     return true;
+}
+
+static bool bConfigure_ADC_TrigSource(eADC_Module_t eADCmodule, sT_ADC_TrigConfig_t *pstTrigConfig)
+{    
+    switch(pstTrigConfig->stTADCTrigCtrl.eTrigSrc)
+    {
+        case eADC_TrigSrc_CTimer0_MAT0:
+        case eADC_TrigSrc_CTimer0_MAT1:
+        case eADC_TrigSrc_CTimer1_MAT0:
+        case eADC_TrigSrc_CTimer1_MAT1:
+        case eADC_TrigSrc_CTimer2_MAT0:
+        case eADC_TrigSrc_CTimer2_MAT1:
+            return bSetup_CTimer_ForTrigSource(eADCmodule, pstTrigConfig);
+        case eADC_TrigSrc_None:
+        default:
+            FHALT("Feature Not Implemented for TrigSrc: %d", pstTrigConfig->stTADCTrigCtrl.eTrigSrc);
+            return false;
+    }
+}
+
+static bool bSetup_CTimer_ForTrigSource(eADC_Module_t eADCmodule, sT_ADC_TrigConfig_t *pstTrigConfig)
+{
+
+    eTrigSrc_CTimer_t eCentralSource;
+    if(!bMap_ADC_CTimerTrigSource(pstTrigConfig->stTADCTrigCtrl.eTrigSrc, &eCentralSource))
+    {
+        FHALT("Trig Source could not be mapped in ADCModule[%d] & TrigSrc: %d", eADCmodule, pstTrigConfig->stTADCTrigCtrl.eTrigSrc);
+        return false;
+    }
+
+    eTrigSrcConsumer_t eConsumer = eGet_ADCTrigConsumer(eADCmodule, pstTrigConfig->eTrigSlot);
+    if(!bTrigSrc_AcquireCTimer(eCentralSource, eConsumer, eTrigShareMode_SharedFixed))
+    {
+        FHALT("ADC[%d] TrigSlot[%d] cannot acquire CTIMER trigger source[%d]",
+                eADCmodule,
+                pstTrigConfig->eTrigSlot,
+                eCentralSource);
+        return false;
+    }
+
+    if(!bTrigSrc_ConfigureCTimer(eCentralSource, eConsumer, pstTrigConfig->stTADCTrigCtrl.uiTrigFrequency_Hz))
+    {
+        vTrigSrc_ReleaseCTimer(eCentralSource, eConsumer);
+        FHALT("CTimer[%d] configuration failed for ADCModule[%d] Slot: %d", eCentralSource, eADCmodule, pstTrigConfig->eTrigSlot);
+        return false;
+    }
+
+    sT_TrigSlotCtrl_t *pstSlotCtrl =
+        &staADC_HWConfig[eADCmodule].staTrigSlotCtrl[pstTrigConfig->eTrigSlot];
+    pstSlotCtrl->bHasCentralTrigReservation = true;
+    pstSlotCtrl->eCentralTrigSource = eCentralSource;
+    return true;
+}
+
+static bool bMap_ADC_CTimerTrigSource(eADC_TrigSource_t eADCSource, eTrigSrc_CTimer_t *peCentralSource)
+{
+    if(peCentralSource == NULL)
+        return false;
+
+    switch(eADCSource)
+    {
+        case eADC_TrigSrc_CTimer0_MAT0: *peCentralSource = eTrigSrc_CTIMER0_MAT0; return true;
+        case eADC_TrigSrc_CTimer0_MAT1: *peCentralSource = eTrigSrc_CTIMER0_MAT1; return true;
+        case eADC_TrigSrc_CTimer1_MAT0: *peCentralSource = eTrigSrc_CTIMER1_MAT0; return true;
+        case eADC_TrigSrc_CTimer1_MAT1: *peCentralSource = eTrigSrc_CTIMER1_MAT1; return true;
+        case eADC_TrigSrc_CTimer2_MAT0: *peCentralSource = eTrigSrc_CTIMER2_MAT0; return true;
+        case eADC_TrigSrc_CTimer2_MAT1: *peCentralSource = eTrigSrc_CTIMER2_MAT1; return true;
+        case eADC_TrigSrc_CTimer3_MAT0: *peCentralSource = eTrigSrc_CTIMER3_MAT0; return true;
+        case eADC_TrigSrc_CTimer3_MAT1: *peCentralSource = eTrigSrc_CTIMER3_MAT1; return true;
+        case eADC_TrigSrc_CTimer4_MAT0: *peCentralSource = eTrigSrc_CTIMER4_MAT0; return true;
+        case eADC_TrigSrc_CTimer4_MAT1: *peCentralSource = eTrigSrc_CTIMER4_MAT1; return true;
+        default:
+            return false;
+    }
+}
+
+static eTrigSrcConsumer_t eGet_ADCTrigConsumer(eADC_Module_t eADCModule, eADC_TrigSlot_t eTrigSlot)
+{
+    return (eTrigSrcConsumer_t)((eADCModule * eNUMBER_OF_ADC_TRIG_SLOTs) + eTrigSlot);
 }
 
 static bool bConfig_ADCCommand(lpadc_conv_command_config_t *pstlpadc_CmdConfig, sT_ADC_CMDData_t *pstCmdData, sT_ADC_ModuleConfig_t *pstADCModuleConfig)
@@ -1615,8 +1855,49 @@ static bool bADC_Init(ADC_Type *pstADCBase, stADC_HWmodConfig_t *pstHWConfig, sT
         return false;
     }
     pstADCConfig->FIFOWatermark = pstADCModuleConfig->uiWaterMarkLevel;
+    pstHWConfig->eADCClk_Src = pstADCModuleConfig->eADCClk_Src;
+    pstHWConfig->eADCCLK_Div = pstADCModuleConfig->eADCCLK_Div;
+    pstHWConfig->stHighSpeedConfig = pstADCModuleConfig->stHighSpeedConfig;
+
+    switch(pstADCModuleConfig->eADCModule)
+    {
+        case eADC_ADC0:
+            CLOCK_SetClockDiv(kCLOCK_DivADC0, (uint32_t)pstHWConfig->eADCCLK_Div);
+            if(pstHWConfig->eADCClk_Src == eADC_SRC_CLK_12MHz)
+            {
+                CLOCK_AttachClk(kFRO12M_to_ADC0);
+            }
+            else if(pstHWConfig->eADCClk_Src == eADC_SRC_CLK_96MHz)
+            {
+                CLOCK_AttachClk(kFRO_HF_to_ADC0);
+            }
+            else
+                return false;
+            break;
+        case eADC_ADC1:
+            CLOCK_SetClockDiv(kCLOCK_DivADC1, (uint32_t)pstHWConfig->eADCCLK_Div);
+            if(pstHWConfig->eADCClk_Src == eADC_SRC_CLK_12MHz)
+            {
+                CLOCK_AttachClk(kFRO12M_to_ADC1);
+            }
+            else if(pstHWConfig->eADCClk_Src == eADC_SRC_CLK_96MHz)
+            {
+                CLOCK_AttachClk(kFRO_HF_to_ADC1);
+            }
+            else
+                return false;
+            break;
+        default:
+            return false;
+    }
+    pstADCConfig->enableAnalogPreliminary = true;//ADC remains power one while being idle
+    //pstADCConfig->powerLevelMode
 
     LPADC_Init(pstADCBase, pstADCConfig);
+    LPADC_EnableHighSpeedConversionMode(pstADCBase, pstHWConfig->stHighSpeedConfig.bIsHighSpeed_Enabled);
+    LPADC_EnableExtraCycle(pstADCBase, pstHWConfig->stHighSpeedConfig.bIsHighSpeedExtra_Enabled);
+    LPADC_SetTuneValue(pstADCBase,
+                       (lpadc_tune_value_t)(pstHWConfig->stHighSpeedConfig.stConvCycleTune.uiValue >> 6U));
     LPADC_DoAutoCalibration(pstADCBase);    
     return true;
 
@@ -1626,13 +1907,27 @@ static void vValidate_ADCConfig(sT_ADC_ModuleConfig_t *pstADCModuleConfig)
 {
     if(pstADCModuleConfig == NULL)
     {
-        FHALT("ADC Module Config pointer is NULL. Cannot validate ADC module configuration.\n");
+        FHALT("ADC Module Config pointer is NULL. Cannot validate ADC module configuration.\n\r");
         return;
     }
 
     if(pstADCModuleConfig->eADCModule >= eNUMBER_OF_ADC_MODULEs || pstADCModuleConfig->eADCModule < eADC_ADC0)
     {
-        FHALT("Invalid ADC module specified in configuration.\n");
+        FHALT("Invalid ADC module specified in configuration.\n\r");
+        pstADCModuleConfig->bIsConfigOk = false;
+        return;
+    }
+
+    if(pstADCModuleConfig->eADCClk_Src >= eNUMBER_OF_ADC_CLK_SOURCEs)
+    {
+        FHALT("Invalid ADC module Clock Source Config : %d.\n\r", pstADCModuleConfig->eADCClk_Src);
+        pstADCModuleConfig->bIsConfigOk = false;
+        return;
+    }
+
+    if(pstADCModuleConfig->eADCCLK_Div < eADCLK_DIV_1 || pstADCModuleConfig->eADCCLK_Div >= eNUMBER_OF_ADCLK_DIVISIONs)
+    {
+        FHALT("Invalid ADC CLK Divisions : %d", pstADCModuleConfig->eADCCLK_Div);
         pstADCModuleConfig->bIsConfigOk = false;
         return;
     }
@@ -1735,6 +2030,7 @@ void vDeInit_ADC(eADC_Module_t eADCModule)
     }
 
     vRelease_CommandMemoryBuffers(pstADCConfig->staTrigSlotCtrl);
+    vRelease_ADCTrigSourceReservations(eADCModule, pstADCConfig->staTrigSlotCtrl);
     
     k_mutex_lock(&kADCStatisticsMutex, K_FOREVER);
     atomic_fetch_add_explicit(&uiaADCStatisticsGeneration[eADCModule], 1U, memory_order_release);
@@ -1743,6 +2039,23 @@ void vDeInit_ADC(eADC_Module_t eADCModule)
 
     memset(pstADCConfig, 0, sizeof(*pstADCConfig));
     vDeInit_ADC_Thread();
+}
+
+static void vRelease_ADCTrigSourceReservations(eADC_Module_t eADCModule, sT_TrigSlotCtrl_t *pstaTrigSlotCtrl)
+{
+    if(pstaTrigSlotCtrl == NULL)
+        return;
+
+    for(uint8_t i = eTrig_Slot_0; i < eNUMBER_OF_ADC_TRIG_SLOTs; i++)
+    {
+        sT_TrigSlotCtrl_t *pstSlot = &pstaTrigSlotCtrl[i];
+        if(!pstSlot->bHasCentralTrigReservation)
+            continue;
+
+        vTrigSrc_ReleaseCTimer(pstSlot->eCentralTrigSource,
+                              eGet_ADCTrigConsumer(eADCModule, (eADC_TrigSlot_t)i));
+        pstSlot->bHasCentralTrigReservation = false;
+    }
 }
 
 static void vRelease_CommandMemoryBuffers(sT_TrigSlotCtrl_t *pstaTrigSlotCtrl)

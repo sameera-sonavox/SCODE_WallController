@@ -247,9 +247,9 @@ typedef enum
 
 typedef enum
 {
-    eTrigSrc_None = 0,
-    eTrigSrc_Software,
-    eTrigSrc_Hardware,
+    eADC_TrigSrcCtrl_None = 0,
+    eADC_TrigSrcCtrl_Software,
+    eADC_TrigSrcCtrl_Hardware,
     eNUMBER_OF_TRIGGER_TYPEs
 } eADC_TrigSrcType_t;
 
@@ -270,17 +270,58 @@ typedef enum
     eNUMBER_OF_ADC_STAT_TYPEs
 } eADC_StatType_t;
 
+typedef enum
+{
+    eADC_SRC_CLK_12MHz = 0,
+    eADC_SRC_CLK_96MHz,
+    eNUMBER_OF_ADC_CLK_SOURCEs
+} eADC_CLK_Src_t;
+
+typedef enum
+{
+    eADCLK_DIV_1 = 1,
+    eADCLK_DIV_2,
+    eADCLK_DIV_3,
+    eADCLK_DIV_4,
+    eADCLK_DIV_5,
+    eADCLK_DIV_6,
+    eADCLK_DIV_7,
+    eADCLK_DIV_8,
+    eADCLK_DIV_9,
+    eADCLK_DIV_10,
+    eADCLK_DIV_11,
+    eADCLK_DIV_12,
+    eADCLK_DIV_13,
+    eADCLK_DIV_14,
+    eADCLK_DIV_15,
+    eADCLK_DIV_16,
+    eNUMBER_OF_ADCLK_DIVISIONs
+} eADC_Clk_Div_t;
+
+typedef enum
+{
+    eADC_PW_Lev_Low = 0,
+    eADC_PW_Lev_High,
+    eNUMBER_OF_ADC_POWER_LEVELs
+} eADC_PowerLevel_t;
+
 typedef void (*ADC_TrigCompCallback_t)(eADC_Module_t eADCmodule, uint32_t uiTrigMask, void *pvUserdata);
+
+typedef struct
+{
+    eADC_TrigSrcType_t eTrigSrcType;
+    eADC_TrigSource_t eTrigSrc;
+    uint32_t uiTrigFrequency_Hz;
+} sT_ADC_TrigSrcCtrl_t;
 
 typedef struct
 {
     bool bIsTrigSlotEnabled;
     bool bEnTrigCompletionNotifyReq;
     eADC_TrigSlot_t eTrigSlot;
-    eADC_TrigSrcType_t eTrigSrcType;
-    eADC_TrigSource_t eTrigSrc;
     eADC_TrigPrio_t ePrioLevel;
     uint8_t uiTrigDelay;
+    sT_ADC_TrigSrcCtrl_t stTADCTrigCtrl;
     sT_ADC_CommandConfig_t *pstTHeadCmdConfig;
 } sT_ADC_TrigConfig_t;
 
@@ -328,7 +369,10 @@ typedef struct
     bool bIsConfigOk;
     _Atomic bool *pbOverflowFlag;
     eADC_Module_t eADCModule;
+    eADC_PowerLevel_t eADCPWlevel;
     eADC_RefVoltSrc_t eRefSrc;
+    eADC_CLK_Src_t eADCClk_Src;
+    eADC_Clk_Div_t eADCCLK_Div;
     uint8_t uiWaterMarkLevel;
     sT_ADCNotify_Ctrl_t stTNotifyCtrl;
     sT_ADC_HighSpeedConfig_t stHighSpeedConfig;

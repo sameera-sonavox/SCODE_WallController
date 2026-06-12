@@ -12,6 +12,7 @@
 
 #include "NXP_DAC_API.h"
 #include "NXP_DAC_DMAConfig.h"
+#include "../TrigSrcControl/TrigSrcControl.h"
 #include "../GenericMacro.h"
 
 #define DAC_TWO_PI_F                       (6.28318530717958647692f)
@@ -38,17 +39,13 @@ static uint32_t uiNoiseSeed = 0x12345678U;
 
 typedef struct
 {
-    CTIMER_Type *pstCTimerBase;
-    uint32_t uiCTimerId;
-    ctimer_match_t eMatchChannel;
+    eTrigSrc_CTimer_t eTrigSource;
     inputmux_connection_t eInputMuxConnection;
-    clock_attach_id_t eClockAttach;
-    clock_div_name_t eClockDiv;
 } sT_DAC_CTimerTrigSource_t;
 
 typedef struct
 {
-    eDAC_TrigSrcGroup_t eTrigSrcType;
+    eTrigSrcGroup_t eTrigSrcType;
     union{
         sT_DAC_CTimerTrigSource_t stTCTimerConfig;
     } stTrigSrcConfig_t;
@@ -136,30 +133,21 @@ typedef struct{
     sT_DAC_Config_t stTDACConfigTemp;
 } sT_DACBuffSwap_Noise_t;
 
-ctimer_match_t caTimerChannelMap[eNUMBER_OF_DAC_CTIMER_TRIG_SRCs] = {
-    kCTIMER_Match_0,//eDAC_TrigSrc_CTIMER0_MAT0
-    kCTIMER_Match_1,//eDAC_TrigSrc_CTIMER0_MAT1
-    kCTIMER_Match_0,//eDAC_TrigSrc_CTIMER1_MAT0
-    kCTIMER_Match_1,//eDAC_TrigSrc_CTIMER1_MAT1
-    kCTIMER_Match_0,//eDAC_TrigSrc_CTIMER2_MAT0
-    kCTIMER_Match_1,//eDAC_TrigSrc_CTIMER2_MAT1
-    kCTIMER_Match_0,//eDAC_TrigSrc_CTIMER3_MAT0
-    kCTIMER_Match_1,//eDAC_TrigSrc_CTIMER3_MAT1
-};
-
-inputmux_connection_t caTimerInputMuxMap[eNUMBER_OF_DAC_CTIMER_TRIG_SRCs] = {
-    kINPUTMUX_Ctimer0M0ToDac0Trigger,//eDAC_TrigSrc_CTIMER0_MAT0
-    kINPUTMUX_Ctimer0M1ToDac0Trigger,//eDAC_TrigSrc_CTIMER0_MAT1
-    kINPUTMUX_Ctimer1M0ToDac0Trigger,//eDAC_TrigSrc_CTIMER1_MAT0
-    kINPUTMUX_Ctimer1M1ToDac0Trigger,//eDAC_TrigSrc_CTIMER1_MAT1
-    kINPUTMUX_Ctimer2M0ToDac0Trigger,//eDAC_TrigSrc_CTIMER2_MAT0
-    kINPUTMUX_Ctimer2M1ToDac0Trigger,//eDAC_TrigSrc_CTIMER2_MAT1
-    kINPUTMUX_Ctimer3M0ToDac0Trigger,//eDAC_TrigSrc_CTIMER3_MAT0
-    kINPUTMUX_Ctimer3M1ToDac0Trigger,//eDAC_TrigSrc_CTIMER3_MAT1
+static const inputmux_connection_t caTimerInputMuxMap[eNUMBER_OF_CTIMER_TRIG_SRCs] = {
+    kINPUTMUX_Ctimer0M0ToDac0Trigger,//eTrigSrc_CTIMER0_MAT0
+    kINPUTMUX_Ctimer0M1ToDac0Trigger,//eTrigSrc_CTIMER0_MAT1
+    kINPUTMUX_Ctimer1M0ToDac0Trigger,//eTrigSrc_CTIMER1_MAT0
+    kINPUTMUX_Ctimer1M1ToDac0Trigger,//eTrigSrc_CTIMER1_MAT1
+    kINPUTMUX_Ctimer2M0ToDac0Trigger,//eTrigSrc_CTIMER2_MAT0
+    kINPUTMUX_Ctimer2M1ToDac0Trigger,//eTrigSrc_CTIMER2_MAT1
+    kINPUTMUX_Ctimer3M0ToDac0Trigger,//eTrigSrc_CTIMER3_MAT0
+    kINPUTMUX_Ctimer3M1ToDac0Trigger,//eTrigSrc_CTIMER3_MAT1
 };
 
 sT_DAC_Config_t stTDACConfig_t = {0};
-sT_DAC_OutputCode_Ctrl_t stTDACOutputCodeCtrl_t = {0};
+sT_DAC_OutputCode_Ctrl_t stTDACOutputCodeCtrl_t = {
+    .stTDACHWConfig.stTrigSrcConfig_t.stTCTimerConfig.eTrigSource = eNUMBER_OF_CTIMER_TRIG_SRCs
+};
 sT_DACBuffSwap_Wave_t stTBuffSwapData = {0};
 sT_DACBuffSwap_Noise_t stTBuffSwapData_Noise = {0};
 
@@ -247,13 +235,13 @@ static inline void vSet_DMAUpdate_Status( bool status );
 static inline void vClear_DMAUpdate_Status( void );
 static inline bool bIs_DMAUpdate_Success( void );
 
-void vConfigure_DACTrigSrc_CTIMER(eDAC_TrigSrc_CTimer_t eTrigCTimer, int *piret, DACError_Callback_t vCallBackFn);
+void vConfigure_DACTrigSrc_CTIMER(eTrigSrc_CTimer_t eTrigCTimer, int *piret, DACError_Callback_t vCallBackFn);
 void vConfigure_DACTrigSrc(sT_DAC_Config_t *pstConfig, int *piret);
 static void vStart_CTimer( void );
 static void vStop_CTimer( void );
 
 void vDeInit_CTimer_Configuration(void);
-void vAssign_CTimer_ToConfig(eDAC_TrigSrc_CTimer_t eTrigCTimer, int *piret);
+void vAssign_CTimer_ToConfig(eTrigSrc_CTimer_t eTrigCTimer, int *piret);
 
 static bool bConfigure_ReferenceSource(sT_DAC_Config_t *pstConfig, dac_config_t *pstDACConfig);
 static uint32_t uiCalculateDACCode(uint16_t uiOutput_mV, int *piret);
@@ -279,7 +267,7 @@ void vWaveGen_FrequencyUpdate(uint32_t uiFreq_Hz);
 
 void vNoiseGen_FrequencyUpdate(uint32_t uiFreq_Hz);
 static void vUpdate_TrigSrcFrequency_ForNoiseGen(sT_DAC_Config_t *pstConfig, sT_DAC_OutputCode_Metadata_t *pstTempDACOut, int *piret);
-static void vUpdate_CTimer_TrigFreq_ForNoiseGen(eDAC_TrigSrc_CTimer_t cTimerTrigSrc, sT_DAC_OutputCode_Metadata_t *pstTempDACOut, int *piret);
+static void vUpdate_CTimer_TrigFreq_ForNoiseGen(eTrigSrc_CTimer_t cTimerTrigSrc, sT_DAC_OutputCode_Metadata_t *pstTempDACOut, int *piret);
 
 void vStop_WaveGenerator( void );
 void vStop_WaveFormGenerator( void );
@@ -577,21 +565,21 @@ static void vUpdate_TrigSrcFrequency_ForNoiseGen(sT_DAC_Config_t *pstConfig, sT_
 
     switch(stTrigSrcMux_t.eTrigSrcGroup)
     {
-        case eDAC_TrigSrcGroup_CTIMER:
+        case eTrigSrcGroup_CTIMER:
             vSetDACOperationMode(eDAC_InternalMode_WaveGen_CTimer);
             vUpdate_CTimer_TrigFreq_ForNoiseGen(stTrigSrcMux_t.uTrigSrc.eCTimerTrigSrc, pstTempDACOut, piret);
             break;
-        case eDAC_TrigSrcGroup_LPTIMER:
+        case eTrigSrcGroup_LPTIMER:
             break;
-        case eDAC_TrigSrcGroup_AOI:
+        case eTrigSrcGroup_AOI:
             break;
-        case eDAC_TrigSrcGroup_GPIO:
+        case eTrigSrcGroup_GPIO:
             break;
-        case eDAC_TrigSrcGroup_CPU:
+        case eTrigSrcGroup_CPU:
             break;
-        case eDAC_TrigSrcGroup_ADC:
+        case eTrigSrcGroup_ADC:
             break;
-        case eDAC_TrigSrcGroup_None:
+        case eTrigSrcGroup_None:
         default:
             FHALT("Invalid HW Trigger Configuration\n\r");
             *piret = -1;
@@ -602,53 +590,20 @@ static void vUpdate_TrigSrcFrequency_ForNoiseGen(sT_DAC_Config_t *pstConfig, sT_
         return;
 }
 
-static void vUpdate_CTimer_TrigFreq_ForNoiseGen(eDAC_TrigSrc_CTimer_t cTimerTrigSrc, sT_DAC_OutputCode_Metadata_t *pstTempDACOut, int *piret)
+static void vUpdate_CTimer_TrigFreq_ForNoiseGen(eTrigSrc_CTimer_t cTimerTrigSrc, sT_DAC_OutputCode_Metadata_t *pstTempDACOut, int *piret)
 {
-    uint32_t uiTimerClock_Hz;
-    uint32_t uiMatchValue;
-    uint32_t uiTimerOutputToggleFrequency_Hz;    
-    ctimer_match_config_t stMatchConfig;
+    ARG_UNUSED(cTimerTrigSrc);
 
-    if(pstTempDACOut->uiTriggerFrequency_Hz == 0U ||
-       pstTempDACOut->uiTriggerFrequency_Hz > (UINT32_MAX / 2U))
+    if(!bTrigSrc_UpdateCTimerFrequency(DACHWTrigCTIMER_t.eTrigSource,
+                                       eTrigConsumer_DAC0_WaveGen,
+                                       pstTempDACOut->uiTriggerFrequency_Hz))
     {
-        FHALT("CTimer[%d] Trigger Freq. is not valid @Freq: %d", DACHWTrigCTIMER_t.uiCTimerId, pstTempDACOut->uiTriggerFrequency_Hz);
-        *piret = -1;
-        return;        
-    }
-    
-    uiTimerOutputToggleFrequency_Hz = pstTempDACOut->uiTriggerFrequency_Hz * 2U;
-    
-    uiTimerClock_Hz = CLOCK_GetCTimerClkFreq(DACHWTrigCTIMER_t.uiCTimerId);
-    if(uiTimerClock_Hz == 0)
-    {
-        FHALT("CTimer[%d] Base Clock is not set", DACHWTrigCTIMER_t.uiCTimerId);
+        FHALT("DAC exclusive CTIMER trigger frequency update failed @Freq: %d",
+              pstTempDACOut->uiTriggerFrequency_Hz);
         *piret = -1;
         return;
     }
-
-    uiMatchValue = uiTimerClock_Hz / uiTimerOutputToggleFrequency_Hz;
-    if(uiMatchValue == 0)
-    {
-        FHALT("CTimer[%d] Match value cannot be zero. Recheck the trigger frequency", DACHWTrigCTIMER_t.uiCTimerId);
-        *piret = -1;
-        return;        
-    }
-    uiMatchValue -= 1U;
-
-    CTIMER_StopTimer(DACHWTrigCTIMER_t.pstCTimerBase);
-
-    stMatchConfig.matchValue = uiMatchValue;
-    stMatchConfig.enableCounterReset = true;
-    stMatchConfig.enableCounterStop = false;
-    stMatchConfig.outControl = kCTIMER_Output_Toggle;
-    stMatchConfig.outPinInitState = false;
-    stMatchConfig.enableInterrupt = false;
-    CTIMER_SetupMatch(DACHWTrigCTIMER_t.pstCTimerBase,
-                      DACHWTrigCTIMER_t.eMatchChannel,
-                      &stMatchConfig);
-    CTIMER_Reset(DACHWTrigCTIMER_t.pstCTimerBase);
-    CTIMER_StartTimer(DACHWTrigCTIMER_t.pstCTimerBase);  
+    *piret = 0;
 }
 
 void vWaveGen_FrequencyUpdate(uint32_t uiFreq_Hz)
@@ -1014,6 +969,13 @@ void vDAC_Init(sT_DAC_Config_t *pstConfig)
     if(pstConfig == NULL)
     {
         FHALT("Invalid pointer to DAC configuration structure.");
+        return;
+    }
+
+    if(DACHWTrigCTIMER_t.eTrigSource < eNUMBER_OF_CTIMER_TRIG_SRCs)
+    {
+        pstConfig->bIsConfigured = false;
+        FHALT("Disable the active DAC waveform generator before reconfiguring it.");
         return;
     }
 
@@ -1543,22 +1505,22 @@ void vConfigure_DACTrigSrc(sT_DAC_Config_t *pstConfig, int *piret)
 
     switch(stTrigSrcMux_t.eTrigSrcGroup)
     {
-        case eDAC_TrigSrcGroup_CTIMER:
+        case eTrigSrcGroup_CTIMER:
             vSetDACOperationMode(eDAC_InternalMode_WaveGen_CTimer);
             vConfigure_DACTrigSrc_CTIMER(stTrigSrcMux_t.uTrigSrc.eCTimerTrigSrc, piret,
                                          pstConfig->stOutputConfig.uOutputConfig.stWaveFormOutput.pvErrorCallback);
             break;
-        case eDAC_TrigSrcGroup_LPTIMER:
+        case eTrigSrcGroup_LPTIMER:
             break;
-        case eDAC_TrigSrcGroup_AOI:
+        case eTrigSrcGroup_AOI:
             break;
-        case eDAC_TrigSrcGroup_GPIO:
+        case eTrigSrcGroup_GPIO:
             break;
-        case eDAC_TrigSrcGroup_CPU:
+        case eTrigSrcGroup_CPU:
             break;
-        case eDAC_TrigSrcGroup_ADC:
+        case eTrigSrcGroup_ADC:
             break;
-        case eDAC_TrigSrcGroup_None:
+        case eTrigSrcGroup_None:
         default:
             FHALT("Invalid HW Trigger Configuration\n\r");
             *piret = -1;
@@ -1569,14 +1531,8 @@ void vConfigure_DACTrigSrc(sT_DAC_Config_t *pstConfig, int *piret)
         return;
 }
 
-void vConfigure_DACTrigSrc_CTIMER(eDAC_TrigSrc_CTimer_t eTrigCTimer, int *piret, DACError_Callback_t vCallBackFn)
+void vConfigure_DACTrigSrc_CTIMER(eTrigSrc_CTimer_t eTrigCTimer, int *piret, DACError_Callback_t vCallBackFn)
 {
-    ctimer_config_t stTimerConfig;
-    ctimer_match_config_t stMatchConfig;
-    uint32_t uiTimerClock_Hz;
-    uint32_t uiMatchValue;
-    uint32_t uiTimerOutputToggleFrequency_Hz;
-
     vAssign_CTimer_ToConfig(eTrigCTimer, piret);
     if(*piret != 0)
     {
@@ -1584,47 +1540,26 @@ void vConfigure_DACTrigSrc_CTIMER(eDAC_TrigSrc_CTimer_t eTrigCTimer, int *piret,
         return;
     }
 
-    CLOCK_AttachClk(DACHWTrigCTIMER_t.eClockAttach);
-    CLOCK_SetClockDiv(DACHWTrigCTIMER_t.eClockDiv, 1U);
-
-    uiTimerClock_Hz = CLOCK_GetCTimerClkFreq(DACHWTrigCTIMER_t.uiCTimerId);
-    if(uiTimerClock_Hz == 0)
+    if(!bTrigSrc_AcquireCTimer(eTrigCTimer,
+                               eTrigConsumer_DAC0_WaveGen,
+                               eTrigShareMode_Exclusive))
     {
-        FHALT("CTimer[%d] Base Clock is not set", DACHWTrigCTIMER_t.uiCTimerId);
-        *piret = -1;
-        return;
-    }
-    if(stTDACOutputCodeCtrl_t.uiTriggerFrequency_Hz > (UINT32_MAX / 2U))
-    {
-        FHALT("CTimer[%d] Trigger frequency is too high", DACHWTrigCTIMER_t.uiCTimerId);
+        FHALT("DAC waveform generator cannot exclusively acquire CTIMER trigger source[%d]", eTrigCTimer);
+        DACHWTrigCTIMER_t.eTrigSource = eNUMBER_OF_CTIMER_TRIG_SRCs;
+        DACHWTrigCTIMER_t.eInputMuxConnection = 0U;
         *piret = -1;
         return;
     }
 
-    uiTimerOutputToggleFrequency_Hz = stTDACOutputCodeCtrl_t.uiTriggerFrequency_Hz * 2U;
-    uiMatchValue = uiTimerClock_Hz / uiTimerOutputToggleFrequency_Hz;
-    if(uiMatchValue == 0U)
+    if(!bTrigSrc_ConfigureCTimer(eTrigCTimer,
+                                 eTrigConsumer_DAC0_WaveGen,
+                                 stTDACOutputCodeCtrl_t.uiTriggerFrequency_Hz))
     {
-        FHALT("CTimer[%d] Match value is zero", DACHWTrigCTIMER_t.uiCTimerId);
+        FHALT("Failed to configure exclusive DAC CTIMER trigger source[%d]", eTrigCTimer);
+        vDeInit_CTimer_Configuration();
         *piret = -1;
-        return;        
+        return;
     }
-    uiMatchValue -= 1U;
-
-    CTIMER_GetDefaultConfig(&stTimerConfig);
-    stTimerConfig.mode = kCTIMER_TimerMode;
-    stTimerConfig.prescale = 0U;
-    CTIMER_Init(DACHWTrigCTIMER_t.pstCTimerBase, &stTimerConfig);
-
-    stMatchConfig.matchValue = uiMatchValue;
-    stMatchConfig.enableCounterReset = true;
-    stMatchConfig.enableCounterStop = false;
-    stMatchConfig.outControl = kCTIMER_Output_Toggle;
-    stMatchConfig.outPinInitState = false;
-    stMatchConfig.enableInterrupt = false;
-    CTIMER_SetupMatch(DACHWTrigCTIMER_t.pstCTimerBase,
-                      DACHWTrigCTIMER_t.eMatchChannel,
-                      &stMatchConfig);
     
     INPUTMUX_Init(INPUTMUX0);
     INPUTMUX_AttachSignal(INPUTMUX0, 0U, DACHWTrigCTIMER_t.eInputMuxConnection);
@@ -1696,87 +1631,45 @@ void vCancel_TCDWorker( eDAC_WaveFormType_t eWaveType )
 
 static void vStart_CTimer( void )
 {
-    if(DACHWTrigCTIMER_t.pstCTimerBase == NULL)
+    if(!bTrigSrc_StartCTimer(DACHWTrigCTIMER_t.eTrigSource, eTrigConsumer_DAC0_WaveGen))
     {
-        FHALT("Invalid Operation : Timer is NULL");
+        FHALT("Failed to start DAC exclusive CTIMER trigger source");
         return;
     }
-    CTIMER_StartTimer(DACHWTrigCTIMER_t.pstCTimerBase);
 }
 
 static void vStop_CTimer( void )
 {
-    if(DACHWTrigCTIMER_t.pstCTimerBase == NULL)
+    if(!bTrigSrc_StopCTimer(DACHWTrigCTIMER_t.eTrigSource, eTrigConsumer_DAC0_WaveGen))
     {
-        FHALT("Invalid Operation : Timer is NULL");
+        FHALT("Failed to stop DAC exclusive CTIMER trigger source");
         return;
     }
-    CTIMER_StopTimer(DACHWTrigCTIMER_t.pstCTimerBase);
 }
 
 void vDeInit_CTimer_Configuration(void)
 {
-    if (DACHWTrigCTIMER_t.pstCTimerBase == NULL)
+    if(DACHWTrigCTIMER_t.eTrigSource >= eNUMBER_OF_CTIMER_TRIG_SRCs)
+        return;
+
+    vTrigSrc_ReleaseCTimer(DACHWTrigCTIMER_t.eTrigSource, eTrigConsumer_DAC0_WaveGen);
+    DACHWTrigCTIMER_t.eTrigSource = eNUMBER_OF_CTIMER_TRIG_SRCs;
+    DACHWTrigCTIMER_t.eInputMuxConnection = 0U;
+}
+
+void vAssign_CTimer_ToConfig(eTrigSrc_CTimer_t eTrigCTimer, int *piret)
+{
+    if((eTrigCTimer >= eNUMBER_OF_CTIMER_TRIG_SRCs) ||
+       (caTimerInputMuxMap[eTrigCTimer] == 0U))
     {
+        FHALT("Invalid Timer Module/Channel Selection for DAC HW Trigger. Defined TimerConfig: %d", eTrigCTimer);
+        *piret = -1;
         return;
     }
 
-    vStop_CTimer();
-    CTIMER_Reset(DACHWTrigCTIMER_t.pstCTimerBase);
-    CTIMER_Deinit(DACHWTrigCTIMER_t.pstCTimerBase);
-
-    DACHWTrigCTIMER_t.pstCTimerBase = NULL;
-}
-
-void vAssign_CTimer_ToConfig(eDAC_TrigSrc_CTimer_t eTrigCTimer, int *piret)
-{
-    switch (eTrigCTimer)
-    {
-        case eDAC_TrigSrc_CTIMER0_MAT0:
-        case eDAC_TrigSrc_CTIMER0_MAT1: 
-            DACHWTrigCTIMER_t.pstCTimerBase = CTIMER0;
-            DACHWTrigCTIMER_t.uiCTimerId = 0;
-            DACHWTrigCTIMER_t.eMatchChannel = caTimerChannelMap[eTrigCTimer];
-            DACHWTrigCTIMER_t.eInputMuxConnection = caTimerInputMuxMap[eTrigCTimer];
-            DACHWTrigCTIMER_t.eClockAttach = kFRO_HF_to_CTIMER0;
-            DACHWTrigCTIMER_t.eClockDiv = kCLOCK_DivCTIMER0;
-            *piret = 0;
-            break;
-        case eDAC_TrigSrc_CTIMER1_MAT0:
-        case eDAC_TrigSrc_CTIMER1_MAT1:
-            DACHWTrigCTIMER_t.pstCTimerBase = CTIMER1;
-            DACHWTrigCTIMER_t.uiCTimerId = 1;
-            DACHWTrigCTIMER_t.eMatchChannel = caTimerChannelMap[eTrigCTimer];
-            DACHWTrigCTIMER_t.eInputMuxConnection = caTimerInputMuxMap[eTrigCTimer];
-            DACHWTrigCTIMER_t.eClockAttach = kFRO_HF_to_CTIMER1;
-            DACHWTrigCTIMER_t.eClockDiv = kCLOCK_DivCTIMER1;
-            *piret = 0;             
-            break;
-        case eDAC_TrigSrc_CTIMER2_MAT0:
-        case eDAC_TrigSrc_CTIMER2_MAT1:
-            DACHWTrigCTIMER_t.pstCTimerBase = CTIMER2;
-            DACHWTrigCTIMER_t.uiCTimerId = 2;
-            DACHWTrigCTIMER_t.eMatchChannel = caTimerChannelMap[eTrigCTimer];
-            DACHWTrigCTIMER_t.eInputMuxConnection = caTimerInputMuxMap[eTrigCTimer];
-            DACHWTrigCTIMER_t.eClockAttach = kFRO_HF_to_CTIMER2;
-            DACHWTrigCTIMER_t.eClockDiv = kCLOCK_DivCTIMER2;
-            *piret = 0;              
-            break;
-        case eDAC_TrigSrc_CTIMER3_MAT0:
-        case eDAC_TrigSrc_CTIMER3_MAT1:
-            DACHWTrigCTIMER_t.pstCTimerBase = CTIMER3;
-            DACHWTrigCTIMER_t.uiCTimerId = 3;
-            DACHWTrigCTIMER_t.eMatchChannel = caTimerChannelMap[eTrigCTimer];
-            DACHWTrigCTIMER_t.eInputMuxConnection = caTimerInputMuxMap[eTrigCTimer];
-            DACHWTrigCTIMER_t.eClockAttach = kFRO_HF_to_CTIMER3;
-            DACHWTrigCTIMER_t.eClockDiv = kCLOCK_DivCTIMER3;
-            *piret = 0;              
-            break;     
-        default:
-            FHALT("Invalid Timer Module/Channel Selection for DAC HW Trigger. Defined TimerConfig: %d", eTrigCTimer);
-            *piret = -1;
-            break;
-    }
+    DACHWTrigCTIMER_t.eTrigSource = eTrigCTimer;
+    DACHWTrigCTIMER_t.eInputMuxConnection = caTimerInputMuxMap[eTrigCTimer];
+    *piret = 0;
 }
 
 void vCompute_Waveform_Params(sT_DAC_Config_t *pstConfig, sT_DAC_OutputCode_Metadata_t *pstDACOutCtrl, int *piret)

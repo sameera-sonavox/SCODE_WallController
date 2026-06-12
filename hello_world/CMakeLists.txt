@@ -32,4 +32,5 @@ target_sources(app PRIVATE
                 src/Lib/ADC/NXP_ADC_LinkedList.c 
                 src/ADC_Controller/ADC_Controller.c 
                 src/Lib/ADC/NXP_ADC_CHMap.c 
+                src/Lib/TrigSrcControl/TrigSrcControl.c 
                 ${MCUX_SDK_NG_DIR}/drivers/lpadc/fsl_lpadc.c)

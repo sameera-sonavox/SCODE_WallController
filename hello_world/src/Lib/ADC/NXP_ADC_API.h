@@ -4,6 +4,12 @@
 #include "NXP_ADC_Types.h"
 #include "NXP_ADC_LinkedList.h"
 
+#define ADC_MAX_ADCLK_FREQ_Hz                   96000000
+#define ADC_MAX_POWER_SENSITIVE_FREQ_Hz         24000000
+#define ADC_MAX_COV_RATE_12bit_S_s              4000000
+#define ADC_MAX_COV_RATE_16bit_S_s              3200000
+
+
 #define ADC_MAX_WATERMARK_LEVEL                 8
 #define ADC_MAX_LOOP_COUNT                      15
 #define ADC_MAX_TRIG_DELAY_ADC_CLK_CYCLEs       16
