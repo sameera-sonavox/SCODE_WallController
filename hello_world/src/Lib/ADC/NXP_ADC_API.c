@@ -11,6 +11,7 @@
 #include "NXP_ADC_API.h"
 #include "NXP_ADC_Types.h"
 #include "NXP_ADC_CHMap.h"
+#include "NXP_ADC_DMAConfig.h"
 #include "../TrigSrcControl/TrigSrcControl.h"
 #include "../GenericMacro.h"
 #include "../CPULoad/NXP_CPU_LoadMon.h"
@@ -21,31 +22,26 @@ _Atomic bool bADCStatisticsOverflow = false;
 static _Atomic uint32_t uiaADCStatisticsGeneration[eNUMBER_OF_ADC_MODULEs] = {0};
 
 typedef struct
-{    
-    struct dma_config stADCDMAConfig_t;
-    struct dma_block_config stADCDMABlockConfig_t;
-    _Atomic bool bIsDMAError;
-    const uint32_t *puiDMABuffer;
-    uint32_t uiDMALen;
-} sT_DMANotifyCtrl;
-
-typedef struct
 {
     eADC_NotificationType_t eNotificationType;
-    union
-    {        
-        uint32_t uiInterMask;
-        sT_DMANotifyCtrl stTDMANotifyCtrl; 
-    } NotifyCtrl;    
+    uint32_t uiInterMask;  
 } sT_ADCHWNotifyCtrl_t;
 
 typedef struct
 {
     eADC_Module_t eModule;
     eADC_Channel_t eChannel;
+    eADC_Command_t eCMDId;
     uint16_t uiADCValue;
     uint32_t uiGeneration;
 } sT_ADC_StatisticsSample_t;
+
+typedef struct
+{
+    bool bIsEnabled;
+    eADC_Command_t eCommandId;
+    eADC_ResolutionType_t eResolution;
+} sT_CMDConfigInfo_t;
 
 typedef struct
 {
@@ -55,6 +51,9 @@ typedef struct
     eADC_TrigSrcType_t eaTrigSlotType;
     bool bHasCentralTrigReservation;
     eTrigSrc_CTimer_t eCentralTrigSource;
+    uint32_t uiTriggerFreq_Hz;
+    uint32_t uiStatisticTrigLimit_Us;
+    sT_CMDConfigInfo_t staCMDCtrl[eNUMBER_OF_ADC_COMMANDs];
     struct sT_ADC_CommandConfig_t *pstCMDHead;
 } sT_TrigSlotCtrl_t;
 
@@ -63,6 +62,7 @@ typedef struct
     bool bIsADCInitialized;
     bool baCommandConfigStat[eNUMBER_OF_ADC_COMMANDs];
     _Atomic bool *pbOverflowFlag;
+    uint8_t uiWaterMarkLevel;
     eADC_CLK_Src_t eADCClk_Src;
     eADC_Clk_Div_t eADCCLK_Div;
     sT_ADC_HighSpeedConfig_t stHighSpeedConfig;
@@ -97,19 +97,6 @@ K_MUTEX_DEFINE(kADCStatisticsMutex);
 #define vSet_ADCThread_InitFlag()           (bIsADCThreadInit = true)
 #define vResetSet_ADCThread_InitFlag()      (bIsADCThreadInit = false)
 
-static const struct device *const pstaADCDMADev[eNUMBER_OF_ADC_MODULEs] = {
-    [eADC_ADC0] = DEVICE_DT_GET(ADC0_DMA_CTLR_NODE),
-    [eADC_ADC1] = DEVICE_DT_GET(ADC1_DMA_CTLR_NODE),
-};
-static const uint32_t uiaADCDMAChannel[eNUMBER_OF_ADC_MODULEs] = {
-    [eADC_ADC0] = ADC0_DMA_CHANNEL,
-    [eADC_ADC1] = ADC1_DMA_CHANNEL,
-};
-static const uint32_t uiaADCDMASlot[eNUMBER_OF_ADC_MODULEs] = {
-    [eADC_ADC0] = ADC0_DMA_SLOT,
-    [eADC_ADC1] = ADC1_DMA_SLOT,
-};
-
 static void vValidate_ADCConfig(sT_ADC_ModuleConfig_t *pstADCModuleConfig);
 static bool bValidate_ADCGetRequest(eADC_Module_t eModule, eADC_Channel_t eChannel, uint16_t *puiValue, eADC_ValueType_t eValType);
 static bool bValidate_TrigSourceCompCallbackFn(sT_ADC_ModuleConfig_t *pstADCModuleConfig);
@@ -120,6 +107,7 @@ static bool bADC_InitCommandConfig(ADC_Type *pstADCBase,
                                    sT_ADC_ModuleConfig_t *pstADCModuleConfig);
 static bool bValidate_TriggerSrc_Frequency(const stADC_HWmodConfig_t *pstHWConfig,
                                            const sT_ADC_TrigConfig_t *pstTrigConfig);
+static bool bValidate_StatisticUpdate_Freq(const sT_ADC_TrigConfig_t *pstTrigConfig);
 
 static bool bConfig_ADCCommand(lpadc_conv_command_config_t *pstlpadc_CmdConfig, sT_ADC_CMDData_t *pstCmdData, sT_ADC_ModuleConfig_t *pstADCModuleConfig);                                   
 static bool bMap_ADCChannel(eADC_Module_t eModule, eADC_Channel_t eChannel, uint32_t *puiMappedChannel);
@@ -145,7 +133,6 @@ static bool bSetup_CTimer_ForTrigSource(eADC_Module_t eADCmodule, sT_ADC_TrigCon
 static bool bADC_ResultReadBackConfig(ADC_Type *pstADCBase, eADC_Module_t eADCModule, sT_ADC_ModuleConfig_t *pstADCModuleConfig);
 static bool bSet_TrigCompletionInterrupts(ADC_Type *pstADCBase, eADC_Module_t eADCModule, sT_ADC_ModuleConfig_t *pstADCModuleConfig);
 static bool bConfig_ForInterrupt(ADC_Type *pstADCBase, eADC_Module_t eADCModule, const sT_ADCNotify_Interrupt_t stTInterruptCtrl);
-static void vEnable_ADC_TrigCompletionInterrupts(ADC_Type *pstADCBase, eADC_Module_t eADCModule);
 static void vEnable_ADC_IRQ(eADC_Module_t eADCModule);
 static void vADC_ISRHandler(eADC_Module_t eADCModule);
 static inline void vUpdate_ADC_Value(eADC_Module_t eADCModule, lpadc_conv_result_t stResult);
@@ -154,10 +141,13 @@ static void vADC1_ISR(const void *pvArg);
 static void vDisable_ADC_Interrupts(ADC_Type *pstADCBase, eADC_Module_t eADCModule);
 static inline void vDrain_ADC_FIFO(ADC_Type *pstADCBase, lpadc_conv_result_t *pstResult);
 static inline void vNotify_ADCOverflow(eADC_Module_t eADCModule, bool bres);
+static inline bool bIsTimeOut_ForStatisticUpdate(const sT_TrigSlotCtrl_t *pstTrigSlotCtrl, 
+                                                 const sT_ADC_ChannelStats_t *pstStatistics,
+                                                 uint32_t uiCurrentTime_Us);
+static inline uint8_t uiGet_EnabledCommandCount(const sT_TrigSlotCtrl_t *pstTrigSlotCtrl);
+static inline void vSet_StatisticLastTrigTime(sT_ADC_ChannelStats_t *pstStatistics);
 
 static bool bConfig_ForDMA(ADC_Type *pstADCBase, eADC_Module_t eADCModule, const sT_ADCNotify_DMA_t stTDMACtrl);
-static void vADC0_DMA_Callback(const struct device *dev, void *pUserData, uint32_t uiChannel, int iStatus);
-static void vADC1_DMA_Callback(const struct device *dev, void *pUserData, uint32_t uiChannel, int iStatus);
 
 static ADC_Type *pstGetADCBase(eADC_Module_t eADCModule);
 
@@ -390,6 +380,8 @@ void vInit_ADC(sT_ADC_ModuleConfig_t *pstADCModuleConfig)
         vRelease_CMDMemory_AtFailure(pstADCModuleConfig);
         return;
     }
+    
+    pstHWConfig->bIsADCInitialized = true;
 
     if(!bADC_ResultReadBackConfig(pstADCBase, pstADCModuleConfig->eADCModule, pstADCModuleConfig))
     {
@@ -402,7 +394,6 @@ void vInit_ADC(sT_ADC_ModuleConfig_t *pstADCModuleConfig)
     }
     
     pstADCModuleConfig->bIsConfigOk = true;
-    pstHWConfig->bIsADCInitialized = true;
     vRelease_CMDMemory_AtFailure(pstADCModuleConfig);
 }
 
@@ -484,8 +475,12 @@ static bool bSet_TrigCompletionInterrupts(ADC_Type *pstADCBase, eADC_Module_t eA
     return true;
 }
 
-static void vEnable_ADC_TrigCompletionInterrupts(ADC_Type *pstADCBase, eADC_Module_t eADCModule)
+void vEnable_ADC_TrigCompletionInterrupts(eADC_Module_t eADCModule)
 {
+    ADC_Type *pstADCBase = pstGetADCBase(eADCModule);
+    if(pstADCBase == NULL)
+        return;
+
     stADC_HWmodConfig_t *pstHWConfig = pstGetADCModule(eADCModule);
     if(pstHWConfig->uiGlobalIntrMask == 0)
         return;
@@ -516,16 +511,14 @@ static void vEnable_ADC_IRQ(eADC_Module_t eADCModule)
 }
 
 static bool bConfig_ForDMA(ADC_Type *pstADCBase, eADC_Module_t eADCModule, const sT_ADCNotify_DMA_t stTDMACtrl)
-{
-    int iRet = 0;
-
+{    
     stADC_HWmodConfig_t *pstHWConfig = pstGetADCModule(eADCModule);
     if(pstHWConfig == NULL)
     {
         FHALT("ADC Hardware Config pointer is NULL");
         return false;
     }
-    if((pstADCBase == NULL) || (stTDMACtrl.uiaResultBuffer == NULL) || (stTDMACtrl.uiLen == 0U))
+    if((pstADCBase == NULL))
     {
         FHALT("Invalid ADC DMA configuration");
         return false;
@@ -535,88 +528,20 @@ static bool bConfig_ForDMA(ADC_Type *pstADCBase, eADC_Module_t eADCModule, const
         FHALT("Invalid ADC module for DMA: %d", eADCModule);
         return false;
     }
-    if(!device_is_ready(pstaADCDMADev[eADCModule]))
+
+    if(!bADC_API_DMAInit(eADCModule))
     {
-        FHALT("ADC DMA device is not ready");
+        FHALT("DMA Config. failed for ADC Module[%d]", eADCModule);
         return false;
     }
-
-    sT_DMANotifyCtrl *pstDMACtrl = &pstHWConfig->stTADCHWNotifyCtrl.NotifyCtrl.stTDMANotifyCtrl;
-    sT_DMANotifyCtrl stTTemDMACtrl = {0};
-    struct dma_block_config *pstDMABloock = &stTTemDMACtrl.stADCDMABlockConfig_t;
-    struct dma_config *pstDMA = &stTTemDMACtrl.stADCDMAConfig_t;
-    
-    switch(pstHWConfig->stTADCHWNotifyCtrl.eNotificationType)
-    {
-        case eNotification_Interrupt:
-            FHALT("ADC[%d] is already configured for Interrupt based notifications", eADCModule);
-            vDisable_ADC_Interrupts(pstADCBase, eADCModule);
-            break;
-        case eNotification_DMA:
-        default:
-            break;
-    }
-    
-    memset(pstDMABloock, 0, sizeof(struct dma_block_config));
-    pstDMABloock->source_address = (uint32_t)&pstADCBase->RESFIFO;
-    pstDMABloock->dest_address = (uint32_t)stTDMACtrl.uiaResultBuffer;
-    pstDMABloock->block_size = (uint32_t)stTDMACtrl.uiLen * sizeof(uint32_t);
-    pstDMABloock->source_addr_adj = DMA_ADDR_ADJ_NO_CHANGE;
-    pstDMABloock->dest_addr_adj = DMA_ADDR_ADJ_INCREMENT;
-    pstDMABloock->next_block = NULL;
-
-    memset(pstDMA, 0, sizeof(struct dma_config));
-    pstDMA->dma_slot = uiaADCDMASlot[eADCModule];
-    pstDMA->channel_direction = PERIPHERAL_TO_MEMORY;
-    pstDMA->source_data_size = sizeof(uint32_t);
-    pstDMA->dest_data_size = sizeof(uint32_t);
-    pstDMA->source_burst_length = sizeof(uint32_t);
-    pstDMA->dest_burst_length = sizeof(uint32_t);
-    pstDMA->block_count = 1U;
-    pstDMA->head_block = pstDMABloock;
-    pstDMA->dma_callback = (eADCModule == eADC_ADC0)?vADC0_DMA_Callback : vADC1_DMA_Callback;
-    pstDMA->user_data = pstHWConfig;
-    pstDMA->complete_callback_en = 1U;
-    pstDMA->error_callback_dis = 0U;
-    pstDMA->cyclic = 1U;
-
-    stTTemDMACtrl.puiDMABuffer = stTDMACtrl.uiaResultBuffer;
-    stTTemDMACtrl.uiDMALen = stTDMACtrl.uiLen;
-    stTTemDMACtrl.bIsDMAError = false;
-
-    vEnable_ADC_TrigCompletionInterrupts(pstADCBase, eADCModule);
-
-    (void)dma_stop(pstaADCDMADev[eADCModule], uiaADCDMAChannel[eADCModule]);
-    iRet = dma_config(pstaADCDMADev[eADCModule], uiaADCDMAChannel[eADCModule], pstDMA);
-    if(iRet != 0)
-    {
-        FHALT("ADC DMA configuration failed: %d", iRet);
-        return false;
-    }
-
-    iRet = dma_start(pstaADCDMADev[eADCModule], uiaADCDMAChannel[eADCModule]);
-    if(iRet != 0)
-    {
-        FHALT("ADC DMA start failed: %d", iRet);
-        return false;
-    }
-
-    memcpy(pstDMACtrl, &stTTemDMACtrl, sizeof(sT_DMANotifyCtrl));
-    pstDMACtrl->stADCDMAConfig_t.head_block = &pstDMACtrl->stADCDMABlockConfig_t;
-    pstHWConfig->stTADCHWNotifyCtrl.eNotificationType = eNotification_DMA;
-    LPADC_EnableFIFOWatermarkDMA(pstADCBase, true);
 
     return true;
 }
 
-static void vADC0_DMA_Callback(const struct device *dev, void *pUserData, uint32_t uiChannel, int iStatus)
+void vNotify_ADC_DMAError(eADC_Module_t eADCModule)
 {
-
-}
-
-static void vADC1_DMA_Callback(const struct device *dev, void *pUserData, uint32_t uiChannel, int iStatus)
-{
-
+    FHALT("DMA Error Occurred at Module[%d]", eADCModule);
+    FHALT("Need to Implement a proper mechanism here");
 }
 
 static bool bConfig_ForInterrupt(ADC_Type *pstADCBase, eADC_Module_t eADCModule, const sT_ADCNotify_Interrupt_t stTInterruptCtrl)
@@ -630,12 +555,12 @@ static bool bConfig_ForInterrupt(ADC_Type *pstADCBase, eADC_Module_t eADCModule,
     }
 
     pstHWConfig->stTADCHWNotifyCtrl.eNotificationType = eNotification_Interrupt;
-    pstHWConfig->stTADCHWNotifyCtrl.NotifyCtrl.uiInterMask |=   (uint32_t)(pstHWConfig->uiGlobalIntrMask | 
+    pstHWConfig->stTADCHWNotifyCtrl.uiInterMask |=   (uint32_t)(pstHWConfig->uiGlobalIntrMask | 
                                                                 (uint32_t)(kLPADC_FIFO0WatermarkInterruptEnable | kLPADC_ResultFIFO0OverflowInterruptEnable));
-    pstHWConfig->uiGlobalIntrMask = pstHWConfig->stTADCHWNotifyCtrl.NotifyCtrl.uiInterMask;
+    pstHWConfig->uiGlobalIntrMask = pstHWConfig->stTADCHWNotifyCtrl.uiInterMask;
        
     LPADC_EnableInterrupts(pstADCBase, 
-                           pstHWConfig->stTADCHWNotifyCtrl.NotifyCtrl.uiInterMask);
+                           pstHWConfig->stTADCHWNotifyCtrl.uiInterMask);
     
     vInit_ADC_Thread();
     vEnable_ADC_IRQ(eADCModule);
@@ -668,7 +593,7 @@ void vDeInit_ADC_Thread( void )
     }
     if(uiCount < eNUMBER_OF_ADC_MODULEs)
         return;
-
+    
     k_thread_abort(kADC_ThreadId);
     k_msgq_purge(&kADCMeasDataQueue);
     vResetSet_ADCThread_InitFlag();
@@ -796,8 +721,11 @@ static void vCompute_Min_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlot
         return;
 
     sT_ADC_ChMinMax_t *pstMin = &pstStatistics->stTMinVal;
+    eADC_ResolutionType_t eResolution = pstTrigSlot->staCMDCtrl[pstTADCSample->eCMDId].eResolution;
+
+    uint16_t uiMaxValue = (eResolution == eADC_Resolution_12Bit)? ADC_MAX_VALUE_12b_RESOLUTION: ADC_MAX_VALUE_16b_RESOLUTION;
     uint64_t uiCurrentTime_ms = k_uptime_get();
-    uint32_t uiReleaseTime_ms = 0U;
+    uint32_t uiReleaseTime_ms = 0U, uiReleaseStep_Size = 0U;
 
     if(pstTADCSample->uiADCValue < pstMin->uiADCVal)
     {
@@ -807,14 +735,23 @@ static void vCompute_Min_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlot
     }
 
     uiReleaseTime_ms = atomic_load_explicit(&pstMin->uiReleaseDelay_ms, memory_order_acquire);
+    uiReleaseStep_Size = atomic_load_explicit(&pstMin->uiReleaseStep_Size, memory_order_acquire);
 
     if(uiReleaseTime_ms == 0U)
         uiReleaseTime_ms = ADC_STATS_DEAFULT_MIN_RELEASE_TIME_ms;
 
     if(!bIsTimeOut(pstMin->uiLastTriggerTime_ms, uiCurrentTime_ms, uiReleaseTime_ms))
         return;
-        
-    pstMin->uiADCVal = pstTADCSample->uiADCValue;
+    
+    if(uiReleaseStep_Size >= (uiMaxValue - pstMin->uiADCVal))
+    {
+        pstMin->uiADCVal = pstTADCSample->uiADCValue;;
+    }    
+    else
+    {
+        pstMin->uiADCVal = MIN((pstMin->uiADCVal + uiReleaseStep_Size), pstTADCSample->uiADCValue);
+    }
+    
     pstMin->uiLastTriggerTime_ms = k_uptime_get();    
 }
 
@@ -830,7 +767,7 @@ static void vCompute_Max_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlot
 
     sT_ADC_ChMinMax_t *pstMax = &pstStatistics->stTMaxVal;
     uint64_t uiCurrentTime_ms = k_uptime_get();
-    uint32_t uiReleaseTime_ms = 0U;
+    uint32_t uiReleaseTime_ms = 0U, uiReleaseStep_Size = 0U;
 
     if(pstTADCSample->uiADCValue > pstMax->uiADCVal)
     {
@@ -841,14 +778,22 @@ static void vCompute_Max_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlot
     }
 
     uiReleaseTime_ms = atomic_load_explicit(&pstMax->uiReleaseDelay_ms, memory_order_acquire);
+    uiReleaseStep_Size = atomic_load_explicit(&pstMax->uiReleaseStep_Size, memory_order_acquire);
 
     if(uiReleaseTime_ms == 0U)
         uiReleaseTime_ms = ADC_STATS_DEAFULT_MAX_RELEASE_TIME_ms;
 
     if(!bIsTimeOut(pstMax->uiLastTriggerTime_ms, uiCurrentTime_ms, uiReleaseTime_ms))
         return;
-        
-    pstMax->uiADCVal = pstTADCSample->uiADCValue;
+    
+    int64_t iValdiff = (int64_t)pstMax->uiADCVal - (int64_t)uiReleaseStep_Size;
+    if(iValdiff >= 0)
+    {
+        pstMax->uiADCVal = MAX(pstTADCSample->uiADCValue, (pstMax->uiADCVal - uiReleaseStep_Size));
+    }
+    else
+        pstMax->uiADCVal = pstTADCSample->uiADCValue;
+    
     pstMax->uiLastTriggerTime_ms = k_uptime_get();
 }
 
@@ -856,7 +801,7 @@ static void vDisable_ADC_Interrupts(ADC_Type *pstADCBase, eADC_Module_t eADCModu
 {
     sT_ADCHWNotifyCtrl_t *pstHWCtrl = &staADC_HWConfig[eADCModule].stTADCHWNotifyCtrl;
 
-    LPADC_DisableInterrupts(pstADCBase, pstHWCtrl->NotifyCtrl.uiInterMask);
+    LPADC_DisableInterrupts(pstADCBase, pstHWCtrl->uiInterMask);
 
     switch(eADCModule)
     {
@@ -871,6 +816,22 @@ static void vDisable_ADC_Interrupts(ADC_Type *pstADCBase, eADC_Module_t eADCModu
             break;       
     }
     
+}
+
+void vRequest_ADC_To_DisableInterrupts(eADC_Module_t eADCModule)
+{
+    if(eADCModule >= eNUMBER_OF_ADC_MODULEs)
+    {
+        FHALT("Invalid ADC Module[%d]", eADCModule);
+        return;
+    }
+    if(!bIsADCInitialized(eADCModule))
+    {
+        FHALT("ADC Module[%d] not initialized", eADCModule);
+        return;
+    }
+
+    vDisable_ADC_Interrupts(pstGetADCBase(eADCModule), eADCModule);
 }
 
 static void vADC_ISRHandler(eADC_Module_t eADCModule)
@@ -921,11 +882,20 @@ static void vADC_ISRHandler(eADC_Module_t eADCModule)
 
 }
 
+void vUpdate_ADCResult_FromDMA(eADC_Module_t eADCModule, lpadc_conv_result_t stConvResult)
+{
+    vUpdate_ADC_Value(eADCModule, stConvResult);
+}
+
 static inline void vUpdate_ADC_Value(eADC_Module_t eADCModule, lpadc_conv_result_t stResult)
 {
+    eADC_TrigSlot_t eTrigSlot = (eADC_TrigSlot_t)stResult.triggerIdSource;
+    eADC_Command_t eCmdId = (eADC_Command_t)stResult.commandIdSource;
+    uint16_t uiResult = 0U;
+
     sT_ADC_ChannelMap_t *pstChData = pstGetChInfo_ByCmdId_TrigSlot(eADCModule, 
-                                                                   (eADC_TrigSlot_t)stResult.triggerIdSource, 
-                                                                   (eADC_Command_t)stResult.commandIdSource, 
+                                                                   eTrigSlot, 
+                                                                   eCmdId, 
                                                                    stResult.loopCountIndex);
     if(pstChData == NULL)
     {
@@ -933,19 +903,73 @@ static inline void vUpdate_ADC_Value(eADC_Module_t eADCModule, lpadc_conv_result
         return;
     }
 
-    atomic_store_explicit(&pstChData->stValue.uiADCVal, stResult.convValue, memory_order_release);
+    stADC_HWmodConfig_t *pstHWConfig = pstGetADCModule(eADCModule);
+    sT_CMDConfigInfo_t *pstCmdData = &pstHWConfig->staTrigSlotCtrl[eTrigSlot].staCMDCtrl[eCmdId];
+    if(!pstCmdData->bIsEnabled)
+        return;
+    if(pstCmdData->eResolution == eADC_Resolution_16Bit)
+        uiResult = stResult.convValue;
+    else
+        uiResult = stResult.convValue >> 3U;
+
+    atomic_store_explicit(&pstChData->stValue.uiADCVal, uiResult, memory_order_release);    
+    sT_TrigSlotCtrl_t *pstTrigSlotCtrl = &pstHWConfig->staTrigSlotCtrl[(eADC_TrigSlot_t)stResult.triggerIdSource];
+    uint32_t uiCurrentTime_Us = k_cyc_to_us_floor32(k_cycle_get_32());
+
+    if(!bIsTimeOut_ForStatisticUpdate(pstTrigSlotCtrl, &pstChData->stStats, uiCurrentTime_Us))
+        return;
 
     sT_ADC_StatisticsSample_t stTADCSample = {
         .eModule = eADCModule,
         .eChannel = pstChData->stOwner.eChannel,
-        .uiADCValue = stResult.convValue,
+        .eCMDId = (eADC_Command_t)stResult.commandIdSource,
+        .uiADCValue = uiResult,
         .uiGeneration = atomic_load_explicit(&uiaADCStatisticsGeneration[eADCModule], memory_order_acquire)
     };
 
+    vSet_StatisticLastTrigTime(&pstChData->stStats);
+
+    if(bIs_Msgq_Full())
+        return;
+
     if(k_msgq_put(&kADCMeasDataQueue, &stTADCSample, K_NO_WAIT) != 0)
-    {
+    {        
         vSet_Msgq_FullFlag();
     }
+}
+
+static inline bool bIsTimeOut_ForStatisticUpdate(const sT_TrigSlotCtrl_t *pstTrigSlotCtrl, 
+                                                 const sT_ADC_ChannelStats_t *pstStatistics,
+                                                 uint32_t uiCurrentTime_Us)
+{
+    uint32_t uiStatisticTrigLimit_Us = pstTrigSlotCtrl->uiStatisticTrigLimit_Us;
+    uint8_t uiEnabledCommandCount = uiGet_EnabledCommandCount(pstTrigSlotCtrl);
+
+    if(uiEnabledCommandCount > 1U)
+        uiStatisticTrigLimit_Us *= uiEnabledCommandCount;
+
+    return ((uiCurrentTime_Us - pstStatistics->uiLastSet_StatComputeTime_Us) >= uiStatisticTrigLimit_Us);    
+}
+
+static inline uint8_t uiGet_EnabledCommandCount(const sT_TrigSlotCtrl_t *pstTrigSlotCtrl)
+{
+    uint8_t uiEnabledCommandCount = 0U;
+
+    if(pstTrigSlotCtrl == NULL)
+        return 1U;
+
+    for(uint8_t i = 0U; i < eNUMBER_OF_ADC_COMMANDs; i++)
+    {
+        if(pstTrigSlotCtrl->staCMDCtrl[i].bIsEnabled)
+            uiEnabledCommandCount++;
+    }
+
+    return (uiEnabledCommandCount == 0U) ? 1U : uiEnabledCommandCount;
+}
+
+static inline void vSet_StatisticLastTrigTime(sT_ADC_ChannelStats_t *pstStatistics)
+{
+    pstStatistics->uiLastSet_StatComputeTime_Us = k_cyc_to_us_floor32(k_cycle_get_32());
 }
 
 static inline void vSet_Msgq_FullFlag( void )
@@ -1015,6 +1039,8 @@ void vClear_ADCStatisticsOverflow( void )
 
             atomic_store_explicit(&pstChData->stStats.stTMinVal.uiADCVal, UINT16_MAX, memory_order_release);
             pstChData->stStats.stTMinVal.uiLastTriggerTime_ms = 0U;
+
+            pstChData->stStats.uiLastSet_StatComputeTime_Us = 0;
         }
     }
 
@@ -1194,6 +1220,8 @@ static bool bADC_InitCommandConfig(ADC_Type *pstADCBase,
                                    sT_ADC_ModuleConfig_t *pstADCModuleConfig)
 {
     uint8_t uiTrigSlotIndex = 0;
+    sT_ChCMDConfig_Data_t stTCHCMDConfData = {0};
+
     if(pstADCModuleConfig == NULL)
     {
         FHALT("ADC Module Config pointer is NULL. Cannot initialize ADC command configuration.\n");
@@ -1208,6 +1236,12 @@ static bool bADC_InitCommandConfig(ADC_Type *pstADCBase,
     }
     
     memset(&pstHWConfig->baCommandConfigStat, false, sizeof(pstHWConfig->baCommandConfigStat));
+    for(uint8_t i = eTrig_Slot_0; i < eNUMBER_OF_ADC_TRIG_SLOTs; i++)
+    {
+        memset(pstHWConfig->staTrigSlotCtrl[i].staCMDCtrl,
+               0,
+               sizeof(pstHWConfig->staTrigSlotCtrl[i].staCMDCtrl));
+    }
     for(uiTrigSlotIndex = eTrig_Slot_0; uiTrigSlotIndex < eNUMBER_OF_ADC_TRIG_SLOTs; uiTrigSlotIndex++)
     {
         if(!pstTrigConfig[uiTrigSlotIndex].bIsTrigSlotEnabled)
@@ -1283,21 +1317,31 @@ static bool bADC_InitCommandConfig(ADC_Type *pstADCBase,
                 FHALT("Command[%d] already use with ADC Module[%d]", pstCmdData->eCommandId, pstADCModuleConfig->eADCModule);
                 return false;                 
             }
-            if(!bUpdateADCChannelCommandMap(pstADCModuleConfig->eADCModule,
-                                            pstCmdData->eChannel,
-                                            pstCmdData->uiLoopCount,
-                                            pstCmdData->bIsLoopWithChIncrementEnabled,
-                                            (eADC_TrigSlot_t)uiTrigSlotIndex,
-                                            pstCmdData->eCommandId, 
-                                            pstCmdData->uiADCMax_ReleaseTime_ms,
-                                            pstCmdData->uiADCMin_ReleaseTime_ms,
-                                            pstCmdData->uiSWAvgSampleCount))
+
+            stTCHCMDConfData.eADCModule = pstADCModuleConfig->eADCModule;
+            stTCHCMDConfData.eADCChannel = pstCmdData->eChannel;
+            stTCHCMDConfData.eCMDId = pstCmdData->eCommandId;
+            stTCHCMDConfData.eTrigSlot = (eADC_TrigSlot_t)uiTrigSlotIndex;
+            stTCHCMDConfData.bIsLWIEn = pstCmdData->bIsLoopWithChIncrementEnabled;
+            stTCHCMDConfData.uiLoopCount = pstCmdData->uiLoopCount;
+            stTCHCMDConfData.uiMaxReleaseTime_ms = pstCmdData->uiADCMax_ReleaseTime_ms;
+            stTCHCMDConfData.uiMinReleaseTime_ms = pstCmdData->uiADCMin_ReleaseTime_ms;
+            stTCHCMDConfData.uiMaxReleaseStepSize = pstCmdData->uiMax_ReleaseStepSize;
+            stTCHCMDConfData.uiMinReleaseStepSize = pstCmdData->uiMin_ReleaseStepSize;
+            if(!bUpdateADCChannelCommandMap(&stTCHCMDConfData))
             {
                 FHALT("ADC channel command map update failed for ADC[%d], Command[%d]",
                       pstADCModuleConfig->eADCModule,
                       pstCmdData->eCommandId);
                 return false;
             }
+
+            sT_CMDConfigInfo_t *pstCmdInfo =
+                &pstHWConfig->staTrigSlotCtrl[uiTrigSlotIndex].staCMDCtrl[pstCmdData->eCommandId];
+            pstCmdInfo->bIsEnabled = true;
+            pstCmdInfo->eCommandId = pstCmdData->eCommandId;
+            pstCmdInfo->eResolution = pstCmdData->eResolution;
+
             pstCmdNode = pstCmdNode->pstNextCommandConfig;
         }
         
@@ -1372,11 +1416,18 @@ static bool bValidate_TriggerSrc_Frequency(const stADC_HWmodConfig_t *pstHWConfi
 
     bIsHardwareTrigger =
         (pstTrigConfig->stTADCTrigCtrl.eTrigSrcType == eADC_TrigSrcCtrl_Hardware);
-    if(bIsHardwareTrigger && (pstTrigConfig->stTADCTrigCtrl.uiTrigFrequency_Hz == 0U))
+    if(bIsHardwareTrigger)
     {
-        FHALT("Hardware trigger slot[%d] frequency cannot be zero", pstTrigConfig->eTrigSlot);
-        return false;
+        if(pstTrigConfig->stTADCTrigCtrl.uiTrigFrequency_Hz == 0U)
+        {
+            FHALT("Hardware trigger slot[%d] frequency cannot be zero", pstTrigConfig->eTrigSlot);
+            return false;
+        }
+
+        if(!bValidate_StatisticUpdate_Freq(pstTrigConfig))
+            return false;
     }
+
     if(pstTrigConfig->pstTHeadCmdConfig == NULL)
     {
         FHALT("Trigger slot[%d] has no command chain", pstTrigConfig->eTrigSlot);
@@ -1498,6 +1549,42 @@ static bool bValidate_TriggerSrc_Frequency(const stADC_HWmodConfig_t *pstHWConfi
     return true;
 }
 
+static bool bValidate_StatisticUpdate_Freq(const sT_ADC_TrigConfig_t *pstTrigConfig)
+{
+    const uint32_t uiTrigFrequency_Hz = pstTrigConfig->stTADCTrigCtrl.uiTrigFrequency_Hz;
+    const uint32_t uiStatisticFrequency_Hz = pstTrigConfig->stTADCTrigCtrl.uiStatisticCompute_Freq_Hz;
+
+    if(uiStatisticFrequency_Hz == 0U)
+    {
+        FHALT("Trigger slot[%d] statistics frequency cannot be zero",
+            pstTrigConfig->eTrigSlot);
+        return false;
+    }
+    if(uiStatisticFrequency_Hz > 1000000UL)
+    {
+        FHALT("Statistics frequency cannot exceed 1 MHz");
+        return false;
+    }    
+
+    if(uiTrigFrequency_Hz == 0U)
+    {
+        FHALT("Trigger slot[%d] trigger frequency cannot be zero",
+            pstTrigConfig->eTrigSlot);
+        return false;
+    }
+
+    if(((uint64_t)uiStatisticFrequency_Hz * 4ULL) > uiTrigFrequency_Hz)
+    {
+        FHALT("Trigger slot[%d] statistics frequency[%d Hz] exceeds 25%% of trigger frequency[%d Hz]",
+            pstTrigConfig->eTrigSlot,
+            uiStatisticFrequency_Hz,
+            uiTrigFrequency_Hz);
+        return false;
+    }
+    
+    return true;
+}
+
 static void vSet_TrigSlot_TrigType(eADC_Module_t eADCModule, sT_ADC_TrigConfig_t *pstTrigConfig)
 {
     stADC_HWmodConfig_t *pstADCModule = pstGetADCModule(eADCModule);
@@ -1510,6 +1597,17 @@ static void vSet_TrigSlot_TrigType(eADC_Module_t eADCModule, sT_ADC_TrigConfig_t
     pstTrigSlotCtrl->eaTrigSlotType = pstTrigConfig->stTADCTrigCtrl.eTrigSrcType;
     pstTrigSlotCtrl->pstCMDHead = pstTrigConfig->pstTHeadCmdConfig;
     pstTrigConfig->pstTHeadCmdConfig = NULL;
+
+    if(pstTrigConfig->stTADCTrigCtrl.eTrigSrcType != eADC_TrigSrcCtrl_Hardware)
+    {
+        pstTrigSlotCtrl->uiTriggerFreq_Hz = 0;
+        pstTrigSlotCtrl->uiStatisticTrigLimit_Us = 0;
+    }
+    else
+    {
+        pstTrigSlotCtrl->uiTriggerFreq_Hz = pstTrigConfig->stTADCTrigCtrl.uiTrigFrequency_Hz;
+        pstTrigSlotCtrl->uiStatisticTrigLimit_Us =  (uint32_t)(1000000UL / pstTrigConfig->stTADCTrigCtrl.uiStatisticCompute_Freq_Hz);
+    }
 }
 
 static eADC_TrigSrcType_t eGet_TrigSlot_TrigType(eADC_Module_t eADCModule, eADC_TrigSlot_t eTrigSlot)
@@ -1922,6 +2020,8 @@ static bool bADC_Init(ADC_Type *pstADCBase, stADC_HWmodConfig_t *pstHWConfig, sT
         return false;
     }
     pstADCConfig->FIFOWatermark = pstADCModuleConfig->uiWaterMarkLevel;
+
+    pstHWConfig->uiWaterMarkLevel = pstADCModuleConfig->uiWaterMarkLevel;
     pstHWConfig->eADCClk_Src = pstADCModuleConfig->eADCClk_Src;
     pstHWConfig->eADCCLK_Div = pstADCModuleConfig->eADCCLK_Div;
     pstHWConfig->stHighSpeedConfig = pstADCModuleConfig->stHighSpeedConfig;
@@ -2130,9 +2230,10 @@ void vDeInit_ADC(eADC_Module_t eADCModule)
 
     if(pstADCConfig->stTADCHWNotifyCtrl.eNotificationType == eNotification_DMA)
     {
-        if(device_is_ready(pstaADCDMADev[eADCModule]))
+        if(!bRequest_To_StopDMA(eADCModule))
         {
-            (void)dma_stop(pstaADCDMADev[eADCModule], uiaADCDMAChannel[eADCModule]);
+            FHALT("DMA couldn't be stopped for ADC Module[%d]", eADCModule);
+            return;
         }
     }
 
@@ -2179,6 +2280,25 @@ static void vRelease_CommandMemoryBuffers(sT_TrigSlotCtrl_t *pstaTrigSlotCtrl)
     {
         vRelease_CMDBuffers(&pstaTrigSlotCtrl[i].pstCMDHead);
     }
+}
+
+ADC_Type *pstGetHWADCModule(eADC_Module_t eADCModule)
+{
+    return pstGetADCBase(eADCModule);
+}
+
+sT_ADCToDMA_HW_Map_t stGetSWADCModule(eADC_Module_t eADCModule)
+{    
+    sT_ADCToDMA_HW_Map_t stTSWMod = {0};
+
+    stADC_HWmodConfig_t *pstSWADCModule = pstGetADCModule(eADCModule);
+    if(pstSWADCModule == NULL)
+        return stTSWMod;
+    
+    stTSWMod.eADCModule = eADCModule;
+    stTSWMod.bIsADCInitialized = pstSWADCModule->bIsADCInitialized;
+    stTSWMod.uiWaterMarkLevel = pstSWADCModule->uiWaterMarkLevel;
+    return stTSWMod;
 }
 
 static ADC_Type *pstGetADCBase(eADC_Module_t eADCModule)

@@ -6,6 +6,7 @@ set(DTS_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/dts)
 list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/GPIOCtrl.overlay")
 list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/PWMCtrl.overlay")
 list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/DACCtrl.overlay")
+list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/ADCCtrl.overlay")
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(hello_world)
@@ -29,6 +30,7 @@ target_sources(app PRIVATE
                 src/Lib/DAC/NXP_DAC_DMAConfig.c 
                 src/Lib/CPULoad/NXP_CPU_LoadMon.c 
                 src/Lib/ADC/NXP_ADC_API.c 
+                src/Lib/ADC/NXP_ADC_DMAConfig.c 
                 src/Lib/ADC/NXP_ADC_LinkedList.c 
                 src/ADC_Controller/ADC_Controller.c 
                 src/Lib/ADC/NXP_ADC_CHMap.c 

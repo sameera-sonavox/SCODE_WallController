@@ -20,6 +20,9 @@
 #define ADC_TRIG_EXCEPTION_MASK                 0x0000000FU
 #define ADC_IDLE_TIMEOUT_MS                     2U
 
+#define ADC_MAX_VALUE_12b_RESOLUTION            4095U
+#define ADC_MAX_VALUE_16b_RESOLUTION            65535U
+
 extern void vInit_ADC(sT_ADC_ModuleConfig_t *pstADCModuleConfig);//Once this is called, all the pointers are handled by the API. It means memory release will be done by the API
                                                                  //Application should not engage with memory or reference any command config after the initialization.
 extern void vDeInit_ADC(eADC_Module_t eADCModule);
@@ -31,5 +34,11 @@ extern bool bGet_ADCValue(eADC_Module_t eModule,
 extern void vClear_ADCStatisticsOverflow( void );
 extern bool bIs_ADCStatisticsOverflowed( void );
 extern const sT_ADC_CommandConfig_t *pstGetCommandData(eADC_Module_t eADCModule, eADC_Channel_t eChannel);
+
+extern ADC_Type *pstGetHWADCModule(eADC_Module_t eADCModule);
+extern void vEnable_ADC_TrigCompletionInterrupts(eADC_Module_t eADCModule);
+extern sT_ADCToDMA_HW_Map_t stGetSWADCModule(eADC_Module_t eADCModule);
+extern void vRequest_ADC_To_DisableInterrupts(eADC_Module_t eADCModule);
+extern void vNotify_ADC_DMAError(eADC_Module_t eADCModule);
 
 #endif

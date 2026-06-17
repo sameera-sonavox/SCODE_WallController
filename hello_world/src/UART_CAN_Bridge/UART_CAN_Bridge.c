@@ -59,7 +59,9 @@ static struct k_thread stUART_CAN_BridgeThread_t;
 static struct k_thread stUART_CAN_BridgeCANThread_t;
 static struct k_mutex stUARTTxMutex;
 static bool bUARTDebugNextFrame;
+static bool bUART_CAN_BridgeInitialized;
 static uint16_t uiUART_CANBridgeTxSeq;
+static UART_CAN_Bridge_DataRequestCallback_t pfADCDataRequestCallback;
 K_THREAD_STACK_DEFINE(thread_UART_CAN_BridgeStack, UART_CAN_BRIDGE_THREAD_STACK_SIZE_BYTEs);
 K_THREAD_STACK_DEFINE(thread_UART_CAN_BridgeCANStack, UART_CAN_BRIDGE_CAN_THREAD_STACK_SIZE_BYTEs);
 K_MSGQ_DEFINE(msgq_UART_CANBridgeRx, sizeof(struct can_frame), UART_CAN_BRIDGE_CAN_RX_QUEUE_DEPTH, 4);
@@ -88,6 +90,7 @@ void vInit_UART_CAN_Bridge( void )
 
     k_mutex_init(&stUARTTxMutex);
     uiUART_CANBridgeTxSeq = 0;
+    bUART_CAN_BridgeInitialized = true;
 
     k_thread_create(&stUART_CAN_BridgeThread_t,
                     thread_UART_CAN_BridgeStack,
@@ -108,6 +111,35 @@ void vInit_UART_CAN_Bridge( void )
                     K_NO_WAIT);
 
     UART_CAN_BRIDGE_Print("UART CAN Bridge initialized\n\r");
+}
+
+bool bUART_CAN_Bridge_SendData( const uint8_t *puiData, uint16_t uiLen )
+{
+    if(!bUART_CAN_BridgeInitialized || puiData == NULL || uiLen == 0U)
+        return false;
+
+    k_mutex_lock(&stUARTTxMutex, K_FOREVER);
+    vUART_WriteBytes(puiData, uiLen);
+    k_mutex_unlock(&stUARTTxMutex);
+    return true;
+}
+
+bool bUART_CAN_Bridge_SendDataWithPostDelay( const uint8_t *puiData, uint16_t uiLen, uint32_t uiDelayMs )
+{
+    if(!bUART_CAN_BridgeInitialized || puiData == NULL || uiLen == 0U)
+        return false;
+
+    k_mutex_lock(&stUARTTxMutex, K_FOREVER);
+    vUART_WriteBytes(puiData, uiLen);
+    if(uiDelayMs > 0U)
+        k_msleep(uiDelayMs);
+    k_mutex_unlock(&stUARTTxMutex);
+    return true;
+}
+
+void vUART_CAN_Bridge_RegisterADCDataRequestCallback( UART_CAN_Bridge_DataRequestCallback_t pfCallback )
+{
+    pfADCDataRequestCallback = pfCallback;
 }
 
 void vUART_CAN_Bridge_ForwardCANFrame( const struct can_frame *pstFrame )
@@ -216,6 +248,12 @@ static bool bRead_UARTFrame( uint8_t *puiCommand, uint8_t *puiPayload, uint16_t 
         {
             bUARTDebugNextFrame = true;
             uart_poll_out(pstUARTDev, 'd');
+            continue;
+        }
+        if(uiByte == 'A')
+        {
+            if(pfADCDataRequestCallback != NULL)
+                pfADCDataRequestCallback();
             continue;
         }
 

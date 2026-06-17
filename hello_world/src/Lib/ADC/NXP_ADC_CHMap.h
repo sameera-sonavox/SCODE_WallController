@@ -4,6 +4,21 @@
 #include "fsl_inputmux.h"
 #include "NXP_ADC_Types.h"
 
+typedef struct
+{
+    eADC_Module_t eADCModule;
+    eADC_Channel_t eADCChannel;
+    eADC_Command_t eCMDId;
+    eADC_TrigSlot_t eTrigSlot;
+    uint32_t uiMaxReleaseTime_ms;
+    uint32_t uiMaxReleaseStepSize;
+    uint32_t uiMinReleaseTime_ms;
+    uint32_t uiMinReleaseStepSize;
+    uint16_t uiSWAvgSampleCount;     
+    uint8_t uiLoopCount;
+    bool bIsLWIEn;
+} sT_ChCMDConfig_Data_t;
+
 extern sT_ADC_ChannelMap_t staADC_ChannelMap[eNUMBER_OF_ADC_MODULEs][eNUMBER_OF_ADC_CHANNELs];
 extern const inputmux_connection_t eaADCInputMuxConnection[eNUMBER_OF_ADC_MODULEs][eNUMBER_OF_ADC_TRIG_SOURCEs];
 
@@ -15,15 +30,7 @@ extern bool bValidate_CMD_ChChainingWithLoop(eADC_Module_t eModule, eADC_Channel
 extern void vMark_ADC_CH_InUse(eADC_Module_t eModule, eADC_Channel_t eChannel);
 extern void vRemove_ADC_CH_FromUse(eADC_Module_t eModule, eADC_Channel_t eChannel);
 extern void vRelease_ADCChannelConfig(eADC_Module_t eModule);
-extern bool bUpdateADCChannelCommandMap(eADC_Module_t eModule,
-                                        eADC_Channel_t eChannel,
-                                        uint8_t uiLoopCount,
-                                        bool bIsLoopWithChIncrementEnabled,
-                                        eADC_TrigSlot_t eTrigSlot,
-                                        eADC_Command_t eCommandId,
-                                        uint32_t uiMaxRelTime_ms,
-                                        uint32_t uiMinRelTime_ms,
-                                        uint16_t uiSWAvgSampleCount);
+extern bool bUpdateADCChannelCommandMap( sT_ChCMDConfig_Data_t *pstChCMDConfig );
 extern sT_ADC_ChannelMap_t *pstGetChInfo_ByCmdId_TrigSlot(eADC_Module_t eModule, eADC_TrigSlot_t eTrigSlot, eADC_Command_t eCommandId, uint8_t uiLoopCount);
 extern bool bUpdate_ReleaseTime_OnChStats(sT_ADC_ChRelTimeUpdate_t *pstRelTimeUpdate);
 

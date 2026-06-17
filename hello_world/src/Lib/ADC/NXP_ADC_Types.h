@@ -226,7 +226,9 @@ typedef struct
     eADC_SampleTime_t eSampleTime;//ADC will wait defined number of ADC clock cycles before the conversion. Default or Minimum is 3 ADCK cycles
     eADC_CVReg_t eCompareValueReg;
     uint32_t uiADCMax_ReleaseTime_ms;
+    uint32_t uiMax_ReleaseStepSize;
     uint32_t uiADCMin_ReleaseTime_ms;
+    uint32_t uiMin_ReleaseStepSize;
     uint16_t uiSWAvgSampleCount;
 }sT_ADC_CMDData_t;
 
@@ -312,6 +314,7 @@ typedef struct
     eADC_TrigSrcType_t eTrigSrcType;
     eADC_TrigSource_t eTrigSrc;
     uint32_t uiTrigFrequency_Hz;
+    uint32_t uiStatisticCompute_Freq_Hz;//This must be at least less than 25% of 'uiTrigFrequency_Hz'
 } sT_ADC_TrigSrcCtrl_t;
 
 typedef struct
@@ -405,6 +408,7 @@ typedef struct
     _Atomic uint16_t uiADCVal;
     uint64_t uiLastTriggerTime_ms;
     _Atomic uint32_t uiReleaseDelay_ms;
+    _Atomic uint32_t uiReleaseStep_Size;
 } sT_ADC_ChMinMax_t;
 
 typedef struct
@@ -417,6 +421,8 @@ typedef struct
 
 typedef struct
 {
+    uint32_t uiLastSet_StatComputeTime_Us;
+
     sT_ADC_ChAvgRMS_t stTAvgVal;
     sT_ADC_ChAvgRMS_t stTRMSVal;
     sT_ADC_ChMinMax_t stTMinVal;
@@ -444,5 +450,13 @@ typedef struct
     eADC_Command_t eCMD;
     eADC_Channel_t eChannel;
 } sT_CMDChannel_t;
+
+typedef struct
+{
+    eADC_Module_t eADCModule;
+    bool bIsADCInitialized;
+    uint8_t uiWaterMarkLevel;
+} sT_ADCToDMA_HW_Map_t;
+
 
 #endif

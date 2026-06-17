@@ -19,8 +19,9 @@
             .uiADCVal = 0U, \
         }, \
         .stStats = { \
-            .stTMinVal = {UINT16_MAX, 0U, ADC_STATS_DEAFULT_MIN_RELEASE_TIME_ms}, \
-            .stTMaxVal = {0U, 0U, ADC_STATS_DEAFULT_MAX_RELEASE_TIME_ms}, \
+            .uiLastSet_StatComputeTime_Us = 0U, \
+            .stTMinVal = {UINT16_MAX, 0U, ADC_STATS_DEAFULT_MIN_RELEASE_TIME_ms, ADC_STATS_DEAFULT_MIN_RELEASE_STEP_SIZE}, \
+            .stTMaxVal = {0U, 0U, ADC_STATS_DEAFULT_MAX_RELEASE_TIME_ms, ADC_STATS_DEAFULT_MAX_RELEASE_STEP_SIZE}, \
             .stTAvgVal = {0U, 0U, 0U, (max_sample_count)}, \
             .stTRMSVal = {0U, 0U, 0U, (max_sample_count)}, \
         }, \
@@ -542,30 +543,22 @@ bool bValidate_CMD_ChChainingWithLoop(eADC_Module_t eModule, eADC_Channel_t eCha
     return true;
 }
 
-bool bUpdateADCChannelCommandMap(eADC_Module_t eModule,
-                                 eADC_Channel_t eChannel,
-                                 uint8_t uiLoopCount,
-                                 bool bIsLoopWithChIncrementEnabled,
-                                 eADC_TrigSlot_t eTrigSlot,
-                                 eADC_Command_t eCommandId,
-                                 uint32_t uiMaxRelTime_ms,
-                                 uint32_t uiMinRelTime_ms,
-                                 uint16_t uiSWAvgSampleCount)
+bool bUpdateADCChannelCommandMap( sT_ChCMDConfig_Data_t *pstChCMDConfig )
 {
 
-    if((eModule >= eNUMBER_OF_ADC_MODULEs) ||
-       (eChannel >= eNUMBER_OF_ADC_CHANNELs) ||
-       (eTrigSlot >= eNUMBER_OF_ADC_TRIG_SLOTs) ||
-       (eCommandId == eADC_CMD_None) ||
-       (eCommandId >= eNUMBER_OF_ADC_COMMANDs))
+    if((pstChCMDConfig->eADCModule >= eNUMBER_OF_ADC_MODULEs) ||
+       (pstChCMDConfig->eADCChannel >= eNUMBER_OF_ADC_CHANNELs) ||
+       (pstChCMDConfig->eTrigSlot >= eNUMBER_OF_ADC_TRIG_SLOTs) ||
+       (pstChCMDConfig->eCMDId == eADC_CMD_None) ||
+       (pstChCMDConfig->eCMDId >= eNUMBER_OF_ADC_COMMANDs))
     {
         return false;
     }
 
-    uint8_t uiLastChannel = (uint8_t)eChannel;
-    if(bIsLoopWithChIncrementEnabled)
+    uint8_t uiLastChannel = (uint8_t)pstChCMDConfig->eADCChannel;
+    if(pstChCMDConfig->bIsLWIEn)
     {
-        uiLastChannel += uiLoopCount;
+        uiLastChannel += pstChCMDConfig->uiLoopCount;
     }
 
     if(uiLastChannel >= eNUMBER_OF_ADC_CHANNELs)
@@ -573,27 +566,28 @@ bool bUpdateADCChannelCommandMap(eADC_Module_t eModule,
         return false;
     }
 
-    uint16_t uiNormalizedSampleCount = (uiSWAvgSampleCount == 0U) ? 1U : uiSWAvgSampleCount;
-    sT_ADC_ChannelMap_t *pstADCModChs = staADC_ChannelMap[eModule];
-    for(uint8_t i = (uint8_t)eChannel; i <= uiLastChannel; i++)
+    uint16_t uiNormalizedSampleCount = (pstChCMDConfig->uiSWAvgSampleCount == 0U) ? 1U : pstChCMDConfig->uiSWAvgSampleCount;
+    sT_ADC_ChannelMap_t *pstADCModChs = staADC_ChannelMap[pstChCMDConfig->eADCModule];
+    for(uint8_t i = (uint8_t)pstChCMDConfig->eADCChannel; i <= uiLastChannel; i++)
     {
         if(!pstADCModChs[i].stInfo.bIsAvailable)
         {
             return false;
         }
 
-        if(bIsADC_ChannelUsed(eModule, i))
+        if(bIsADC_ChannelUsed(pstChCMDConfig->eADCModule, i))
         {
-            FHALT("Ch[%d] already being used in ADC Module[%d]. Please verify", i, eModule);
+            FHALT("Ch[%d] already being used in ADC Module[%d]. Please verify", i, pstChCMDConfig->eADCModule);
             return false;            
         }
     }
 
-    for(uint8_t i = (uint8_t)eChannel; i <= uiLastChannel; i++)
+    for(uint8_t i = (uint8_t)pstChCMDConfig->eADCChannel; i <= uiLastChannel; i++)
     {
-        if(!bIsADC_ChannelUsed(eModule, i))
+        uint32_t uiRelDelay_ms = 0, uiStepSize = 0;
+        if(!bIsADC_ChannelUsed(pstChCMDConfig->eADCModule, i))
         {
-            vMark_ADC_CH_InUse(eModule, i);
+            vMark_ADC_CH_InUse(pstChCMDConfig->eADCModule, i);
         }
 
         sT_ADC_ChMinMax_t *pstStats_Max = &pstADCModChs[i].stStats.stTMaxVal;
@@ -601,13 +595,26 @@ bool bUpdateADCChannelCommandMap(eADC_Module_t eModule,
         sT_ADC_ChAvgRMS_t *pstStats_Avg = &pstADCModChs[i].stStats.stTAvgVal;
         sT_ADC_ChAvgRMS_t *pstStats_RMS = &pstADCModChs[i].stStats.stTRMSVal;
 
-        pstADCModChs[i].stOwner.eTrigSlot = eTrigSlot;
-        pstADCModChs[i].stOwner.eCommandId = eCommandId;
+        pstADCModChs[i].stOwner.eTrigSlot = pstChCMDConfig->eTrigSlot;
+        pstADCModChs[i].stOwner.eCommandId = pstChCMDConfig->eCMDId;
 
-        pstStats_Max->uiReleaseDelay_ms = (uiMaxRelTime_ms == 0)? ADC_STATS_DEAFULT_MAX_RELEASE_TIME_ms:
-                                           uiMaxRelTime_ms;
-        pstStats_Min->uiReleaseDelay_ms = (uiMinRelTime_ms == 0)? ADC_STATS_DEAFULT_MIN_RELEASE_TIME_ms:
-                                           uiMinRelTime_ms;
+        uiRelDelay_ms = (pstChCMDConfig->uiMaxReleaseTime_ms == 0)? ADC_STATS_DEAFULT_MAX_RELEASE_TIME_ms:
+                        pstChCMDConfig->uiMaxReleaseTime_ms;
+        atomic_store_explicit(&pstStats_Max->uiReleaseDelay_ms, uiRelDelay_ms, memory_order_release);
+        
+        uiStepSize = (pstChCMDConfig->uiMaxReleaseStepSize == 0)? ADC_STATS_DEAFULT_MAX_RELEASE_STEP_SIZE:
+                      pstChCMDConfig->uiMaxReleaseStepSize;
+        atomic_store_explicit(&pstStats_Max->uiReleaseStep_Size, uiStepSize, memory_order_release);
+        
+        
+        uiRelDelay_ms = (pstChCMDConfig->uiMinReleaseTime_ms == 0)? ADC_STATS_DEAFULT_MIN_RELEASE_TIME_ms:
+                        pstChCMDConfig->uiMinReleaseTime_ms;
+        atomic_store_explicit(&pstStats_Min->uiReleaseDelay_ms, uiRelDelay_ms, memory_order_release);
+        
+        uiStepSize = (pstChCMDConfig->uiMinReleaseStepSize == 0)? ADC_STATS_DEAFULT_MIN_RELEASE_STEP_SIZE:
+                      pstChCMDConfig->uiMinReleaseStepSize;
+        atomic_store_explicit(&pstStats_Min->uiReleaseStep_Size, uiStepSize, memory_order_release);
+        
         atomic_store_explicit(&pstStats_Avg->uiMaxSampleCount, uiNormalizedSampleCount, memory_order_release);
         atomic_store_explicit(&pstStats_RMS->uiMaxSampleCount, uiNormalizedSampleCount, memory_order_release);
     }
@@ -685,12 +692,19 @@ void vRelease_ADCChannelConfig(eADC_Module_t eModule)
         atomic_store_explicit(&pstChannel->stStats.stTMinVal.uiReleaseDelay_ms,
                               ADC_STATS_DEAFULT_MIN_RELEASE_TIME_ms,
                               memory_order_release);
+        atomic_store_explicit(&pstChannel->stStats.stTMinVal.uiReleaseStep_Size,
+                              ADC_STATS_DEAFULT_MIN_RELEASE_STEP_SIZE,
+                              memory_order_release);
 
         atomic_store_explicit(&pstChannel->stStats.stTMaxVal.uiADCVal, 0U, memory_order_release);
         pstChannel->stStats.stTMaxVal.uiLastTriggerTime_ms = 0U;
         atomic_store_explicit(&pstChannel->stStats.stTMaxVal.uiReleaseDelay_ms,
                               ADC_STATS_DEAFULT_MAX_RELEASE_TIME_ms,
                               memory_order_release);
+        atomic_store_explicit(&pstChannel->stStats.stTMaxVal.uiReleaseStep_Size,
+                              ADC_STATS_DEAFULT_MAX_RELEASE_STEP_SIZE,
+                              memory_order_release);
+        pstChannel->stStats.uiLastSet_StatComputeTime_Us = 0;
     }
 }
 

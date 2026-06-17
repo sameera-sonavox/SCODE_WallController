@@ -44,7 +44,7 @@ void vInit_Amp( void )
 	vInit_BootloaderController();
 	vInit_Amp_GPIO();
 	vInit_CANController();
-/* 	vInit_UART_CAN_Bridge(); */
+ 	vInit_UART_CAN_Bridge();
 	vConfigure_DAC();
 	vInitialize_ADCModule();
 
@@ -68,10 +68,6 @@ void vConfigure_DAC( void )
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.pvErrorCallback = NULL;
 
 	vDAC_Init(&stDACConfig);
-	k_msleep(2000);
-	vUpdate_WaveForm_Volume(500);
-	k_msleep(4000);
-	vUpdate_WaveForm_Frequency(4000);
 	//bDAC_UpdateOutputValue(2500U);
 	// Configure other fields of stDACConfig as needed
 }
