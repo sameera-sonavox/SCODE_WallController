@@ -60,7 +60,7 @@ void vInitialize_ADCModule( void )
     pstTrigSrc->stTADCTrigCtrl.eTrigSrcType = eADC_TrigSrcCtrl_Hardware;
     pstTrigSrc->stTADCTrigCtrl.eTrigSrc = eADC_TrigSrc_CTimer1_MAT0;
     pstTrigSrc->stTADCTrigCtrl.uiTrigFrequency_Hz = ADC0_TRIGGER_FREQUENCY_HZ;
-    pstTrigSrc->stTADCTrigCtrl.uiStatisticCompute_Freq_Hz = 500U;//(uint32_t)((float)pstTrigSrc->stTADCTrigCtrl.uiTrigFrequency_Hz * 0.01f);
+    pstTrigSrc->stTADCTrigCtrl.uiStatisticCompute_Freq_Hz = (uint32_t)((float)pstTrigSrc->stTADCTrigCtrl.uiTrigFrequency_Hz * 0.2f);
     pstTrigSrc->uiTrigDelay = 3;
     pstTrigSrc->ePrioLevel = eTrig_Prio_Lev_0;
 

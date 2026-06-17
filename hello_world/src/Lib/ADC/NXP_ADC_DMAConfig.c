@@ -4,11 +4,16 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/dma.h>
+#include <zephyr/sys/util.h>
 #include "fsl_common.h"
 #include "NXP_ADC_DMAConfig.h"
 #include "NXP_ADC_API.h"
 #include "NXP_ADC_ProjDef.h"
 #include "../GenericMacro.h"
+
+BUILD_ASSERT(ADC_DMA_BLOCK_COUNT > 0U, "ADC_DMA_BLOCK_COUNT must be greater than zero");
+BUILD_ASSERT(ADC_DMA_BLOCK_COUNT <= CONFIG_DMA_TCD_QUEUE_SIZE,
+             "ADC_DMA_BLOCK_COUNT must be less than or equal to CONFIG_DMA_TCD_QUEUE_SIZE");
 
 _Atomic bool bIsDMAThreadInitialized = false;
 
@@ -35,8 +40,8 @@ typedef struct
 typedef struct
 {
     eADC_Module_t eModuleId;
-    uint8_t uiBufferIndex;
     uint32_t uiResultCount;
+    uint32_t uiaDMAData[ADC_MAX_WATERMARK_LEVEL];
 } sT_DMAMessage_t;
 
 
@@ -215,21 +220,15 @@ static void vCompute_DMA_MsgQ_Handler( void *p1, void *p2, void *p3 )
             vClear_MsgQ_FullFLag(stTDMAMsg.eModuleId);
         }
 
-        if(stTDMAMsg.eModuleId >= eNUMBER_OF_ADC_MODULEs ||
-           stTDMAMsg.uiBufferIndex >= ADC_DMA_BLOCK_COUNT)
+        if(stTDMAMsg.eModuleId >= eNUMBER_OF_ADC_MODULEs)
         {
             continue;
         }
 
-        sT_ADC_DMAContext_t *pstDMAContext = &staDMAContext[stTDMAMsg.eModuleId];
-        uint32_t *puiBuffer = pstDMAContext->puiDMABuffer[stTDMAMsg.uiBufferIndex];
-        if(puiBuffer == NULL)
-            continue;
-
         for(uint32_t i = 0U; i < stTDMAMsg.uiResultCount; i++)
         {
             lpadc_conv_result_t stResult = {0};
-            if(!bDecode_DMA_ADCResult(puiBuffer[i], &stResult))
+            if(!bDecode_DMA_ADCResult(stTDMAMsg.uiaDMAData[i], &stResult))
             {
                 vSet_DMA_Error(stTDMAMsg.eModuleId, false);
                 break;
@@ -357,9 +356,21 @@ static void vADC_DMA_Callback(const struct device *dev, void *pUserData, uint32_
 
     sT_DMAMessage_t stTMsg = {
         .eModuleId = eModuleId,
-        .uiBufferIndex = uiIndex,
         .uiResultCount = pstDMAContext->uiResultsForBurst
     };
+
+    uint32_t *puiBuffer = pstDMAContext->puiDMABuffer[uiIndex];
+    if(puiBuffer == NULL)
+    {
+        vSet_DMA_Error(eModuleId, false);
+        vSet_NextDMABuffer(uiIndex, pstDMAContext);
+        return;
+    }
+
+    for(uint32_t i = 0U; i < pstDMAContext->uiResultsForBurst; i++)
+    {
+        stTMsg.uiaDMAData[i] = puiBuffer[i];
+    }
 
     if(k_msgq_put(&kMsgQ_DMAResult_Q, &stTMsg, K_NO_WAIT) != 0)
     {

@@ -81,6 +81,7 @@ static stADC_HWmodConfig_t staADC_HWConfig[eNUMBER_OF_ADC_MODULEs] = {0};
 K_THREAD_STACK_DEFINE(thread_ADC_Statistics, ADC_STATISTIC_THREAD_STACK_SIZE);
 static struct k_thread kADC_Statistic_Thread_t;
 static k_tid_t kADC_ThreadId;
+
 static void vCompute_ADC_Statistics_ForThread( void *p1, void *p2, void *p3 );
 static void vCompute_AVG_Value(sT_ADC_ChannelStats_t *pstStatistics, sT_TrigSlotCtrl_t *pstTrigSlot,
                                const sT_ADC_StatisticsSample_t *pstTADCSample);
@@ -144,7 +145,6 @@ static inline void vNotify_ADCOverflow(eADC_Module_t eADCModule, bool bres);
 static inline bool bIsTimeOut_ForStatisticUpdate(const sT_TrigSlotCtrl_t *pstTrigSlotCtrl, 
                                                  const sT_ADC_ChannelStats_t *pstStatistics,
                                                  uint32_t uiCurrentTime_Us);
-static inline uint8_t uiGet_EnabledCommandCount(const sT_TrigSlotCtrl_t *pstTrigSlotCtrl);
 static inline void vSet_StatisticLastTrigTime(sT_ADC_ChannelStats_t *pstStatistics);
 
 static bool bConfig_ForDMA(ADC_Type *pstADCBase, eADC_Module_t eADCModule, const sT_ADCNotify_DMA_t stTDMACtrl);
@@ -535,6 +535,7 @@ static bool bConfig_ForDMA(ADC_Type *pstADCBase, eADC_Module_t eADCModule, const
         return false;
     }
 
+    vInit_ADC_Thread();
     return true;
 }
 
@@ -942,29 +943,7 @@ static inline bool bIsTimeOut_ForStatisticUpdate(const sT_TrigSlotCtrl_t *pstTri
                                                  const sT_ADC_ChannelStats_t *pstStatistics,
                                                  uint32_t uiCurrentTime_Us)
 {
-    uint32_t uiStatisticTrigLimit_Us = pstTrigSlotCtrl->uiStatisticTrigLimit_Us;
-    uint8_t uiEnabledCommandCount = uiGet_EnabledCommandCount(pstTrigSlotCtrl);
-
-    if(uiEnabledCommandCount > 1U)
-        uiStatisticTrigLimit_Us *= uiEnabledCommandCount;
-
-    return ((uiCurrentTime_Us - pstStatistics->uiLastSet_StatComputeTime_Us) >= uiStatisticTrigLimit_Us);    
-}
-
-static inline uint8_t uiGet_EnabledCommandCount(const sT_TrigSlotCtrl_t *pstTrigSlotCtrl)
-{
-    uint8_t uiEnabledCommandCount = 0U;
-
-    if(pstTrigSlotCtrl == NULL)
-        return 1U;
-
-    for(uint8_t i = 0U; i < eNUMBER_OF_ADC_COMMANDs; i++)
-    {
-        if(pstTrigSlotCtrl->staCMDCtrl[i].bIsEnabled)
-            uiEnabledCommandCount++;
-    }
-
-    return (uiEnabledCommandCount == 0U) ? 1U : uiEnabledCommandCount;
+    return ((uiCurrentTime_Us - pstStatistics->uiLastSet_StatComputeTime_Us) >= pstTrigSlotCtrl->uiStatisticTrigLimit_Us);    
 }
 
 static inline void vSet_StatisticLastTrigTime(sT_ADC_ChannelStats_t *pstStatistics)

@@ -4,7 +4,11 @@
 
 #define ADC_IRQ_PRIORITY                                2
 
-#define ADC_STATISTIC_THREAD_PRIORITY                   0
+
+#define ADC_DMA_THREAD_PRIORITY                         1U
+#define ADC_STATISTIC_THREAD_PRIORITY                   0//If you use DMA for acquiring ADC samples, then the statistic thread must run higher priority than the DMA thread.
+                                                         //Otherwise it will be overflown
+
 #define ADC_MSGQ_LENGTH                                 256U
 #define ADC_STATISTIC_THREAD_STACK_SIZE                 2048U
 #define ADC_STATS_DEAFULT_MAX_RELEASE_TIME_ms           10U
