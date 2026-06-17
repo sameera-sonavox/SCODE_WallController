@@ -1,6 +1,7 @@
 #include <string.h>
 #include <stdatomic.h>
 #include <math.h>
+#include <stdlib.h>
 #include <zephyr/kernel.h>
 
 #include "fsl_clock.h"
@@ -68,8 +69,9 @@ typedef enum
 
 typedef struct
 {
-    uint32_t uiaBuffer_A[DAC_MAX_CODE_VALUE + 1];
-    uint32_t uiaBuffer_B[DAC_MAX_CODE_VALUE + 1];
+    uint32_t *puiBuffer_A;
+    uint32_t *puiBuffer_B;
+    uint16_t uiSampleBufferLength;
 } sT_WaveFormConfig_t;
 
 typedef struct
@@ -153,7 +155,6 @@ sT_DACBuffSwap_Noise_t stTBuffSwapData_Noise = {0};
 
 #define DACHWTrigCTIMER_t                   (stTDACOutputCodeCtrl_t.stTDACHWConfig.stTrigSrcConfig_t.stTCTimerConfig)
 #define getNoiseBufSize()                   (stTDACOutputCodeCtrl_t.dacout_perWave_t.stTNoiseConfig.staTCDBuff[0].uiBuffer)
-#define getWaveBufSize()                    (stTDACOutputCodeCtrl_t.dacout_perWave_t.stTWaveConfig.uiaBuffer_A)
 #define stNoiseConfigCtrl                   (stTDACOutputCodeCtrl_t.dacout_perWave_t.stTNoiseConfig)
 
 #define IsDACConfigured()                   (stTDACConfig_t.bIsConfigured)
@@ -202,6 +203,8 @@ static void vSet_WaveformType(sT_DAC_Config_t *pstConfig, sT_DAC_OutputCode_Ctrl
 static void vConfigure_DAC_SawtoothMode(sT_DAC_Config_t *pstConfig);
 void vCompute_Waveform_Params(sT_DAC_Config_t *pstConfig, sT_DAC_OutputCode_Metadata_t *pstDACOutCtrl, int *piret);
 void vCompute_SawtoothDataBuffer(int *piret, uint32_t *puiBuffer, const sT_DAC_OutputCode_Metadata_t *pstDACOutCtrl);
+static void vAllocate_MemoryForSampleBuffers(sT_DAC_OutputCode_Ctrl_t *pstDACOutCtrl, int *piret);
+static void vFree_MemoryFor_SampleBuffers(sT_DAC_OutputCode_Ctrl_t *pstDACOutCtrl);
 
 static void vConfigure_DAC_SineWaveMode(sT_DAC_Config_t *pstConfig);
 void vCompute_SineWaveDataBuffer(int *piret, uint32_t *puiBuffer, const sT_DAC_OutputCode_Metadata_t *pstDACOutCtrl);
@@ -226,6 +229,13 @@ void vConfigure_DAC_Structs_ForWaveFromParam_Update(sT_DAC_OutputCode_Metadata_t
 void vConfigure_DAC_Structs_ForNoiseGenParam_Update(sT_DAC_OutputCode_Metadata_t *pstTempDACOutCtrl, 
                                            sT_DAC_Config_t *pstDacConfig,  
                                            int *piret);
+void vUpdate_WaveGenFreq_WithCurrentBuffers(sT_DAC_OutputCode_Metadata_t *pstTempDACOutCtrl, 
+                                           sT_DAC_Config_t *pstDacConfig, 
+                                           eDAC_Buffer_t *peInactiveBuffIndex,
+                                           uint32_t **ppuiInactiveBuffer, 
+                                           int *piret);
+void vUpdate_WaveGenFreq_WithNewBufferSizes(sT_DAC_OutputCode_Metadata_t *pstTempDACOut, 
+                                           sT_DAC_Config_t *pstTempDACConfig);                                           
 
 static inline void vSet_DMAUpdate_Pending( int *piret );
 static inline void vClear_DMAUpdate_Pending( void );
@@ -609,6 +619,11 @@ static void vUpdate_CTimer_TrigFreq_ForNoiseGen(eTrigSrc_CTimer_t cTimerTrigSrc,
 void vWaveGen_FrequencyUpdate(uint32_t uiFreq_Hz)
 {
     int iret = 0;
+    if(uiFreq_Hz == 0)
+    {
+        FHALT("Frequency cannot be zero");
+        return;
+    }
 
     k_spinlock_key_t key = k_spin_lock(&stLock_WaveFormParamUpdate);
 
@@ -624,30 +639,129 @@ void vWaveGen_FrequencyUpdate(uint32_t uiFreq_Hz)
     sT_WaveFormOutput_t *pstWaveOutput = &pstTempDACConfig->stOutputConfig.uOutputConfig.stWaveFormOutput;
     pstWaveOutput->uiFrequencyHz = uiFreq_Hz;
 
-    vConfigure_DAC_Structs_ForWaveFromParam_Update(pstTempDACOut, pstTempDACConfig, &stTBuffSwapData.eReqBuffSwapId, &puiInactiveBuffer, &iret);
+    uint32_t uiSamplesPerPeriod = (uint32_t)(stTDACOutputCodeCtrl_t.uiTriggerFrequency_Hz / uiFreq_Hz);
+    if(uiSamplesPerPeriod <= stTDACOutputCodeCtrl_t.dacout_perWave_t.stTWaveConfig.uiSampleBufferLength)
+    {
+        vUpdate_WaveGenFreq_WithCurrentBuffers(pstTempDACOut, pstTempDACConfig, &stTBuffSwapData.eReqBuffSwapId, &puiInactiveBuffer, &iret);
+    }
+    else
+    {
+        vUpdate_WaveGenFreq_WithNewBufferSizes(pstTempDACOut, pstTempDACConfig);
+    }
+    
+    k_spin_unlock(&stLock_WaveFormParamUpdate, key); 
+}
+
+void vUpdate_WaveGenFreq_WithNewBufferSizes(sT_DAC_OutputCode_Metadata_t *pstTempDACOut, 
+                                           sT_DAC_Config_t *pstTempDACConfig)
+{
+    int iret = 0;
+    eDAC_WaveFormType_t eWaveType = pstTempDACConfig->stOutputConfig.eWaveFormType;
+    DACError_Callback_t pvErrorCallback = pstTempDACConfig->stOutputConfig.uOutputConfig.stWaveFormOutput.pvErrorCallback;
+
+    vCompute_Waveform_Params(pstTempDACConfig, pstTempDACOut, &iret);
     if(iret != 0)
     {
-        k_spin_unlock(&stLock_WaveFormParamUpdate, key);
+        FHALT("Failed to compute waveform parameters for frequency update");
+        return;
+    }
+    pstTempDACOut->eCurrentBuffer = eDAC_Buffer_A;
+
+    vStop_CTimer();
+    vDisable_DAC_DMA_Circular();
+
+    memcpy(&stTDACConfig_t, pstTempDACConfig, sizeof(sT_DAC_Config_t));
+    vCommit_DACOutputCtrlMetadata(&stTDACOutputCodeCtrl_t, pstTempDACOut);
+
+    vAllocate_MemoryForSampleBuffers(&stTDACOutputCodeCtrl_t, &iret);
+    if(iret != 0)
+    {
+        FHALT("Failed to allocate larger waveform buffers");
         return;
     }
 
-    vSet_DMAUpdate_Pending(&iret);
+    vSet_ActiveBuffer(eDAC_Buffer_A, eNUMBER_OF_BUFFERs, &stTDACOutputCodeCtrl_t);
+
+    uint32_t *puiBuffer = puiGetDACBuffer(stTDACOutputCodeCtrl_t.eCurrentBuffer,
+                                          &stTDACOutputCodeCtrl_t);
+    if(puiBuffer == NULL)
+    {
+        FHALT("Failed to get waveform buffer after frequency resize");
+        return;
+    }
+
+    switch(eWaveType)
+    {
+        case eDAC_WaveForm_Sawtooth:
+            vCompute_SawtoothDataBuffer(&iret, puiBuffer, pstTempDACOut);
+            break;
+
+        case eDAC_WaveForm_Sine:
+            vCompute_SineWaveDataBuffer(&iret, puiBuffer, pstTempDACOut);
+            break;
+
+        default:
+            iret = -1;
+            break;
+    }
+
     if(iret != 0)
     {
-        k_spin_unlock(&stLock_WaveFormParamUpdate, key);
+        FHALT("Failed to rebuild waveform buffer after frequency resize");
+        return;
+    }
+
+    DAC_SetReset(DAC0, kDAC_ResetFIFO);
+    DAC_ClearReset(DAC0, kDAC_ResetFIFO);
+    DAC_ClearStatusFlags(DAC0,
+                         kDAC_FIFOOverflowFlag | kDAC_FIFOUnderflowFlag);
+    DAC0->FCR = LPDAC_FCR_WML(4U);
+    DAC0->GCR = (DAC0->GCR | LPDAC_GCR_FIFOEN_MASK) & ~LPDAC_GCR_TRGSEL_MASK;
+
+    if(!bSetup_DAC_DMA_Circular(puiBuffer,
+                                stTDACOutputCodeCtrl_t.uiNumberofSamples_Period,
+                                eWaveType,
+                                stTDACOutputCodeCtrl_t.eCurrentTCDBuffer,
+                                (uintptr_t)DAC0,
+                                pvErrorCallback,
+                                vNotify_DACParameterUpdate_Callback))
+    {
+        FHALT("Failed to rebuild DAC DMA after frequency resize");
+        return;
+    }
+
+    vStart_CTimer();   
+    
+}
+
+
+void vUpdate_WaveGenFreq_WithCurrentBuffers(sT_DAC_OutputCode_Metadata_t *pstTempDACOutCtrl, 
+                                           sT_DAC_Config_t *pstDacConfig, 
+                                           eDAC_Buffer_t *peInactiveBuffIndex,
+                                           uint32_t **ppuiInactiveBuffer, 
+                                           int *piret)
+{
+    vConfigure_DAC_Structs_ForWaveFromParam_Update(pstTempDACOutCtrl, pstDacConfig, peInactiveBuffIndex, ppuiInactiveBuffer, piret);
+    if(*piret != 0)
+    {
+        return;
+    }
+
+    vSet_DMAUpdate_Pending(piret);
+    if(*piret != 0)
+    {
         return;        
     }
-    if(!bRequest_DMA_BufferSwap(puiInactiveBuffer, 
-                              pstTempDACOut->uiNumberofSamples_Period,
-                              (uint8_t)stTBuffSwapData.eReqBuffSwapId))
+    if(!bRequest_DMA_BufferSwap(*ppuiInactiveBuffer, 
+                            pstTempDACOutCtrl->uiNumberofSamples_Period,
+                            (uint8_t)stTBuffSwapData.eReqBuffSwapId))
     {
+        *piret = -1;
         vClear_DMAUpdate_Pending();
-        k_spin_unlock(&stLock_WaveFormParamUpdate, key);
         FHALT("Failed to switch DAC DMA buffer.");
         return;        
     }
-
-    k_spin_unlock(&stLock_WaveFormParamUpdate, key); 
+    *piret = 0;
 }
 
 void vUpdate_WaveForm_Volume(uint16_t uiPeakVolt_mV)
@@ -1230,16 +1344,28 @@ static void vConfigure_DAC_SineWaveMode(sT_DAC_Config_t *pstConfig)
     }
 
     vCommit_DACOutputCtrlMetadata(&stTDACOutputCodeCtrl_t, &stTempDACOutCtrl);
+
+    vAllocate_MemoryForSampleBuffers(&stTDACOutputCodeCtrl_t, &iret);
+    if(iret != 0)
+    {
+        vFree_MemoryFor_SampleBuffers(&stTDACOutputCodeCtrl_t);
+        FHALT("Failed to callocate memory for the buffers.");
+        pstConfig->bIsConfigured = false;
+        return;        
+    }    
         
     uint32_t *puiBuffer = puiGetDACBuffer(stTDACOutputCodeCtrl_t.eCurrentBuffer, &stTDACOutputCodeCtrl_t);
     if(puiBuffer == NULL)
     {
         FHALT("Invalid Data Buffer in Sawtooth Mode.");
+        vFree_MemoryFor_SampleBuffers(&stTDACOutputCodeCtrl_t);
         pstConfig->bIsConfigured = false;
         return;        
     }
     vCompute_SineWaveDataBuffer(&iret, puiBuffer, &stTempDACOutCtrl);
-    if(iret != 0)    {
+    if(iret != 0)    
+    {
+        vFree_MemoryFor_SampleBuffers(&stTDACOutputCodeCtrl_t);
         pstConfig->bIsConfigured = false;
         FHALT("Failed to compute SineWave data buffer.");
         return;
@@ -1253,6 +1379,7 @@ static void vConfigure_DAC_SineWaveMode(sT_DAC_Config_t *pstConfig)
     stDACConfig.syncTime = 1U;
     if(!bConfigure_ReferenceSource(pstConfig, &stDACConfig))
     {
+        vFree_MemoryFor_SampleBuffers(&stTDACOutputCodeCtrl_t);
         FHALT("Failed to configure DAC reference voltage source.");
         pstConfig->bIsConfigured = false;
         return;
@@ -1262,6 +1389,7 @@ static void vConfigure_DAC_SineWaveMode(sT_DAC_Config_t *pstConfig)
     vConfigure_FIFOWorkMode(&stDACConfig, pstConfig, &iret);
     if(iret != 0)
     {
+        vFree_MemoryFor_SampleBuffers(&stTDACOutputCodeCtrl_t);
         pstConfig->bIsConfigured = false;
         return;
     }
@@ -1273,6 +1401,7 @@ static void vConfigure_DAC_SineWaveMode(sT_DAC_Config_t *pstConfig)
     vConfigure_DACTrigSrc(pstConfig, &iret);
     if(iret != 0)
     {
+        vFree_MemoryFor_SampleBuffers(&stTDACOutputCodeCtrl_t);
         pstConfig->bIsConfigured = false;
         return;
     }
@@ -1280,6 +1409,72 @@ static void vConfigure_DAC_SineWaveMode(sT_DAC_Config_t *pstConfig)
 
     k_work_init(&stWorker_ParamUpdateExecute, vDAC_ParamUpdateExecute);
     pstConfig->bIsConfigured = true;       
+}
+
+static void vAllocate_MemoryForSampleBuffers(sT_DAC_OutputCode_Ctrl_t *pstDACOutCtrl, int *piret)
+{
+    if(piret == NULL)
+        return;
+
+    if(pstDACOutCtrl == NULL)
+    {
+        *piret = -1;
+        FHALT("Null pointer reference for DAC output control");
+        return;
+    }
+
+    uint16_t uiSampleCount = pstDACOutCtrl->uiNumberofSamples_Period;
+    if((uiSampleCount == 0U) || (uiSampleCount > DAC_MAX_WAVEFORM_SAMPLE_COUNT))
+    {
+        *piret = -1;
+        FHALT("Invalid waveform sample count[%d]", uiSampleCount);
+        return;
+    }
+
+    vFree_MemoryFor_SampleBuffers(pstDACOutCtrl);
+
+    size_t uiBufferSize = (size_t)uiSampleCount * sizeof(uint32_t);
+    uint32_t *puiBufferA = malloc(uiBufferSize);
+    if(puiBufferA == NULL)
+    {
+        *piret = -1;
+        FHALT("Memory couldnt be allocated to MemoryBuffer_A");
+        return;
+    }
+
+    uint32_t *puiBufferB = malloc(uiBufferSize);
+    if(puiBufferB == NULL)
+    {
+        free(puiBufferA);
+        *piret = -1;
+        FHALT("Memory couldnt be allocated to MemoryBuffer_B");
+        return;
+    }
+
+    pstDACOutCtrl->dacout_perWave_t.stTWaveConfig.puiBuffer_A = puiBufferA;
+    pstDACOutCtrl->dacout_perWave_t.stTWaveConfig.puiBuffer_B = puiBufferB;
+    pstDACOutCtrl->dacout_perWave_t.stTWaveConfig.uiSampleBufferLength = uiSampleCount;
+    *piret = 0;
+}
+
+static void vFree_MemoryFor_SampleBuffers(sT_DAC_OutputCode_Ctrl_t *pstDACOutCtrl)
+{
+    if(pstDACOutCtrl == NULL)
+        return;
+
+    if(pstDACOutCtrl->dacout_perWave_t.stTWaveConfig.puiBuffer_A != NULL)
+    {
+        free(pstDACOutCtrl->dacout_perWave_t.stTWaveConfig.puiBuffer_A);
+        pstDACOutCtrl->dacout_perWave_t.stTWaveConfig.puiBuffer_A = NULL;
+    }
+
+    if(pstDACOutCtrl->dacout_perWave_t.stTWaveConfig.puiBuffer_B != NULL)
+    {
+        free(pstDACOutCtrl->dacout_perWave_t.stTWaveConfig.puiBuffer_B);
+        pstDACOutCtrl->dacout_perWave_t.stTWaveConfig.puiBuffer_B = NULL;
+    }
+
+    pstDACOutCtrl->dacout_perWave_t.stTWaveConfig.uiSampleBufferLength = 0;
 }
 
 void vCompute_SineWaveDataBuffer(int *piret, uint32_t *puiBuffer, const sT_DAC_OutputCode_Metadata_t *pstDACOutCtrl)
@@ -1311,9 +1506,23 @@ void vCompute_SineWaveDataBuffer(int *piret, uint32_t *puiBuffer, const sT_DAC_O
         return;
     }
 
-    if(uiNumSamples > (DAC_MAX_CODE_VALUE + 1U))
+    if(uiNumSamples > DAC_MAX_WAVEFORM_SAMPLE_COUNT)
     {
-        uiNumSamples = DAC_MAX_CODE_VALUE + 1U;
+        FHALT("Sine waveform sample count[%d] exceeds buffer size[%d]",
+              uiNumSamples,
+              DAC_MAX_WAVEFORM_SAMPLE_COUNT);
+        *piret = -1;
+        k_spin_unlock(&stLock_DACOutputCodeCtrl, key);
+        return;
+    }
+    if(uiNumSamples > stTDACOutputCodeCtrl_t.dacout_perWave_t.stTWaveConfig.uiSampleBufferLength)
+    {
+        FHALT("Sine waveform sample count[%d] exceeds allocated buffer length[%d]",
+              uiNumSamples,
+              stTDACOutputCodeCtrl_t.dacout_perWave_t.stTWaveConfig.uiSampleBufferLength);
+        *piret = -1;
+        k_spin_unlock(&stLock_DACOutputCodeCtrl, key);
+        return;
     }
 
     if(uiPeakCode == 0U)
@@ -1341,7 +1550,7 @@ void vCompute_SineWaveDataBuffer(int *piret, uint32_t *puiBuffer, const sT_DAC_O
     }
 
     k_spin_unlock(&stLock_DACOutputCodeCtrl, key);
-    memset(puiBuffer, 0, sizeof(getWaveBufSize()));
+    memset(puiBuffer, 0, (size_t)uiNumSamples * sizeof(uint32_t));
 
     for(uint16_t i = 0; i < uiNumSamples; i++)
     {
@@ -1393,16 +1602,27 @@ static void vConfigure_DAC_SawtoothMode(sT_DAC_Config_t *pstConfig)
         return;
     }
     vCommit_DACOutputCtrlMetadata(&stTDACOutputCodeCtrl_t, &stTempDACOutCtrl);
+
+    vAllocate_MemoryForSampleBuffers(&stTDACOutputCodeCtrl_t, &iret);
+    if(iret != 0)
+    {
+        vFree_MemoryFor_SampleBuffers(&stTDACOutputCodeCtrl_t);
+        pstConfig->bIsConfigured = false;
+        return;
+    }    
     
     uint32_t *puiBuffer = puiGetDACBuffer(stTDACOutputCodeCtrl_t.eCurrentBuffer, &stTDACOutputCodeCtrl_t);
     if(puiBuffer == NULL)
     {
+        vFree_MemoryFor_SampleBuffers(&stTDACOutputCodeCtrl_t);
         FHALT("Invalid Data Buffer in Sawtooth Mode.");
         pstConfig->bIsConfigured = false;
         return;        
     }
     vCompute_SawtoothDataBuffer(&iret, puiBuffer, &stTempDACOutCtrl);
-    if(iret != 0)    {
+    if(iret != 0)    
+    {
+        vFree_MemoryFor_SampleBuffers(&stTDACOutputCodeCtrl_t);
         pstConfig->bIsConfigured = false;
         FHALT("Failed to compute sawtooth data buffer.");
         return;
@@ -1417,6 +1637,7 @@ static void vConfigure_DAC_SawtoothMode(sT_DAC_Config_t *pstConfig)
     stDACConfig.syncTime = 1U;
     if(!bConfigure_ReferenceSource(pstConfig, &stDACConfig))
     {
+        vFree_MemoryFor_SampleBuffers(&stTDACOutputCodeCtrl_t);
         FHALT("Failed to configure DAC reference voltage source.");
         pstConfig->bIsConfigured = false;
         return;
@@ -1426,6 +1647,7 @@ static void vConfigure_DAC_SawtoothMode(sT_DAC_Config_t *pstConfig)
     vConfigure_FIFOWorkMode(&stDACConfig, pstConfig, &iret);
     if(iret != 0)
     {
+        vFree_MemoryFor_SampleBuffers(&stTDACOutputCodeCtrl_t);
         pstConfig->bIsConfigured = false;
         return;
     }
@@ -1437,6 +1659,7 @@ static void vConfigure_DAC_SawtoothMode(sT_DAC_Config_t *pstConfig)
     vConfigure_DACTrigSrc(pstConfig, &iret);
     if(iret != 0)
     {
+        vFree_MemoryFor_SampleBuffers(&stTDACOutputCodeCtrl_t);
         pstConfig->bIsConfigured = false;
         return;
     }
@@ -1768,7 +1991,7 @@ void vCompute_Waveform_Params(sT_DAC_Config_t *pstConfig, sT_DAC_OutputCode_Meta
         FHALT("Failed to compute DAC output settling time for sawtooth mode.");
         return;
     }
-
+    
     *piret = 0;
 }
 
@@ -1804,9 +2027,21 @@ void vCompute_SawtoothDataBuffer(int *piret, uint32_t *puiBuffer, const sT_DAC_O
         return;
     }
 
-    if(uiNumSamples > (DAC_MAX_CODE_VALUE + 1U))
+    if(uiNumSamples > DAC_MAX_WAVEFORM_SAMPLE_COUNT)
     {
-        uiNumSamples = DAC_MAX_CODE_VALUE + 1U;
+        FHALT("Sawtooth waveform sample count[%d] exceeds buffer size[%d]",
+              uiNumSamples,
+              DAC_MAX_WAVEFORM_SAMPLE_COUNT);
+        *piret = -1;
+        return;
+    }
+    if(uiNumSamples > stTDACOutputCodeCtrl_t.dacout_perWave_t.stTWaveConfig.uiSampleBufferLength)
+    {
+        FHALT("Sawtooth waveform sample count[%d] exceeds allocated buffer length[%d]",
+              uiNumSamples,
+              stTDACOutputCodeCtrl_t.dacout_perWave_t.stTWaveConfig.uiSampleBufferLength);
+        *piret = -1;
+        return;
     }
 
     if(uiNumSamples > (uiCodeSpan + 1U))
@@ -1821,7 +2056,7 @@ void vCompute_SawtoothDataBuffer(int *piret, uint32_t *puiBuffer, const sT_DAC_O
         return;
     }
 
-    memset(puiBuffer, 0, sizeof(getWaveBufSize()));
+    memset(puiBuffer, 0, (size_t)uiNumSamples * sizeof(uint32_t));
 
     for(uint16_t i = 0; i < uiNumSamples; i++)
     {
@@ -2026,12 +2261,26 @@ static void vInit_TCDBuffers( void )
 
 uint32_t * puiGetBuffer_Waveform(eDAC_Buffer_t eBuffer, sT_DAC_OutputCode_Ctrl_t *pstOutputCodeCtrl)
 {
+    if(pstOutputCodeCtrl == NULL)
+    {
+        FHALT("Invalid pointer to DAC output control");
+        return NULL;
+    }
+
+    if(pstOutputCodeCtrl->dacout_perWave_t.stTWaveConfig.uiSampleBufferLength < pstOutputCodeCtrl->uiNumberofSamples_Period)
+    {
+        FHALT("DAC waveform buffer length[%d] is smaller than sample count[%d]",
+              pstOutputCodeCtrl->dacout_perWave_t.stTWaveConfig.uiSampleBufferLength,
+              pstOutputCodeCtrl->uiNumberofSamples_Period);
+        return NULL;
+    }
+
     switch(eBuffer)
     {
         case eDAC_Buffer_A:
-            return pstOutputCodeCtrl->dacout_perWave_t.stTWaveConfig.uiaBuffer_A;
+            return pstOutputCodeCtrl->dacout_perWave_t.stTWaveConfig.puiBuffer_A;
         case eDAC_Buffer_B:
-            return pstOutputCodeCtrl->dacout_perWave_t.stTWaveConfig.uiaBuffer_B;
+            return pstOutputCodeCtrl->dacout_perWave_t.stTWaveConfig.puiBuffer_B;
         default:
             FHALT("Invalid DAC buffer selection.");
             return NULL;
@@ -2223,6 +2472,14 @@ void vCompute_DAC_OutputTiming(sT_DAC_Config_t *pstConfig, sT_DAC_OutputCode_Met
                 *piret = -1;
                 return;
             }
+            if(pstDACOutCodeCtrl->uiNumberofSamples_Period > DAC_MAX_WAVEFORM_SAMPLE_COUNT)
+            {
+                FHALT("Calculated number of samples per period[%d] exceeds waveform buffer size[%d]",
+                    pstDACOutCodeCtrl->uiNumberofSamples_Period,
+                    DAC_MAX_WAVEFORM_SAMPLE_COUNT);
+                *piret = -1;
+                return;
+            }
             break;
         case eDAC_WaveForm_PinkNoise:
         case eDAC_WaveForm_WhiteNoise:
@@ -2354,6 +2611,7 @@ void vDisable_DACConfig_with_CTimer( void )
         case eDAC_WaveForm_Sine:
             vDeInit_CTimer_Configuration();
             vDisable_DAC_DMA_Circular();
+            vFree_MemoryFor_SampleBuffers(&stTDACOutputCodeCtrl_t);
             vClear_DMAUpdate_Pending();
             vClear_DMAUpdate_Status();
             memset(&stTBuffSwapData, 0, sizeof(stTBuffSwapData));

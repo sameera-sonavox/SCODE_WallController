@@ -33,7 +33,13 @@ int main(void)
 
 	while (1)
 	{
-		k_msleep(50);
+		k_msleep(500);
+		vUpdate_WaveForm_Frequency(2000);
+		k_msleep(3000);
+		vUpdate_WaveForm_Frequency(4000);
+		k_msleep(4000);
+		vUpdate_WaveForm_Frequency(100);
+		k_msleep(3000);
 		//vSend_CANMessage(&stMsg);
 	}
 	
@@ -64,7 +70,7 @@ void vConfigure_DAC( void )
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.stTHWTrigSrc.uTrigSrc.eCTimerTrigSrc = eTrigSrc_CTIMER0_MAT0;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiPeakVoltage_mV = 1000;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiDCOffset_mV = 1010;
-	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiFrequencyHz = 10000;
+	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiFrequencyHz = 1000;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.pvErrorCallback = NULL;
 
 	vDAC_Init(&stDACConfig);

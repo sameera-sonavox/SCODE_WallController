@@ -5,7 +5,7 @@
 #include "NXP_ADC_Types.h"
 
 #define ADC_DMA_BLOCK_COUNT                 2U
-#define ADC_DMA_MSG_QUEUE_SIZE              128U//64U
+#define ADC_DMA_MSG_QUEUE_SIZE              64U//64U
 #define ADC_DMA_THREAD_STACK_SIZE           1024U
 #define ADC_DMA_MAX_ERROR_COUNT             2U
 

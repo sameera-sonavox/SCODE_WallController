@@ -10,7 +10,7 @@
                                                          //Otherwise it will be overflown
 
 #define ADC_MSGQ_LENGTH                                 256U
-#define ADC_STATISTIC_THREAD_STACK_SIZE                 2048U
+#define ADC_STATISTIC_THREAD_STACK_SIZE                 1024U
 #define ADC_STATS_DEAFULT_MAX_RELEASE_TIME_ms           10U
 #define ADC_STATS_DEAFULT_MAX_RELEASE_STEP_SIZE         5U
 #define ADC_STATS_DEAFULT_MIN_RELEASE_TIME_ms           10U
