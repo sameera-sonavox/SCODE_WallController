@@ -1,6 +1,10 @@
 #ifndef NXP_ADC_CHMAP_H
 #define NXP_ADC_CHMAP_H
 
+#include "../API_Usage_Definition.h"
+
+#if defined(USE_ADC)
+
 #include "fsl_inputmux.h"
 #include "NXP_ADC_Types.h"
 
@@ -33,5 +37,7 @@ extern void vRelease_ADCChannelConfig(eADC_Module_t eModule);
 extern bool bUpdateADCChannelCommandMap( sT_ChCMDConfig_Data_t *pstChCMDConfig );
 extern sT_ADC_ChannelMap_t *pstGetChInfo_ByCmdId_TrigSlot(eADC_Module_t eModule, eADC_TrigSlot_t eTrigSlot, eADC_Command_t eCommandId, uint8_t uiLoopCount);
 extern bool bUpdate_ReleaseTime_OnChStats(sT_ADC_ChRelTimeUpdate_t *pstRelTimeUpdate);
+
+#endif
 
 #endif // NXP_ADC_CHMAP_H

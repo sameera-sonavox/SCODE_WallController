@@ -1,3 +1,7 @@
+#include "../API_Usage_Definition.h"
+
+#if defined(USE_DAC)
+
 #include <string.h>
 #include <stdatomic.h>
 #include <math.h>
@@ -2879,3 +2883,5 @@ void vResume_WaveGen( void )
 
     vClear_DAC_Pause();
 }
+
+#endif

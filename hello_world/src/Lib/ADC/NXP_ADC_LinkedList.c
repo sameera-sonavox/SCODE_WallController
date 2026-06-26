@@ -1,3 +1,8 @@
+
+#include "../API_Usage_Definition.h"
+
+#if defined(USE_ADC)
+
 #include "NXP_ADC_LinkedList.h"
 #include <stdlib.h>
 #include <string.h>
@@ -130,3 +135,5 @@ sT_ADC_CommandConfig_t *pstGetCommandConfig(eADC_Command_t eCommandId, sT_ADC_Co
     }
     return temp;
 }
+
+#endif

@@ -15,6 +15,8 @@ set(MCUX_SDK_NG_DIR "${WEST_TOPDIR}/modules/hal/nxp/mcux/mcux-sdk-ng")
 
 target_include_directories(app PRIVATE
                 ${MCUX_SDK_NG_DIR}/drivers/lpadc)
+target_include_directories(app PRIVATE
+                ${MCUX_SDK_NG_DIR}/drivers/lpspi)
 
 target_sources(app PRIVATE 
                 src/main.c 
@@ -35,4 +37,8 @@ target_sources(app PRIVATE
                 src/ADC_Controller/ADC_Controller.c 
                 src/Lib/ADC/NXP_ADC_CHMap.c 
                 src/Lib/TrigSrcControl/TrigSrcControl.c 
-                ${MCUX_SDK_NG_DIR}/drivers/lpadc/fsl_lpadc.c)
+                src/Lib/SPI/NXP_SPI_API.c 
+                src/Lib/SPI/NXP_SPI_ConfigValidation.c 
+                src/Lib/SPI/NXP_SPI_LinkedList.c 
+                ${MCUX_SDK_NG_DIR}/drivers/lpadc/fsl_lpadc.c 
+                ${MCUX_SDK_NG_DIR}/drivers/lpspi/fsl_lpspi.c)

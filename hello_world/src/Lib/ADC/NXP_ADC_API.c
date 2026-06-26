@@ -1,3 +1,7 @@
+#include "../API_Usage_Definition.h"
+
+#if defined(USE_ADC)
+
 #include <stdatomic.h>
 
 #include <zephyr/kernel.h>
@@ -133,6 +137,7 @@ static bool bSetup_CTimer_ForTrigSource(eADC_Module_t eADCmodule, sT_ADC_TrigCon
 
 static bool bADC_ResultReadBackConfig(ADC_Type *pstADCBase, eADC_Module_t eADCModule, sT_ADC_ModuleConfig_t *pstADCModuleConfig);
 static bool bSet_TrigCompletionInterrupts(ADC_Type *pstADCBase, eADC_Module_t eADCModule, sT_ADC_ModuleConfig_t *pstADCModuleConfig);
+static void vEnable_ADC_TrigCompletionInterrupts(eADC_Module_t eADCModule);
 static bool bConfig_ForInterrupt(ADC_Type *pstADCBase, eADC_Module_t eADCModule, const sT_ADCNotify_Interrupt_t stTInterruptCtrl);
 static void vEnable_ADC_IRQ(eADC_Module_t eADCModule);
 static void vADC_ISRHandler(eADC_Module_t eADCModule);
@@ -472,10 +477,11 @@ static bool bSet_TrigCompletionInterrupts(ADC_Type *pstADCBase, eADC_Module_t eA
 
     uiInterMask |= kLPADC_TriggerExceptionInterruptEnable;
     pstADCModule->uiGlobalIntrMask = uiInterMask;
+    vEnable_ADC_TrigCompletionInterrupts(eADCModule);
     return true;
 }
 
-void vEnable_ADC_TrigCompletionInterrupts(eADC_Module_t eADCModule)
+static void vEnable_ADC_TrigCompletionInterrupts(eADC_Module_t eADCModule)
 {
     ADC_Type *pstADCBase = pstGetADCBase(eADCModule);
     if(pstADCBase == NULL)
@@ -2303,3 +2309,5 @@ static inline stADC_HWmodConfig_t *pstGetADCModule(eADC_Module_t eADCModule)
     }
     return &staADC_HWConfig[eADCModule];
 }
+
+#endif

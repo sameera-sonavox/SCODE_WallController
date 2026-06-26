@@ -1,3 +1,7 @@
+#include "../API_Usage_Definition.h"
+
+#if defined(USE_DAC)
+
 #include "NXP_DAC_DMAConfig.h"
 
 #include <stdatomic.h>
@@ -568,4 +572,6 @@ bool bValidate_DMAConfigurations(const uint32_t *puiDMABuffer, uint16_t uiLen)
     FHALT("DMA Is Not Enabled in DAC_ProjDef.h. Define 'USE_DMA'");
     return false;
 }
+#endif
+
 #endif

@@ -1,6 +1,10 @@
 #ifndef NXP_ADC_API_H
 #define NXP_ADC_API_H
 
+#include "../API_Usage_Definition.h"
+
+#if defined(USE_ADC)
+
 #include "NXP_ADC_Types.h"
 #include "NXP_ADC_LinkedList.h"
 
@@ -23,22 +27,53 @@
 #define ADC_MAX_VALUE_12b_RESOLUTION            4095U
 #define ADC_MAX_VALUE_16b_RESOLUTION            65535U
 
-extern void vInit_ADC(sT_ADC_ModuleConfig_t *pstADCModuleConfig);//Once this is called, all the pointers are handled by the API. It means memory release will be done by the API
-                                                                 //Application should not engage with memory or reference any command config after the initialization.
+/**
+* @brief Initializes and configures an ADC module. 
+* This function has to be used each time when a different ADC module has to be initialized.
+* This performs the configuration of specified ADC module, command buffers, trigger sources (only at ADC peripheral level), INPUTMUX routing and
+* Trigger Source reservations.
+
+* @note 
+* 1. If 'eTrigSrcType' is HW triggered, then the particular hardware trigger source must be configured and started externally.
+*    Since this init function only initialize and configures which is local to the specified ADC peripheral.
+*    You have to include 'TrigSrcControl.h' in your project and assign the trigger sources for independent trigger slots.
+*    Always use 'TrigSrcControl.h' for assignment, since it provides exclusive ownership and state management for the trigger sources to avoid 
+*    same trigger source is used by multiple peripherals simultaneously.
+
+* 2. All the dynamic memory allocations executed using the singly linked lists when the module is configured, are automatically handled and managed
+*    by the ADC API itself. The user has nothing to worry about the memory leaks or freeing allocated memory.
+
+* @param pstADCModuleConfig ADC Module Configuration
+ */
+extern void vInit_ADC(sT_ADC_ModuleConfig_t *pstADCModuleConfig);
+
+/**
+ * @brief De-Init the specified ADC module. This will release all dynamically allocated memory regions.
+ * @param eADCModule The ADC module that needs to be de-initialized
+ */
 extern void vDeInit_ADC(eADC_Module_t eADCModule);
+
+/**
+ * @brief Set the SW triggering for a particular trigger slot
+ * @param eADCModule ADC module
+ * @param eTrigSlot Slot Index
+ */
 extern bool bSet_ADCSW_Trig(eADC_Module_t eADCModule, eADC_TrigSlot_t eTrigSlot);
+
 extern bool bGet_ADCValue(eADC_Module_t eModule,
                           eADC_Channel_t eChannel,
                           uint16_t *puiValue,
                           eADC_ValueType_t eValType);
+
 extern void vClear_ADCStatisticsOverflow( void );
 extern bool bIs_ADCStatisticsOverflowed( void );
 extern const sT_ADC_CommandConfig_t *pstGetCommandData(eADC_Module_t eADCModule, eADC_Channel_t eChannel);
 
 extern ADC_Type *pstGetHWADCModule(eADC_Module_t eADCModule);
-extern void vEnable_ADC_TrigCompletionInterrupts(eADC_Module_t eADCModule);
 extern sT_ADCToDMA_HW_Map_t stGetSWADCModule(eADC_Module_t eADCModule);
 extern void vRequest_ADC_To_DisableInterrupts(eADC_Module_t eADCModule);
 extern void vNotify_ADC_DMAError(eADC_Module_t eADCModule);
+
+#endif
 
 #endif

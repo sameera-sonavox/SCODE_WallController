@@ -1,6 +1,10 @@
 #ifndef NXP_DAC_API_H
 #define NXP_DAC_API_H
 
+#include "../API_Usage_Definition.h"
+
+#if defined(USE_DAC)
+
 #include "NXP_DAC_Types.h"
 #include "DAC_ProjDef.h"
 
@@ -26,5 +30,7 @@ extern void vMark_TCDBuffer_Queued(eT_TCDBuff_t eBuffId);
 extern bool bDAC_UpdateOutputValue(uint16_t uiOutput_mV);
 extern void vUpdate_WaveForm_Volume(uint16_t uiPeakVolt_mV);
 extern void vUpdate_WaveForm_Frequency(uint32_t uiFreq_Hz);
+
+#endif
 
 #endif /* NXP_DAC_API_H */

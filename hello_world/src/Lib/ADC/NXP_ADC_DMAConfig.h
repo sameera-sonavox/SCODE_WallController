@@ -1,6 +1,11 @@
 #ifndef NXP_ADC_DMACONFIG_C
 #define NXP_ADC_DMACONFIG_C
 
+
+#include "../API_Usage_Definition.h"
+
+#if defined(USE_ADC)
+
 #include "fsl_lpadc.h"
 #include "NXP_ADC_Types.h"
 
@@ -12,5 +17,7 @@
 extern bool bADC_API_DMAInit(eADC_Module_t eADCModule);
 extern bool bRequest_To_StopDMA(eADC_Module_t eADCModule);
 extern void vUpdate_ADCResult_FromDMA(eADC_Module_t eADCModule, lpadc_conv_result_t stConvResult);
+
+#endif
 
 #endif

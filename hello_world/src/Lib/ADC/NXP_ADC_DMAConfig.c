@@ -1,3 +1,7 @@
+#include "../API_Usage_Definition.h"
+
+#if defined(USE_ADC)
+
 #include <stdatomic.h>
 
 #include <zephyr/kernel.h>
@@ -535,3 +539,5 @@ bool bRequest_To_StopDMA(eADC_Module_t eADCModule)
     else
         return false;
 }
+
+#endif

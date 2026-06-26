@@ -33,13 +33,13 @@ int main(void)
 
 	while (1)
 	{
-		k_msleep(500);
+/* 		k_msleep(500);
 		vUpdate_WaveForm_Frequency(2000);
 		k_msleep(3000);
 		vUpdate_WaveForm_Frequency(4000);
 		k_msleep(4000);
 		vUpdate_WaveForm_Frequency(100);
-		k_msleep(3000);
+		k_msleep(3000); */
 		//vSend_CANMessage(&stMsg);
 	}
 	
@@ -60,7 +60,7 @@ void vInit_Amp( void )
 
 void vConfigure_DAC( void )
 {
-	sT_DAC_Config_t stDACConfig = {0};
+/* 	sT_DAC_Config_t stDACConfig = {0};
 	stDACConfig.eRefVoltSrc = eDAC_RefVoltSrc_VREF_VDD_ANA; // Adjust as needed based on actual hardware configuration
 	stDACConfig.stOutputBuffConfig.bEnableOutputBuffer = true;
 	stDACConfig.stOutputBuffConfig.eOutputBuffLowPowerMode = eDAC_OutputBuff_Higher_LowPowerMode;
@@ -71,9 +71,9 @@ void vConfigure_DAC( void )
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiPeakVoltage_mV = 1000;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiDCOffset_mV = 1010;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiFrequencyHz = 1000;
-	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.pvErrorCallback = NULL;
+	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.pvErrorCallback = NULL; */
 
-	vDAC_Init(&stDACConfig);
+	//vDAC_Init(&stDACConfig);
 	//bDAC_UpdateOutputValue(2500U);
 	// Configure other fields of stDACConfig as needed
 }

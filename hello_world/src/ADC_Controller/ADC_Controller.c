@@ -9,11 +9,11 @@
 #include "../Lib/GenericMacro.h"
 #include "../UART_CAN_Bridge/UART_CAN_Bridge.h"
 
-#define ADC0_TRIGGER_FREQUENCY_HZ 40000U
-#define ADC_PC_STARTUP_SILENT_TIME_MS 300U
-#define ADC_PC_MEASUREMENT_COUNT 4U
-#define ADC_PC_DESCRIPTOR_SIZE 4U
-#define ADC_PC_CONFIG_HEADER_SIZE 5U
+#define ADC0_TRIGGER_FREQUENCY_HZ               40000U
+#define ADC_PC_STARTUP_SILENT_TIME_MS           300U
+#define ADC_PC_MEASUREMENT_COUNT                4U
+#define ADC_PC_DESCRIPTOR_SIZE                  4U
+#define ADC_PC_CONFIG_HEADER_SIZE               5U
 
 typedef struct ADC_Controller
 {
@@ -101,6 +101,17 @@ void vInitialize_ADCModule( void )
         return;
     }    
 
+    sT_ADC_TrigConfig_t *pstTrigSrc1 = &pstADCModule_0->staTrigConfig[eTrig_Slot_1];
+    pstTrigSrc1->bIsTrigSlotEnabled = true;
+    pstTrigSrc1->bEnTrigCompletionNotifyReq = false;
+    pstTrigSrc1->eTrigSlot = eTrig_Slot_1;
+    pstTrigSrc1->stTADCTrigCtrl.eTrigSrcType = eADC_TrigSrcCtrl_Hardware;
+    pstTrigSrc1->stTADCTrigCtrl.eTrigSrc = eADC_TrigSrc_CTimer2_MAT0;
+    pstTrigSrc1->stTADCTrigCtrl.uiTrigFrequency_Hz = ADC0_TRIGGER_FREQUENCY_HZ;
+    pstTrigSrc1->stTADCTrigCtrl.uiStatisticCompute_Freq_Hz = (uint32_t)((float)pstTrigSrc1->stTADCTrigCtrl.uiTrigFrequency_Hz * 0.2f);
+    pstTrigSrc1->uiTrigDelay = 3;
+    pstTrigSrc1->ePrioLevel = eTrig_Prio_Lev_1;
+
     stTCMDConfig.eChannel = eADC_Ch_6;
     stTCMDConfig.eCommandId = eADC_CMD_3;
     stTCMDConfig.bIsLoopWithChIncrementEnabled = false;
@@ -114,13 +125,8 @@ void vInitialize_ADCModule( void )
     stTCMDConfig.uiADCMin_ReleaseTime_ms = 20;
     stTCMDConfig.uiMin_ReleaseStepSize = 50;
     stTCMDConfig.uiLoopCount = 0;
-    stTCMDConfig.uiSWAvgSampleCount = 10;
-    if(!bInsertCommand_AtEnd(&pstTrigSrc->pstTHeadCmdConfig, &stTCMDConfig))
-    {
-        FHALT("Cannot create command");
-        vRelease_CMDBuffers(&pstTrigSrc->pstTHeadCmdConfig);
-        return;
-    }
+    stTCMDConfig.uiSWAvgSampleCount = 10;    
+    pstTrigSrc1->pstTHeadCmdConfig = pstCreate_ADCCommandConfigNode(&stTCMDConfig);
 
     vInit_ADC(&staADCModuleConfigs[eADC_ADC0]);
     if(!staADCModuleConfigs[eADC_ADC0].bIsConfigOk)
@@ -251,8 +257,28 @@ static bool bSetup_TriggerSource( void )
         return false;
     }
 
-    return bTrigSrc_StartCTimer(eTrigSrc_CTIMER1_MAT0,
-                                eTrigConsumer_ADC0_Slot0);
+    if(!bTrigSrc_ConfigureCTimer(eTrigSrc_CTIMER2_MAT0,
+                                 eTrigConsumer_ADC0_Slot1,
+                                 ADC0_TRIGGER_FREQUENCY_HZ))
+    {
+        return false;
+    }
+
+    if(!bTrigSrc_StartCTimer(eTrigSrc_CTIMER1_MAT0,
+                              eTrigConsumer_ADC0_Slot0))
+    {
+        return false;
+    }
+
+    if(!bTrigSrc_StartCTimer(eTrigSrc_CTIMER2_MAT0,
+                              eTrigConsumer_ADC0_Slot1))
+    {
+        (void)bTrigSrc_StopCTimer(eTrigSrc_CTIMER1_MAT0,
+                                  eTrigConsumer_ADC0_Slot0);
+        return false;
+    }
+
+    return true;
 }
 
 void vADC_0_TrigCompleteCallback(eADC_Module_t eADCmodule, uint32_t uiTrigMask, void *pvUserdata)

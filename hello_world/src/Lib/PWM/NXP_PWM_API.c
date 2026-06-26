@@ -1,4 +1,8 @@
 
+#include "../API_Usage_Definition.h"
+
+#if defined(USE_PWM)
+
 #include <zephyr/drivers/pwm.h>
 #include <fsl_ctimer.h>
 
@@ -592,3 +596,5 @@ bool bStop_PWM(eCTPWM_Channel_t ePWMID)
 
     return (pwm_set_dt(pstPWM, PWM_HZ(staPWM_Config[ePWMID].uiFrequency_Hz), uiPulse_ns) == 0);
 }
+
+#endif

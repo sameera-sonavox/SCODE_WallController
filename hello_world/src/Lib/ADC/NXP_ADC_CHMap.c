@@ -1,3 +1,8 @@
+
+#include "../API_Usage_Definition.h"
+
+#if defined(USE_ADC)
+
 #include "NXP_ADC_CHMap.h"
 #include "NXP_ADC_ProjDef.h"
 #include "../GenericMacro.h"
@@ -787,3 +792,5 @@ bool bUpdate_ReleaseTime_OnChStats(sT_ADC_ChRelTimeUpdate_t *pstRelTimeUpdate)
     }
     return true;
 }
+
+#endif
