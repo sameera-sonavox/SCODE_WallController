@@ -6,6 +6,7 @@
 #include "fsl_clock.h"
 #include "NXP_SPI_ConfigValidation.h"
 #include "../GenericMacro.h"
+#include "NXP_SPI_ProjDef.h"
 
 static bool bValidate_SPI_Peripheral_Configs( sT_SPIConfig_t *pstSPIConfig );
 static bool bValidate_SPI_Controller_Configs( sT_SPIConfig_t *pstSPIConfig );
@@ -24,6 +25,25 @@ bool bValidate_SPI_Config( sT_SPIConfig_t *pstSPIConfig )
         FHALT("Invalid SPI Stack : %d", pstSPIConfig->eModule);
         return false;
     }
+
+    if(pstSPIConfig->eModule == eSPI_0)
+    {
+        #if !defined(USE_SPI_0)
+            pstSPIConfig->bIsOk = false;
+            FHALT("SPI Module[%d] not enabled in Project. Please define 'USE_SPI_0' in your project settings.", pstSPIConfig->eModule);
+            return false;
+        #endif
+    }
+
+    if(pstSPIConfig->eModule == eSPI_1)
+    {
+        #if !defined(USE_SPI_1)
+            pstSPIConfig->bIsOk = false;
+            FHALT("SPI Module[%d] not enabled in Project. Please define 'USE_SPI_1' in your project settings.", pstSPIConfig->eModule);
+            return false;
+        #endif
+    }
+    
     if(pstSPIConfig->eDataOutPinState >= eNUMBER_OF_DATA_OUTSTATEs)
     {
         pstSPIConfig->bIsOk = false;

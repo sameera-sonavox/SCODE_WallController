@@ -14,12 +14,16 @@
 #include "UART_CAN_Bridge/UART_CAN_Bridge.h"
 #include "Lib/DAC/NXP_DAC_API.h"
 #include "ADC_Controller/ADC_Controller.h"
+#include "SPI_Controller/SPI_Controller.h"
+
+uint8_t uiaTxData[8] = {0x34, 0x22, 0x55, 0xEE, 0x11, 0x22, 0x33, 0x44};
 
 void vInit_Amp( void );
 void vConfigure_DAC( void );
 
 int main(void)
 {
+	uint16_t uiCount = 0;
 	vInit_Amp();
 	vConfirm_MCUbootImage();
 	printk("FW Img Booting over UART....\n\r");
@@ -33,14 +37,8 @@ int main(void)
 
 	while (1)
 	{
-/* 		k_msleep(500);
-		vUpdate_WaveForm_Frequency(2000);
-		k_msleep(3000);
-		vUpdate_WaveForm_Frequency(4000);
-		k_msleep(4000);
-		vUpdate_WaveForm_Frequency(100);
-		k_msleep(3000); */
-		//vSend_CANMessage(&stMsg);
+		k_msleep(10);
+		bSPI_SendData(eSPI_Slave_0, uiaTxData, 8);
 	}
 	
 }
@@ -51,8 +49,9 @@ void vInit_Amp( void )
 	vInit_Amp_GPIO();
 	vInit_CANController();
  	vInit_UART_CAN_Bridge();
-	vConfigure_DAC();
-	vInitialize_ADCModule();
+	//vConfigure_DAC();
+	//vInitialize_ADCModule();
+	vConfigure_SPI();
 
 	SET_AMP_SD();
 	//bUpdate_PWM_Duty(eCTPWM1, 50);

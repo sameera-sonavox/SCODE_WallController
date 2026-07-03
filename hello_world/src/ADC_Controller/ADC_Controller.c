@@ -2,6 +2,8 @@
 #include <zephyr/device.h>
 #include <string.h>
 
+#if defined(USE_ADC)
+
 #include "ADC_Controller.h"
 #include "../Lib/ADC/NXP_ADC_API.h"
 #include "../Lib/ADC/NXP_ADC_ProjDef.h"
@@ -294,3 +296,4 @@ void vADC_0_TrigCompleteCallback(eADC_Module_t eADCmodule, uint32_t uiTrigMask, 
     bGet_ADCValue(eADCmodule, eADC_Ch_0, &uiVal, eADC_Max);
     printf("ADC MAX : %d\n\r\n\r", uiVal);
 }
+#endif

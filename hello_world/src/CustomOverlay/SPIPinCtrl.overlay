@@ -1,0 +1,22 @@
+#include <nxp/mcx/MCXA156VLL-pinctrl.h>
+
+&pinctrl {
+    pinmux_lpspi0: pinmux_lpspi0 {
+        group0 {
+            pinmux = <LPSPI0_SDO_P1_0>,
+                     <LPSPI0_SCK_P1_1>,
+                     <LPSPI0_SDI_P1_2>,
+                     <LPSPI0_PCS0_P1_3>,
+                     <LPSPI0_PCS1_P1_6>;
+            slew-rate = "fast";
+            drive-strength = "low";
+            input-enable;
+        };
+    };
+};
+
+&lpspi0 {
+    status = "okay";
+    pinctrl-0 = <&pinmux_lpspi0>;
+    pinctrl-names = "default";
+};

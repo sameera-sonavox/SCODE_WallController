@@ -84,6 +84,14 @@ typedef enum
     eNUMBER_OF_DATA_OUTSTATEs
 } eSPI_DataOut_PinState_t;
 
+typedef enum
+{
+    eTransfer_Success = 0,
+    eTransfer_Failed,
+    eTransfer_Timeout,
+    eNUMBER_OF_TRANSFER_STATUSs
+} eSPI_TransferResult_t;
+
 /**
  * @enum This is used only when the SPI module is in Peripheral Mode.
  */
@@ -114,7 +122,7 @@ typedef enum
     eNUMBER_OF_TRANSFER_TYPEs
 } eTransfer_Type_t;
 
-typedef void (*SPI_Callback_t)(eSPI_Slave_Id_t eSlaveId, void *pvUserdata);
+typedef void (*SPI_Callback_t)(eSPI_Slave_Id_t eSlaveId, eSPI_TransferResult_t eResult);
 
 typedef struct
 {
@@ -144,10 +152,16 @@ typedef struct
     eSPIModule_t eModuleId;
     eSPI_Slave_Id_t eSlaveId;
     eTransfer_Type_t eType;
-    const uint8_t *puiTxData;
+    uint8_t *puiTxData;
     size_t uiTxDataLen;
-    uint8_t *puiRxData;
+    uint8_t *volatile puiRxData;
     size_t uiRxDataLen;
+    size_t uiRxMaskLen;
+    bool bTxAllocatedInternally;//the controller function that call the API Fn 'bSPI_Transfer_InMasterMode' must set these flags and free the memories accordingly
+    bool bRxAllocatedInternally;//Ex: 'bTxAllocatedInternally == true' -> then the controller must free the memory. The SPI API does not take 
+                                // the responsibility of freeing any memory passed to it
+    bool bShould_CS_Asserted_For_EntireTransfer;//This tell the HW that CS should be asserted until all the specified bytes are transmitted.
+                                                //If set to 'false', then CS will be toggled for each frame transfer
 } sT_SPITransfer_t;
 
 typedef struct

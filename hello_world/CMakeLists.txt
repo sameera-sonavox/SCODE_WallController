@@ -7,6 +7,7 @@ list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/GPIO
 list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/PWMCtrl.overlay")
 list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/DACCtrl.overlay")
 list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/ADCCtrl.overlay")
+list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/SPIPinCtrl.overlay")
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(hello_world)
@@ -40,5 +41,6 @@ target_sources(app PRIVATE
                 src/Lib/SPI/NXP_SPI_API.c 
                 src/Lib/SPI/NXP_SPI_ConfigValidation.c 
                 src/Lib/SPI/NXP_SPI_LinkedList.c 
+                src/SPI_Controller/SPI_Controller.c 
                 ${MCUX_SDK_NG_DIR}/drivers/lpadc/fsl_lpadc.c 
                 ${MCUX_SDK_NG_DIR}/drivers/lpspi/fsl_lpspi.c)

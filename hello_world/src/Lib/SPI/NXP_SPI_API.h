@@ -7,6 +7,7 @@
 
 #include "NXP_SPI_Types.h"
 #include "NXP_SPI_ProjDef.h"
+#include "NXP_SPI_LinkedList.h"
 
 #define DEBUG_SPI_DEV_INIT
 
@@ -20,6 +21,7 @@
 extern void vInit_SPI( sT_SPIConfig_t *pstSPIConfig );
 extern bool bDeInit_SPI( eSPIModule_t eSPIModule );
 extern bool bSPI_Transfer_InMasterMode(sT_SPITransfer_t stTTransfer);
+extern const sT_SPISlave_Config_t *pstGetSlaveConfig(eSPIModule_t eModuleId, eSPI_Slave_Id_t eSlaveId);
 
 #endif
 
