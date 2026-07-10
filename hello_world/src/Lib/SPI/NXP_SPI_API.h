@@ -20,8 +20,20 @@
  */
 extern void vInit_SPI( sT_SPIConfig_t *pstSPIConfig );
 extern bool bDeInit_SPI( eSPIModule_t eSPIModule );
-extern bool bSPI_Transfer_InMasterMode(sT_SPITransfer_t stTTransfer);
+extern bool bSPI_Transfer_InMasterMode(sT_SPIMasterTransfer_t stTTransfer);
 extern const sT_SPISlave_Config_t *pstGetSlaveConfig(eSPIModule_t eModuleId, eSPI_Slave_Id_t eSlaveId);
+//extern bool bSPI_Busy(eSPIModule_t eModuleId);
+
+/**
+ * @brief Releases the 'Ready' buffer passed by the API to Application, when API is configured in Callback Mode.
+ * @note  The User Application must call this in the application layer, because it is the responsibility of application layer
+ *        to release the Rx Buffers defined.
+ * @param eModuleId SPI Module Id
+ * @param uiBuffId  The Buffer Id passed by API to the Application via Callback
+ */
+extern bool bSPI_ReleasePeripheralMode_RxBuffer( eSPIModule_t eModuleId, uint8_t uiBuffId );
+
+extern bool bSPI_PeripheralSendResponse(sT_SPIPreipheralResponse_t stTSlaveResponse);
 
 #endif
 

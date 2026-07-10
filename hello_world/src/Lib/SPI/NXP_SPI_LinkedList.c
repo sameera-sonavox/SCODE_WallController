@@ -128,4 +128,135 @@ sT_SPISlave_Control_t* pstAllocate_MemoryForNode( void )
     return pstSlave;
 }
 
+
+sT_SPIRxBuff_t *pstCreate_SPIRxBuffer(uint8_t uiId, eRxBuffer_State_t eState, size_t uisize)
+{
+    sT_SPIRxBuff_t *pstRxBuffConfig = (sT_SPIRxBuff_t *)malloc(sizeof(sT_SPIRxBuff_t));
+    if(pstRxBuffConfig == NULL)
+    {
+        FHALT("Couldn't allocate memory for Rx Buff configs @Id: %d", uiId);
+        return NULL;        
+    }
+
+    uint8_t *puiRxBuffer = (uint8_t * )malloc(uisize * sizeof(uint8_t));
+    if(puiRxBuffer == NULL)
+    {
+        free(pstRxBuffConfig);
+        pstRxBuffConfig = NULL;
+        FHALT("Couldn't allocate memory for Rx Buffer @Id: %d", uiId);
+        return NULL;
+    }
+
+    pstRxBuffConfig->uiBuffId = uiId;
+    pstRxBuffConfig->eState = eState;
+    pstRxBuffConfig->uisize = uisize;
+    pstRxBuffConfig->puiBuffer = puiRxBuffer;
+
+    puiRxBuffer = NULL;    
+    pstRxBuffConfig->pstNextRxBuff = NULL;
+    return pstRxBuffConfig;
+}
+
+bool bInsert_SPIRxBuffer_AtEnd(sT_SPIRxBuff_t **ppstHead, uint8_t uiId, eRxBuffer_State_t eState, size_t uisize)
+{
+    sT_SPIRxBuff_t *pstNewBuffer = pstCreate_SPIRxBuffer(uiId, eState, uisize);
+    if(pstNewBuffer == NULL)
+    {
+        return false;
+    }
+
+    sT_SPIRxBuff_t *pstTemp = *ppstHead;
+    while(pstTemp != NULL && pstTemp->pstNextRxBuff != NULL)
+    {
+        pstTemp = pstTemp->pstNextRxBuff;
+    }
+
+    if(pstTemp == NULL)
+    {
+        *ppstHead = pstNewBuffer;
+    }
+    else
+    {
+        pstTemp->pstNextRxBuff = pstNewBuffer;
+    }    
+    return true;
+}
+
+sT_SPIRxBuff_t *pstGet_RxBuffer_byState(sT_SPIRxBuff_t *pstHead, eRxBuffer_State_t eState)
+{
+    sT_SPIRxBuff_t *pstTemp = pstHead;
+    while(pstTemp != NULL)
+    {
+        if(pstTemp->eState == eState)
+            return pstTemp;
+        pstTemp = pstTemp->pstNextRxBuff;
+    }
+    return NULL;
+}
+
+sT_SPIRxBuff_t *pstGet_RxReadyBuffer_byId(sT_SPIRxBuff_t *pstHead, uint8_t uiId)
+{
+    sT_SPIRxBuff_t *pstTemp = pstHead;
+
+    while(pstTemp != NULL)
+    {
+        if(pstTemp->uiBuffId == uiId && pstTemp->eState == eBuffer_Ready)
+            return pstTemp;
+        pstTemp = pstTemp->pstNextRxBuff;
+    }
+    return NULL;
+}
+
+void vSet_RxBufferState(uint8_t uiId, eRxBuffer_State_t eState, sT_SPIRxBuff_t *pstHead)
+{
+    sT_SPIRxBuff_t *pstTemp = pstHead;
+    while(pstTemp != NULL)
+    {
+        if(pstTemp->uiBuffId == uiId)
+            break;
+        pstTemp = pstTemp->pstNextRxBuff;
+    }
+
+    if(pstTemp == NULL)
+    {
+        FHALT("Invalid Buffer Id: %d", uiId);
+        return;
+    }
+
+    pstTemp->eState = eState;
+}
+
+void vFree_SPIRxBuffers( sT_SPIRxBuff_t **ppstHead )
+{
+    if(ppstHead == NULL)
+    {
+        FHALT("Null Pointer reference");
+        return;
+    }
+
+    sT_SPIRxBuff_t *pstTemp = *ppstHead;
+
+    while(pstTemp != NULL && pstTemp->pstNextRxBuff != NULL)
+    {
+        sT_SPIRxBuff_t *next = pstTemp->pstNextRxBuff;
+        free(pstTemp->puiBuffer);
+        pstTemp->puiBuffer = NULL;
+
+        free(pstTemp);
+        pstTemp = next;
+    }
+
+    if(pstTemp != NULL)
+    {
+        if(pstTemp->puiBuffer != NULL)
+        {
+            free(pstTemp->puiBuffer);
+            pstTemp->puiBuffer = NULL;
+        }
+        free(pstTemp);
+    }
+    pstTemp = NULL;
+    *ppstHead = NULL;
+}
+
 #endif

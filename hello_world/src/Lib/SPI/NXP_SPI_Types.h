@@ -122,7 +122,95 @@ typedef enum
     eNUMBER_OF_TRANSFER_TYPEs
 } eTransfer_Type_t;
 
+typedef enum
+{
+    eTransfer_Use_MessageBus,
+    eTransfer_Use_Callback,
+    eNUMBER_OF_SLAVE_DATATRANSFER_Types
+} eSlaveData_PathConfig_t;
+
+typedef enum
+{
+    eBuffer_Free = 0,
+    eBuffer_Filling,
+    eBuffer_Ready,
+    eBuffer_Overflow,//3
+    eBuffer_Error,
+    eBuffer_None,
+    eNUMBER_OF_Rx_BUFFER_STATEs
+} eRxBuffer_State_t;
+
+typedef enum
+{
+    eSPI_Overflow_DropNewest = 0,
+    eSPI_Overflow_DropOldest,
+    eSPI_Overflow_StopAndReport,
+    eSPI_Overflow_OverWriteOldest,
+    eNUMBER_OF_OVERFLOW_POLICIEs
+} eSPI_OverflowPolicy_t;
+
+typedef enum
+{
+    eSPI_RxTarget_AppBuffer,
+    eSPI_RxTarget_DrainBuffer,
+    eNUMBER_OF_RXTARGET_BUFFERTYPEs
+} eSPI_RxTarget_t;
+
+typedef enum
+{
+    eSPI_PeripheralEvent_RxReady = 0,
+    eSPI_PeripheralEvent_RxOverflow,
+    eSPI_PeripheralEvent_RxError,
+    eSPI_PeripheralEvent_TxCompleted,//3
+    eSPI_PeripheralEvent_TxError,
+    eNUMBER_OF_PERIPHERAL_EVENT_TYPEs
+} eSPI_PeripheralEvent_Type_t;
+
+typedef struct
+{
+    uint8_t *puiRxData;
+    uint16_t uiLen;    
+} sT_Callback_Data_t;
+
+typedef struct sT_SPIRxBuff_t
+{
+    uint8_t uiBuffId;
+    eRxBuffer_State_t eState;
+    uint8_t *puiBuffer;
+    size_t uisize;
+    struct sT_SPIRxBuff_t *pstNextRxBuff;
+} sT_SPIRxBuff_t;
+
+typedef struct
+{
+    uint8_t uiBuffId;
+    eRxBuffer_State_t eState;
+    const uint8_t *const puiBuffer;
+    size_t uisize;
+    bool bTxCompleted;
+} sT_RxBuffData_t;
+
+typedef struct
+{
+    volatile uint32_t uiOverflowCount;
+    uint32_t uiDroppedFrameCount;
+    eSPI_OverflowPolicy_t eOverflowPolicy;
+    _Atomic eSPI_PeripheralEvent_Type_t eEventType;
+} sT_SPI_RxOverflowCtrl_t;
+
 typedef void (*SPI_Callback_t)(eSPI_Slave_Id_t eSlaveId, eSPI_TransferResult_t eResult);
+
+/**
+ * @brief Callback Fn for the 'eTransfer_Use_Callback' Notification type to the application layer
+ * @param eEventType : Current event type. Check this at the application to identify whether receive is in Error or not
+ * @param eResult : Transfer result
+ * @param stTBuffData : Buffer data. It contains Buffer Id, Current Buffer state (data valid only if it is 'Ready', Pointer to RxBuffer and Size)
+ * @param bIsBufferAssignmentSuccess : Defines whether dynamic next buffer assignment at the API is successful or not
+ */
+typedef void (*SPI_PeripheralCallback_t)(eSPI_PeripheralEvent_Type_t eEventType, 
+                                         eSPI_TransferResult_t eResult, 
+                                         sT_RxBuffData_t stTBuffData,
+                                         bool bIsBufferAssignmentSuccess);
 
 typedef struct
 {
@@ -157,30 +245,66 @@ typedef struct
     uint8_t *volatile puiRxData;
     size_t uiRxDataLen;
     size_t uiRxMaskLen;
+    _Atomic bool bIsTransferBusy;
     bool bTxAllocatedInternally;//the controller function that call the API Fn 'bSPI_Transfer_InMasterMode' must set these flags and free the memories accordingly
     bool bRxAllocatedInternally;//Ex: 'bTxAllocatedInternally == true' -> then the controller must free the memory. The SPI API does not take 
                                 // the responsibility of freeing any memory passed to it
     bool bShould_CS_Asserted_For_EntireTransfer;//This tell the HW that CS should be asserted until all the specified bytes are transmitted.
                                                 //If set to 'false', then CS will be toggled for each frame transfer
-} sT_SPITransfer_t;
+} sT_SPIMasterTransfer_t;
+
+typedef struct
+{
+    eSPIModule_t eModuleId;
+    const uint8_t *puiTxData;
+    size_t uiLen;
+} sT_SPIPreipheralResponse_t;
 
 typedef struct
 {
     eHW_Match_Type_t eHW_Recv_SyncType;
+    bool bFIFO_StoreOnly_MatchedData;//If 'true', Rx FIFO will store only matched data based on match configurations.
+                                     //If 'false', RX FIFO will store all data
+                                     //In both cases, the Match Flag is set based on the match configurations
     uint32_t uiMatch0_Value;
     uint32_t uiMatch1_Value;
 } sT_HWMatch_Config_t;
 
 typedef struct
 {
+    size_t uiBuffSize;//Defines number of bytes inside the array
+    size_t uiBuffCount;//Defines number of rx buffers required
+    SPI_PeripheralCallback_t pvSPI_PeripheralCallBack;
+} sT_Callback_Ctrl;
+
+typedef struct
+{
+
+} sT_MessageBus_Ctrl;
+
+typedef struct
+{
+    eSlaveData_PathConfig_t eDataPathType;
+    eSPI_OverflowPolicy_t eOverflowPolicy;
+    union
+    {
+        sT_Callback_Ctrl stTCallbackConfig;
+        sT_MessageBus_Ctrl stTMessageBusConfig;
+    }slave_dataPath;
+    
+} sT_SPISlave_RxControl_t;
+
+typedef struct
+{
+    bool bRequest_TxNotifications;//If 'false', the API will notify only Rx and Transceive events and data
     eSPI_PCS_t eCSPin;
     eSPI_DataLane_Width_t eSPI_BusWidth;
     eSPI_CS_Polarity_t eSlaveMode_CS_Ctrl;
     eSPI_ShiftDirection_t eEndianFormat;
     eSPI_CPOL_CPHA_Type_t eCPOLCPH_Ctrl;
-    uint16_t uiFrameSize;
     sT_HWMatch_Config_t stTHWMatchConfig;
-    SPI_Callback_t pvSPI_CallBack;
+    sT_SPISlave_RxControl_t stTRxControl;    
+    uint16_t uiFrameSize;
 } sT_Peripheral_Config_t;
 
 typedef struct

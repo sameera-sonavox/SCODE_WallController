@@ -14,16 +14,18 @@
 #include "UART_CAN_Bridge/UART_CAN_Bridge.h"
 #include "Lib/DAC/NXP_DAC_API.h"
 #include "ADC_Controller/ADC_Controller.h"
-#include "SPI_Controller/SPI_Controller.h"
+#include "SPI_Controller/SPI_Controller_Master.h"
+#include "SPI_Controller/SPI_Controller_Slave.h"
 
-uint8_t uiaTxData[8] = {0x34, 0x22, 0x55, 0xEE, 0x11, 0x22, 0x33, 0x44};
+/* #define USE_SPI_MASTER */
+
+uint8_t uiaCMDData[8] = {0x34, 0x22, 0x55, 0xEE, 0x11, 0x22, 0x33, 0x44};
 
 void vInit_Amp( void );
 void vConfigure_DAC( void );
 
 int main(void)
 {
-	uint16_t uiCount = 0;
 	vInit_Amp();
 	vConfirm_MCUbootImage();
 	printk("FW Img Booting over UART....\n\r");
@@ -37,8 +39,12 @@ int main(void)
 
 	while (1)
 	{
-		k_msleep(10);
-		bSPI_SendData(eSPI_Slave_0, uiaTxData, 8);
+		#ifdef USE_SPI_MASTER
+			k_msleep(10);
+			bSPI_SendData(eSPI_Slave_0, uiaCMDData, 8);
+			k_msleep(10);
+			bSPI_ReceiveData(eSPI_Slave_0, NULL, 0, 8);
+		#endif
 	}
 	
 }
@@ -51,7 +57,12 @@ void vInit_Amp( void )
  	vInit_UART_CAN_Bridge();
 	//vConfigure_DAC();
 	//vInitialize_ADCModule();
-	vConfigure_SPI();
+
+	#ifdef USE_SPI_MASTER
+		vConfigure_SPI();
+	#else
+		vConfigure_SPISLave();
+	#endif
 
 	SET_AMP_SD();
 	//bUpdate_PWM_Duty(eCTPWM1, 50);

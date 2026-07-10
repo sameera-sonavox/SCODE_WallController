@@ -41,6 +41,7 @@ target_sources(app PRIVATE
                 src/Lib/SPI/NXP_SPI_API.c 
                 src/Lib/SPI/NXP_SPI_ConfigValidation.c 
                 src/Lib/SPI/NXP_SPI_LinkedList.c 
-                src/SPI_Controller/SPI_Controller.c 
+                src/SPI_Controller/SPI_Controller_Master.c 
+                src/SPI_Controller/SPI_Controller_Slave.c 
                 ${MCUX_SDK_NG_DIR}/drivers/lpadc/fsl_lpadc.c 
                 ${MCUX_SDK_NG_DIR}/drivers/lpspi/fsl_lpspi.c)

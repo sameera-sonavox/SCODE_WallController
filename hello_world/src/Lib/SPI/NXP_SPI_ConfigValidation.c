@@ -8,9 +8,12 @@
 #include "../GenericMacro.h"
 #include "NXP_SPI_ProjDef.h"
 
-static bool bValidate_SPI_Peripheral_Configs( sT_SPIConfig_t *pstSPIConfig );
 static bool bValidate_SPI_Controller_Configs( sT_SPIConfig_t *pstSPIConfig );
 static bool bValidate_SPIBusWidth_Configurations(sT_SPISlave_Control_t *pstSlaveCtrl);
+
+static bool bValidate_SPI_Peripheral_Configs( sT_SPIConfig_t *pstSPIConfig );
+static bool bValidate_SPISlave_DataConfigPath(sT_SPISlave_RxControl_t *pstSlaveDataPath);
+static bool bValidate_CallbackSettings(sT_Callback_Ctrl *pstCallBackSettings);
 
 bool bValidate_SPI_Config( sT_SPIConfig_t *pstSPIConfig )
 {
@@ -72,8 +75,124 @@ bool bValidate_SPI_Config( sT_SPIConfig_t *pstSPIConfig )
 
 static bool bValidate_SPI_Peripheral_Configs( sT_SPIConfig_t *pstSPIConfig )
 {
-    sT_Peripheral_Config_t *pstPeripheralConfig = &pstSPIConfig->stTSPIModeCtrl.spi_mode.stTConfig_Peripheral;
+    sT_Peripheral_Config_t *pstSlaveConfig = &pstSPIConfig->stTSPIModeCtrl.spi_mode.stTConfig_Peripheral;
+    if(pstSlaveConfig == NULL)
+    {
+        pstSPIConfig->bIsOk = false;
+        FHALT("Null Pointer reference for Slave Configurations");
+        return false;
+    }
+
+    if(pstSlaveConfig->eCPOLCPH_Ctrl >= eNUMBER_OF_CLK_POL_PHASE_COMBINATIONs)
+    {
+        pstSPIConfig->bIsOk = false;
+        FHALT("Invalid Phase vs Polarity Config : %d", pstSlaveConfig->eCPOLCPH_Ctrl);
+        return false;
+    }
+    if(pstSlaveConfig->eCSPin >= eNUMBER_OF_PERIPHERAL_CS_LINEs)
+    {
+        pstSPIConfig->bIsOk = false;
+        FHALT("Invalid Chip Select Pin : %d", pstSlaveConfig->eCSPin);
+        return false;
+    }
+    if(pstSlaveConfig->eEndianFormat >= eNUMBER_OF_SPIWORD_TXRX_TYPEs)
+    {
+        pstSPIConfig->bIsOk = false;
+        FHALT("Invalid Endian Format : %d", pstSlaveConfig->eEndianFormat);
+        return false;
+    }
+    if(pstSlaveConfig->eSlaveMode_CS_Ctrl >= eNUMBER_OF_CS_CONFIGs)
+    {
+        pstSPIConfig->bIsOk = false;
+        FHALT("Invalid CS State : %d", pstSlaveConfig->eSlaveMode_CS_Ctrl);
+        return false;
+    }
+    if(pstSlaveConfig->eSPI_BusWidth >= eNUMBER_OF_SPI_DATALANEs)
+    {
+        pstSPIConfig->bIsOk = false;
+        FHALT("Invalid SPI Bus Width : %d", pstSlaveConfig->eSPI_BusWidth);
+        return false;
+    }
+
+    sT_SPISlave_RxControl_t *pstSlaveDataPath = &pstSlaveConfig->stTRxControl;
+    if(!bValidate_SPISlave_DataConfigPath(pstSlaveDataPath))
+    {
+        pstSPIConfig->bIsOk = false;
+        FHALT("The Slave Data Path Validation Fail for SPI Module[%d]", pstSPIConfig->eModule);
+        return false;        
+    }
+
+    sT_HWMatch_Config_t *pstHWMatchConfig = &pstSlaveConfig->stTHWMatchConfig;
+    if(pstHWMatchConfig->eHW_Recv_SyncType >= eNUMBER_OF_HW_MATCH_CONFIGURATIONs)
+    {
+        FHALT("Invalid HW Match Configurations : %d", pstHWMatchConfig->eHW_Recv_SyncType);
+        return false;
+    }
+    if(pstHWMatchConfig->eHW_Recv_SyncType != eHW_Match_Disabled && 
+       (pstHWMatchConfig->uiMatch0_Value == 0 && pstHWMatchConfig->uiMatch1_Value == 0))
+    {
+        FHALT("Invalid Matching values for Match0 & 1 [ Match0 : %d, Match1: %d]", 
+              pstHWMatchConfig->uiMatch0_Value,
+              pstHWMatchConfig->uiMatch1_Value);
+        return false;
+    }
+/*     if(pstSlaveConfig->)
+    {
+        pstSPIConfig->bIsOk = false;
+        FHALT("Invalid SPI Bus Width : %d", pstSlaveConfig->eSPI_BusWidth);
+        return false;
+    } */
         
+    return true;
+}
+
+static bool bValidate_SPISlave_DataConfigPath(sT_SPISlave_RxControl_t *pstSlaveDataPath)
+{
+    if(pstSlaveDataPath == NULL)
+    {
+        FHALT("Null Pointer reference");
+        return false;
+    }
+
+    switch (pstSlaveDataPath->eDataPathType)
+    {
+        case eTransfer_Use_MessageBus:
+            FHALT("Requested Path Not Implemented : %d", pstSlaveDataPath->eDataPathType);
+            return false;
+        case eTransfer_Use_Callback:
+            return bValidate_CallbackSettings(&pstSlaveDataPath->slave_dataPath.stTCallbackConfig);        
+        default:
+            FHALT("Invalid User Data Path : %d", pstSlaveDataPath->eDataPathType);
+            return false;
+    }
+}
+
+static bool bValidate_CallbackSettings(sT_Callback_Ctrl *pstCallBackSettings)
+{
+    if(pstCallBackSettings == NULL)
+    {
+        FHALT("Null Pointer reference");
+        return false;
+    }
+
+    if(pstCallBackSettings->pvSPI_PeripheralCallBack == NULL)
+    {
+        FHALT("User Callback Fn cannot be null");
+        return false;
+    }
+
+    if(pstCallBackSettings->uiBuffSize == 0)
+    {
+        FHALT("Buffer size should be a non-zero value");
+        return false;        
+    }
+
+    if(pstCallBackSettings->uiBuffCount == 0)
+    {
+        FHALT("User must request minimum of one Rx Buffer");
+        return false;        
+    }
+
     return true;
 }
 

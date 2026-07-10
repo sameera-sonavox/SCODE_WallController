@@ -26,7 +26,42 @@ typedef struct
 
 typedef struct
 {
+    sT_SPIRxBuff_t *pstRxBuffHead;
+    uint16_t uiBuffSize;
+    uint8_t uiBuffDepth;
+    _Atomic uint8_t uiBuffIndex;
+    _Atomic eSPI_RxTarget_t eActiveRxTarget;
+    uint8_t *puiDrainBuffer;
+    SPI_PeripheralCallback_t pvPeripheral_UserCallBack;
+} sT_SlaveCallback_Config_t;
 
+typedef struct
+{
+
+} sT_MessageBus_Config_t;
+
+typedef struct
+{
+    eSlaveData_PathConfig_t eDataPathType;
+    union
+    {
+        sT_SlaveCallback_Config_t stTCallbackConfig;
+        sT_MessageBus_Config_t stTMsgBusConfig;
+    } data_pathConfig;    
+} sT_UserNotify_Ctrl_t;
+
+typedef struct
+{
+    _Atomic bool bIsTransferBusy;
+    bool bIsHWMatchRequested;
+    bool bIsTxOnlyNotification_Requested;
+    _Atomic bool bIsMatchOccurred;
+    _Atomic eTransfer_Type_t eTransferType;
+    _Atomic bool bIsPeripheralTransferBusy;
+    lpspi_slave_config_t stSlaveConfig;
+    lpspi_slave_handle_t stSlaveHandle;
+    sT_UserNotify_Ctrl_t stTUserNotifyCtrl;
+    sT_SPI_RxOverflowCtrl_t stTDevRxOverflowControl;
 } sT_SPI_SlaveCtrl;
 
 typedef struct
@@ -64,24 +99,81 @@ static inline bool bIsModule_Initialized( eSPIModule_t eModule );
 static inline eSPI_Mode_t eGetSPIMode( eSPIModule_t eModule );
 static bool bDeinit_MasterMode( eSPIModule_t eModule );
 static bool bDeinit_SlaveMode( eSPIModule_t eModule );
+static void vDeInit_Slave_CallbackConfigs(sT_SPI_SlaveCtrl *pstSlaveCtrl);
+static void vDeinit_Slave_InterruptConfigurations( sT_SPIModuleConfig_t *pstSPIModule, sT_SPI_SlaveCtrl *pstSlaveCtrl);
+
+static bool bConfig_SPI_SlaveMode( sT_SPIConfig_t *pstSPIConfig );
+static bool bSetup_HWMatchConfig(sT_SPIModuleConfig_t *pstSPIModule, sT_Peripheral_Config_t *pstPeripheralConfig);
+static bool bAssign_UserDataPath_Configs(sT_SPI_SlaveCtrl *pstSlaveControl, sT_Peripheral_Config_t *pstPeripheralConfig);
+static bool bConfig_CallbackConfigs(sT_SPI_SlaveCtrl *pstSlaveControl, sT_Peripheral_Config_t *pstPeripheralConfig);
+static bool bPrepare_SlaveHW_ForNewTransfer(eSPIModule_t eModuleId);
+static bool bArm_SlaveRx_ForCallback(sT_SPIModuleConfig_t *pstSPIModule,
+                                     sT_SPI_SlaveCtrl *pstSlaveControl);
+
+static bool bAllocate_MemoryForDrainBuffer(sT_SlaveCallback_Config_t *pstDevConfig);
+static inline void vDeallocate_DrainBufferMemory(sT_SlaveCallback_Config_t *pstDevConfig);
+
+static bool bSetup_OverflowPolicy(sT_SPI_RxOverflowCtrl_t *pstDevOverflowCtrl, eSPI_OverflowPolicy_t eOverflowPolicy);
+static bool bApply_OverflowPolicy(sT_SPIModuleConfig_t *pstSPIModule, sT_SPI_SlaveCtrl *pstSlaveControl, sT_SPIRxBuff_t *pstRxBuffer);
+static bool bApplyPolicy_DropNewest(sT_SPIModuleConfig_t *pstSPIModule,
+                                    sT_SPI_SlaveCtrl *pstSlaveControl, 
+                                    sT_SPI_RxOverflowCtrl_t *pstRxOverflowCtrl);
+
+static inline bool bTryClaim_SlaveTransfer(sT_SPI_SlaveCtrl *pstSlaveControl);
+static inline void vClear_SlaveTransferFlag(sT_SPI_SlaveCtrl *pstSlaveControl);
+static inline bool bIsSlaveTransferBusy(sT_SPI_SlaveCtrl *pstSlaveControl);
 
 static void vConfig_TransferHandle(sT_SPIModuleConfig_t *pstSPIModule);
 static void vConfigure_SPIInterrupt(sT_SPIModuleConfig_t *pstSPIModule);
+
 static void vSPI_MasterCallback(LPSPI_Type *base,
                                 lpspi_master_handle_t *handle,
                                 status_t status,
                                 void *userData);
+static void vSPI_PeripheralModeCallback(LPSPI_Type *base,
+                                        lpspi_slave_handle_t *handle,
+                                        status_t status,
+                                        void *userData);
+static inline void vNotify_Via_Callback(eSPIModule_t eModuleId, 
+                                        sT_SlaveCallback_Config_t *pstCallbackConfig, 
+                                        lpspi_slave_handle_t *pshandle,
+                                        eSPI_TransferResult_t eResult);
+static void vNotify_Application_AtOverflow(sT_SPIModuleConfig_t *pstSPIModule, 
+                                           sT_SPI_SlaveCtrl *pstSlaveControl,
+                                           sT_SlaveCallback_Config_t *pstCallbackConfig,
+                                           eSPI_TransferResult_t eResult);
+static void vNotify_Application_AtNoError(sT_SPIModuleConfig_t *pstSPIModule,
+                                          sT_SPI_SlaveCtrl *pstSlaveControl,
+                                          sT_SlaveCallback_Config_t *pstCallbackConfig,
+                                          eSPI_TransferResult_t eResult);
+static void vNotify_SlaveTxComplete(sT_SPIModuleConfig_t *pstSPIModule, sT_SPI_SlaveCtrl *pstSlaveCtrl, 
+                                    eSPI_TransferResult_t eResult);
+
+static inline void vSet_SlaveTransferType(eSPIModule_t eModuleId, eTransfer_Type_t eTransferType);
+static inline eTransfer_Type_t eGet_SlaveTransferType(eSPIModule_t eModuleId);
+static inline void vSet_RxBuffId(sT_SlaveCallback_Config_t *pstCallbackConfig, uint8_t uiId);
+static inline uint8_t uiGet_RxBuffId(sT_SlaveCallback_Config_t *pstCallbackConfig);
+static inline eSPI_PeripheralEvent_Type_t eGetCurrentRxEventType(sT_SPI_RxOverflowCtrl_t *pstRxFlowCtrl);
+static inline void vSet_RxEventType(sT_SPI_RxOverflowCtrl_t *pstRxFlowCtrl, eSPI_PeripheralEvent_Type_t eType);
+static inline void vSet_RxBufferType(sT_SlaveCallback_Config_t *pstCallbackConfig, eSPI_RxTarget_t eNewTargetType);
+static inline eSPI_RxTarget_t eGet_RxBufferType(sT_SlaveCallback_Config_t *pstCallbackConfig);
+
 static void vEnable_SPI_IRQ(eSPIModule_t eModule);
 static void vDisable_SPI_IRQ(eSPIModule_t eModule);
 static void vLPSPI0_ISR(const void *arg);
 static void vLPSPI1_ISR(const void *arg);
 static void vConfigure_SPI_DMA(sT_SPIModuleConfig_t *pstSPIModule);
 static void vSPI_FaultRecoveryHandler( struct k_work *work );
+static inline void vHandle_SPIPeripheral_HWMatch(eSPIModule_t eModuleId);
 static inline sT_SPIModuleConfig_t *pstGetSPIModule_From_KWork(struct k_work_delayable *work);
+static inline void vSet_HWMatchFlag(sT_SPI_SlaveCtrl *pstPeriphreralConfig);
+static inline bool bGet_HWMatchFlag(sT_SPI_SlaveCtrl *pstPeriphreralConfig);
+static inline void vClear_HWMatchFlag(sT_SPI_SlaveCtrl *pstPeriphreralConfig);
+static inline void vReConfigure_HWMatch_Interrupts(sT_SPIModuleConfig_t *pstSPIModule, sT_SPI_SlaveCtrl *pstPeriphreralConfig);
 
-static inline bool bSPI_Master_Send(sT_SPITransfer_t *pstTTransfer, lpspi_transfer_t *pstLPSPITransfer);
-static inline bool bSPI_Master_Receive(sT_SPITransfer_t *pstTTransfer, lpspi_transfer_t *pstLPSPITransfer);
-static inline bool bSPI_Master_Transceive(sT_SPITransfer_t *pstTTransfer, lpspi_transfer_t *pstLPSPITransfer);
+static inline bool bSPI_Master_Send(sT_SPIMasterTransfer_t *pstTTransfer, lpspi_transfer_t *pstLPSPITransfer);
+static inline bool bSPI_Master_Receive(sT_SPIMasterTransfer_t *pstTTransfer, lpspi_transfer_t *pstLPSPITransfer);
+static inline bool bSPI_Master_Transceive(sT_SPIMasterTransfer_t *pstTTransfer, lpspi_transfer_t *pstLPSPITransfer);
 static uint32_t uiGetTransferPCsFlag(eSPI_PCS_t eHW_PCS_Ctrl);
 
 static bool bSetUp_NewSlaveConfig(eSPIModule_t eModuleId, sT_SPI_MasterCtrl *pstMasterCtrl, eSPI_Slave_Id_t eNewSlaveId);
@@ -110,9 +202,8 @@ static inline bool bSPI_Assign_Block_To_Block_DelayTime(eSPIModule_t eModuleId,
                                                         sT_SPISlave_Config_t *pstNewConf);
 
 static inline void vClear_TransferBusyFlag(sT_SPIModuleConfig_t *pstSPIModule);
-static inline void vSet_TransferBusyFlag(sT_SPIModuleConfig_t *pstSPIModule);
-static inline bool bIsTransferBusy(eSPIModule_t eModuleId);
-static inline bool bClaim_TransferBusyFlag(sT_SPIModuleConfig_t *pstSPIModule);
+static inline bool bTryClaim_TransferBusyFlag(eSPIModule_t eModuleId);
+static inline bool bTryComplete_TransferBusyFlag(sT_SPIModuleConfig_t *pstSPIModule);
 
 static LPSPI_Type *pstGetSPIDevice(eSPIModule_t eModule);
 static lpspi_clock_polarity_t eGetDefault_CPOL(eSPI_CPOL_CPHA_Type_t eSPIConf_CPOL);
@@ -166,6 +257,9 @@ void vInit_SPI( sT_SPIConfig_t *pstSPIConfig )
         case eSPI_Mode_Controller:
             bResult = bConfig_SPI_MasterMode(pstSPIConfig);
             break;
+        case eSPI_Mode_Peripheral:
+            bResult = bConfig_SPI_SlaveMode(pstSPIConfig);
+            break;
         default:
             bResult = false;
             break;
@@ -177,6 +271,457 @@ void vInit_SPI( sT_SPIConfig_t *pstSPIConfig )
     k_work_init_delayable(&pstMoudle->kw_SPITransferMonitor, vSPI_FaultRecoveryHandler);
     SPI_INIT_Print("SPI Module[%d] Init Result: %s\n", pstSPIConfig->eModule, (bResult) ? "Success" : "Failed");
 }
+
+#pragma region Slave Configurations
+
+static bool bConfig_SPI_SlaveMode( sT_SPIConfig_t *pstSPIConfig )
+{
+    sT_SPIModuleConfig_t *pstSPIModule = &staSPIModule[pstSPIConfig->eModule];
+    sT_SPI_SlaveCtrl *pstSlaveControl = &pstSPIModule->stTSPIDevCtrl.st_DevCtrlMode.stTSlaveCtrl;
+    sT_Peripheral_Config_t *pstPeripheralConfig = &pstSPIConfig->stTSPIModeCtrl.spi_mode.stTConfig_Peripheral;
+    sT_SPI_RxOverflowCtrl_t *pstOverflowCtrl = &pstSlaveControl->stTDevRxOverflowControl;
+
+    pstSPIModule->bIsInitialized = false;
+    vClear_TransferBusyFlag(pstSPIModule);
+    pstSPIModule->eNotificationType = pstSPIConfig->eNotificationType;
+    pstSPIModule->stTSPIDevCtrl.eMode = pstSPIConfig->stTSPIModeCtrl.eMode;
+    pstSPIModule->uiSPImodule_Clock_Hz = CLOCK_GetLpspiClkFreq(pstSPIConfig->eModule);
+
+    pstSPIModule->pstSPIDevice = pstGetSPIDevice(pstSPIConfig->eModule);
+
+    lpspi_slave_config_t *pstSlave_HWConfig = &pstSlaveControl->stSlaveConfig;
+    if(pstSlave_HWConfig == NULL)
+    {
+        FHALT("Null Pointer reference");
+        return false;
+    }
+    LPSPI_SlaveGetDefaultConfig(pstSlave_HWConfig);
+
+    pstSlaveControl->bIsTxOnlyNotification_Requested = pstPeripheralConfig->bRequest_TxNotifications;
+
+    pstSlave_HWConfig->bitsPerFrame = pstPeripheralConfig->uiFrameSize;
+    pstSlave_HWConfig->cpol = eGetDefault_CPOL(pstPeripheralConfig->eCPOLCPH_Ctrl);
+    pstSlave_HWConfig->cpha = eGetDefault_CPHA(pstPeripheralConfig->eCPOLCPH_Ctrl);
+    pstSlave_HWConfig->dataOutConfig = eGetDataOutState_AtTxEnd(pstSPIConfig->eDataOutPinState);
+    pstSlave_HWConfig->direction = eGetEndianType(pstPeripheralConfig->eEndianFormat);
+    pstSlave_HWConfig->pcsActiveHighOrLow = eGet_CS_PinActiveState(pstPeripheralConfig->eSlaveMode_CS_Ctrl);
+    pstSlave_HWConfig->pinCfg = eGet_SPIPinConfigurations(pstSPIConfig->ePinConfig);
+    pstSlave_HWConfig->whichPcs = eGet_SPI_HW_CSPin(pstPeripheralConfig->eCSPin);
+    
+    if(!bAssign_UserDataPath_Configs(pstSlaveControl, pstPeripheralConfig))
+        return false;
+    
+    if(!bSetup_OverflowPolicy(pstOverflowCtrl, 
+                              pstSPIConfig->stTSPIModeCtrl.spi_mode.stTConfig_Peripheral.stTRxControl.eOverflowPolicy))
+        return false;
+
+    vAssign_PinConfigurations(pstSPIConfig->eModule);
+
+    LPSPI_SlaveInit(pstSPIModule->pstSPIDevice,
+                    pstSlave_HWConfig);
+
+    if(!bSetup_HWMatchConfig(pstSPIModule, pstPeripheralConfig))
+        return false;
+
+    vConfig_TransferHandle(pstSPIModule);
+
+    if(!bPrepare_SlaveHW_ForNewTransfer(pstSPIConfig->eModule))
+        return false;
+
+    vSet_SlaveTransferType(pstSPIModule->eModuleId, eTransfer_Rx_Only);    
+
+    pstSPIModule->bIsInitialized = true;
+    printk("SPI Slave Initialized\n\r");   
+    return true;
+}
+
+static bool bSetup_OverflowPolicy(sT_SPI_RxOverflowCtrl_t *pstDevOverflowCtrl, eSPI_OverflowPolicy_t eOverflowPolicy)
+{
+    if(pstDevOverflowCtrl == NULL)
+    {
+        FHALT("Null Pointer reference");
+        return false;
+    }
+
+    pstDevOverflowCtrl->eOverflowPolicy = eOverflowPolicy;
+    pstDevOverflowCtrl->uiDroppedFrameCount = 0U;
+    pstDevOverflowCtrl->uiOverflowCount = 0U;
+    pstDevOverflowCtrl->eEventType = eSPI_PeripheralEvent_RxReady;
+    return true;
+}
+
+static bool bPrepare_SlaveHW_ForNewTransfer(eSPIModule_t eModuleId)
+{
+    if(eGetSPIMode(eModuleId) != eSPI_Mode_Peripheral)
+    {
+        FHALT("Invalid Call to Slave HW Preperation while module is in Master Mode @ModuleId: %d", eModuleId);
+        return false;
+    }
+
+    sT_SPIModuleConfig_t *pstSPIModule = &staSPIModule[eModuleId];
+    sT_SPI_SlaveCtrl *pstSlaveControl = &pstSPIModule->stTSPIDevCtrl.st_DevCtrlMode.stTSlaveCtrl;    
+    
+    switch(pstSlaveControl->stTUserNotifyCtrl.eDataPathType)
+    {
+        case eTransfer_Use_Callback:
+            return bArm_SlaveRx_ForCallback(pstSPIModule, pstSlaveControl);
+        case eTransfer_Use_MessageBus:
+            FHALT("Not Implemented for Using Message Bus");
+            return false;
+        default:
+            FHALT("Invalid Data Path Type: %d", pstSlaveControl->stTUserNotifyCtrl.eDataPathType);
+            return false;
+    }
+}
+                                    
+static inline bool bTryClaim_SlaveTransfer(sT_SPI_SlaveCtrl *pstSlaveControl)
+{
+    if(pstSlaveControl == NULL)
+    {
+        FHALT("Null Pointer Reference");
+        return false;
+    }
+
+    bool bRes = atomic_exchange_explicit(&pstSlaveControl->bIsPeripheralTransferBusy, true, memory_order_acq_rel);
+    return !bRes;
+}
+
+static inline void vClear_SlaveTransferFlag(sT_SPI_SlaveCtrl *pstSlaveControl)
+{
+    if(pstSlaveControl == NULL)
+    {
+        FHALT("Null Pointer Reference");
+        return;
+    }
+    atomic_store_explicit(&pstSlaveControl->bIsPeripheralTransferBusy, false, memory_order_release);
+}
+
+static inline bool bIsSlaveTransferBusy(sT_SPI_SlaveCtrl *pstSlaveControl)
+{
+    if(pstSlaveControl == NULL)
+    {
+        FHALT("Null Pointer Reference");
+        return false;
+    }
+    bool bRes = atomic_load_explicit(&pstSlaveControl->bIsPeripheralTransferBusy, memory_order_acquire);
+    return bRes;
+}
+
+bool bSPI_PeripheralSendResponse(sT_SPIPreipheralResponse_t stTSlaveResponse)
+{
+    if(eGetSPIMode(stTSlaveResponse.eModuleId) != eSPI_Mode_Peripheral)
+    {
+        FHALT("Invalid Transfer Request when SPI not in Slave Mode @SPIMod: %d", stTSlaveResponse.eModuleId);
+        return false;
+    }
+    if(stTSlaveResponse.puiTxData == NULL || stTSlaveResponse.uiLen == 0)
+    {
+        FHALT("Invalid Parameter settings for Slave Transmission");
+        return false;
+    }
+
+    sT_SPIModuleConfig_t *pstSPIModule = &staSPIModule[stTSlaveResponse.eModuleId];
+    sT_SPI_SlaveCtrl *pstSlaveControl = &pstSPIModule->stTSPIDevCtrl.st_DevCtrlMode.stTSlaveCtrl;
+    sT_SlaveCallback_Config_t *pstDevConfig = &pstSlaveControl->stTUserNotifyCtrl.data_pathConfig.stTCallbackConfig;
+
+    if(!bTryClaim_SlaveTransfer(pstSlaveControl))
+    {
+        FHALT("Slave cannot Transmit");
+        return false;
+    }
+
+    lpspi_transfer_t stTransfer = {0};
+    sT_SPIRxBuff_t *pstRxBuffer = pstGet_RxBuffer_byState(pstDevConfig->pstRxBuffHead, eBuffer_Filling);
+    uint8_t *puiDrainBuffer = pstSlaveControl->stTUserNotifyCtrl.data_pathConfig.stTCallbackConfig.puiDrainBuffer;
+    if(pstRxBuffer != NULL)
+    {
+        FHALT("Cannot arm slave TX while RX buffer is filling");
+        vClear_SlaveTransferFlag(pstSlaveControl);
+        return false;
+    }
+    
+    stTransfer.rxData = puiDrainBuffer;
+    stTransfer.txData = stTSlaveResponse.puiTxData;
+    stTransfer.dataSize = stTSlaveResponse.uiLen;
+    stTransfer.configFlags = 0U;
+
+    status_t status = LPSPI_SlaveTransferNonBlocking(pstSPIModule->pstSPIDevice,
+                                                     &pstSlaveControl->stSlaveHandle,
+                                                     &stTransfer);
+    if(status != kStatus_Success)
+    {
+        if(stTransfer.rxData != puiDrainBuffer)
+        {
+            vSet_RxBufferState(pstRxBuffer->uiBuffId, eBuffer_Free, pstDevConfig->pstRxBuffHead);
+            FHALT("Slave HW Preperation failed for Callback");
+        }
+        vClear_SlaveTransferFlag(pstSlaveControl);
+        return false;
+    }
+
+    vSet_SlaveTransferType(stTSlaveResponse.eModuleId, eTransfer_Tx_Only);
+    return true;        
+}
+
+static bool bArm_SlaveRx_ForCallback(sT_SPIModuleConfig_t *pstSPIModule,
+                                     sT_SPI_SlaveCtrl *pstSlaveControl)
+{
+    sT_SlaveCallback_Config_t *pstDevConfig = &pstSlaveControl->stTUserNotifyCtrl.data_pathConfig.stTCallbackConfig;
+
+    if(!bTryClaim_SlaveTransfer(pstSlaveControl))
+    {
+        return true;
+    }
+
+    sT_SPIRxBuff_t *pstRxBuffer = pstGet_RxBuffer_byState(pstDevConfig->pstRxBuffHead, eBuffer_Free);
+    if(pstRxBuffer == NULL)
+    {
+        return bApply_OverflowPolicy(pstSPIModule, pstSlaveControl, pstRxBuffer);
+    }
+
+    vSet_RxEventType(&pstSlaveControl->stTDevRxOverflowControl, eSPI_PeripheralEvent_RxReady);
+    vSet_RxBufferType(pstDevConfig, eSPI_RxTarget_AppBuffer);
+    vSet_RxBuffId(pstDevConfig, pstRxBuffer->uiBuffId);
+    vSet_RxBufferState(pstRxBuffer->uiBuffId, eBuffer_Filling, pstDevConfig->pstRxBuffHead);
+
+    lpspi_transfer_t stTransfer = {
+        .txData = NULL,
+        .rxData = pstRxBuffer->puiBuffer,
+        .dataSize = pstRxBuffer->uisize,
+        .configFlags = 0U
+    };
+
+    status_t status = LPSPI_SlaveTransferNonBlocking(pstSPIModule->pstSPIDevice,
+                                                     &pstSlaveControl->stSlaveHandle,
+                                                     &stTransfer);
+    if(status != kStatus_Success)
+    {
+        vSet_RxBufferState(pstRxBuffer->uiBuffId, eBuffer_Free, pstDevConfig->pstRxBuffHead);
+        FHALT("Slave HW Preperation failed for Callback");
+        return false;
+    }
+    return true;
+}
+
+static bool bApply_OverflowPolicy(sT_SPIModuleConfig_t *pstSPIModule, sT_SPI_SlaveCtrl *pstSlaveControl, sT_SPIRxBuff_t *pstRxBuffer)
+{
+    if(pstSlaveControl == NULL)
+    {
+        FHALT("Null Pointer reference");
+        return false;
+    }
+
+    sT_SPI_RxOverflowCtrl_t *pstRxOverflowCtrl = &pstSlaveControl->stTDevRxOverflowControl;
+
+    switch(pstRxOverflowCtrl->eOverflowPolicy)
+    {
+        case eSPI_Overflow_DropNewest:
+            return bApplyPolicy_DropNewest(pstSPIModule, pstSlaveControl, pstRxOverflowCtrl);
+        case eSPI_Overflow_DropOldest:
+        case eSPI_Overflow_StopAndReport:
+        case eSPI_Overflow_OverWriteOldest:
+        default:
+            FHALT("Requested Policy Not Implemented : %d", pstRxOverflowCtrl->eOverflowPolicy);
+            return false;
+    }
+}
+
+static bool bApplyPolicy_DropNewest(sT_SPIModuleConfig_t *pstSPIModule,
+                                    sT_SPI_SlaveCtrl *pstSlaveControl, 
+                                    sT_SPI_RxOverflowCtrl_t *pstRxOverflowCtrl)
+{
+    sT_SlaveCallback_Config_t *pstCallbackConfig = &pstSlaveControl->stTUserNotifyCtrl.data_pathConfig.stTCallbackConfig;    
+    pstRxOverflowCtrl->uiOverflowCount++;
+
+    lpspi_transfer_t stTransfer = {0};
+    stTransfer.txData = NULL;
+    stTransfer.rxData = pstCallbackConfig->puiDrainBuffer;
+    stTransfer.dataSize = pstCallbackConfig->uiBuffSize;
+    stTransfer.configFlags = 0U;
+
+    status_t status = LPSPI_SlaveTransferNonBlocking(pstSPIModule->pstSPIDevice,
+                                                     &pstSlaveControl->stSlaveHandle,
+                                                     &stTransfer);
+    if(status != kStatus_Success)
+    {
+        FHALT("Slave HW Preperation failed for Callback");
+        vSet_RxEventType(pstRxOverflowCtrl, eSPI_PeripheralEvent_RxOverflow);
+        return false;
+    }
+    vSet_RxEventType(pstRxOverflowCtrl, eSPI_PeripheralEvent_RxOverflow);
+    vSet_RxBufferType(pstCallbackConfig, eSPI_RxTarget_DrainBuffer);
+    return true;
+}
+
+static bool bAssign_UserDataPath_Configs(sT_SPI_SlaveCtrl *pstSlaveControl, sT_Peripheral_Config_t *pstPeripheralConfig)
+{
+    switch(pstPeripheralConfig->stTRxControl.eDataPathType)
+    {
+        case eTransfer_Use_Callback:
+            return bConfig_CallbackConfigs(pstSlaveControl, pstPeripheralConfig);
+            break;
+        case eTransfer_Use_MessageBus:
+        default:
+            FHALT("Not Implemented Yet");
+            return false;
+    }
+}
+
+static bool bConfig_CallbackConfigs(sT_SPI_SlaveCtrl *pstSlaveControl, sT_Peripheral_Config_t *pstPeripheralConfig)
+{
+    sT_Callback_Ctrl *pstUserConfigs = &pstPeripheralConfig->stTRxControl.slave_dataPath.stTCallbackConfig;
+    if(pstUserConfigs == NULL)
+    {
+        FHALT("Null pointer reference");
+        return false;
+    }
+
+    pstSlaveControl->stTUserNotifyCtrl.eDataPathType = eTransfer_Use_Callback;
+    sT_SlaveCallback_Config_t *pstDevConfig = &pstSlaveControl->stTUserNotifyCtrl.data_pathConfig.stTCallbackConfig;
+
+    if(pstDevConfig->pstRxBuffHead != NULL)
+    {
+        vDeallocate_DrainBufferMemory(pstDevConfig);
+        vFree_SPIRxBuffers(&pstDevConfig->pstRxBuffHead);
+    }
+
+    pstDevConfig->uiBuffDepth = pstUserConfigs->uiBuffCount;
+    pstDevConfig->uiBuffSize = pstUserConfigs->uiBuffSize;
+
+    uint8_t uiIndex = 0;
+    while(uiIndex < pstDevConfig->uiBuffDepth)
+    {
+        bool res = bInsert_SPIRxBuffer_AtEnd(&pstDevConfig->pstRxBuffHead,
+                                            uiIndex,
+                                            eBuffer_Free,
+                                            pstDevConfig->uiBuffSize);
+        if(!res)
+        {
+            vDeallocate_DrainBufferMemory(pstDevConfig);
+            vFree_SPIRxBuffers(&pstDevConfig->pstRxBuffHead);
+            return false;
+        }
+
+        uiIndex++;
+    }
+
+    if(!bAllocate_MemoryForDrainBuffer(pstDevConfig))
+    {
+        vFree_SPIRxBuffers(&pstDevConfig->pstRxBuffHead);
+        FHALT("API Drain Buffer could not be created");
+        return false;
+    }
+
+    pstDevConfig->pvPeripheral_UserCallBack = pstUserConfigs->pvSPI_PeripheralCallBack;
+    return true;
+}
+
+static bool bAllocate_MemoryForDrainBuffer(sT_SlaveCallback_Config_t *pstDevConfig)
+{
+    vDeallocate_DrainBufferMemory(pstDevConfig);
+
+    pstDevConfig->puiDrainBuffer = (uint8_t *)malloc(pstDevConfig->uiBuffSize * sizeof(uint8_t));
+    if(pstDevConfig->puiDrainBuffer == NULL)
+    {
+        FHALT("API Drain Buffer could not be created");
+        return false;
+    }
+    return true;
+}
+
+static inline void vDeallocate_DrainBufferMemory(sT_SlaveCallback_Config_t *pstDevConfig)
+{
+    if(pstDevConfig->puiDrainBuffer == NULL)
+        return;
+
+    free(pstDevConfig->puiDrainBuffer);
+    pstDevConfig->puiDrainBuffer = NULL;
+}
+
+static bool bSetup_HWMatchConfig(sT_SPIModuleConfig_t *pstSPIModule, sT_Peripheral_Config_t *pstPeripheralConfig)
+{
+    if(pstPeripheralConfig == NULL || pstSPIModule == NULL)
+    {
+        FHALT("Null Pointer reference");
+        return false;
+    }
+
+    LPSPI_Type *pstSPIDevice = pstSPIModule->pstSPIDevice;
+    sT_SPI_SlaveCtrl *pstPeriphreralConfig = &pstSPIModule->stTSPIDevCtrl.st_DevCtrlMode.stTSlaveCtrl;
+    sT_HWMatch_Config_t *pstHWMatchConfig = &pstPeripheralConfig->stTHWMatchConfig;
+    
+    pstPeriphreralConfig->bIsHWMatchRequested = true;
+    lpspi_match_config_t eMatchMode;
+    switch(pstHWMatchConfig->eHW_Recv_SyncType)
+    {
+        case eHW_Match_Disabled:
+            eMatchMode = kLPSI_MatchDisabled;
+            pstPeriphreralConfig->bIsHWMatchRequested = false;
+            break;
+        case eHW_Match_FirstWord_Equals_Match0_Or_Match1:
+            eMatchMode = kLPSI_1stWordEqualsM0orM1;
+            break;
+        case eHW_Match_AnyWord_Equals_Match0_Or_Match1:
+            eMatchMode = kLPSI_AnyWordEqualsM0orM1;
+            break;
+        case eHW_Match_With_Match0_1_Sequentially:
+            eMatchMode = kLPSI_1stWordEqualsM0and2ndWordEqualsM1;
+            break;
+        case eHW_Match_With_Match0_1_AnyWord:
+            eMatchMode = kLPSI_AnyWordEqualsM0andNxtWordEqualsM1;
+            break;
+        case eHW_Match_FirstWord_With_Match0_MaskedWith_Match1:
+            eMatchMode = kLPSI_1stWordAndM1EqualsM0andM1;
+            break;
+        case eHW_Match_AnyWord_With_Match0_MaskedWith_Match1:
+            eMatchMode = kLPSI_AnyWordAndM1EqualsM0andM1;
+            break;
+        default:
+            FHALT("Invalid HW Match Type: %d", pstHWMatchConfig->eHW_Recv_SyncType);
+            pstPeriphreralConfig->bIsHWMatchRequested = false;
+            return false;
+    }
+
+    bool bWasModEnabled = ((pstSPIDevice->CR & LPSPI_CR_MEN_MASK) != 0);
+    LPSPI_Enable(pstSPIDevice, false);
+
+    pstSPIDevice->DMR0 = LPSPI_DMR0_MATCH0(pstHWMatchConfig->uiMatch0_Value);
+    pstSPIDevice->DMR1 = LPSPI_DMR1_MATCH1(pstHWMatchConfig->uiMatch1_Value);
+
+    pstSPIDevice->CFGR1 = (pstSPIDevice->CFGR1 & ~LPSPI_CFGR1_MATCFG_MASK) | LPSPI_CFGR1_MATCFG(eMatchMode);
+
+    if(pstHWMatchConfig->bFIFO_StoreOnly_MatchedData)
+    {
+        pstSPIDevice->CFGR0 |= LPSPI_CFGR0_RDMO_MASK;
+    }
+    else
+    {
+        pstSPIDevice->CFGR0 &= ~LPSPI_CFGR0_RDMO_MASK;
+    }
+
+    LPSPI_ClearStatusFlags(pstSPIDevice, kLPSPI_DataMatchFlag);
+    bool bNeedLPSPI_IRQEn = false;
+
+    if(pstSPIModule->eNotificationType == eNotify_Interrupt || pstPeriphreralConfig->bIsHWMatchRequested)
+        bNeedLPSPI_IRQEn = true;
+    if(bNeedLPSPI_IRQEn)
+    {
+        vEnable_SPI_IRQ(pstSPIModule->eModuleId);
+    }
+    if(pstPeriphreralConfig->bIsHWMatchRequested)
+    {
+        LPSPI_EnableInterrupts(pstSPIDevice, kLPSPI_DataMatchInterruptEnable);
+    }
+    else
+    {
+        LPSPI_DisableInterrupts(pstSPIDevice, kLPSPI_DataMatchInterruptEnable);
+    }
+
+    LPSPI_Enable(pstSPIDevice, bWasModEnabled);
+    return true;
+}
+
+#pragma endregion
 
 bool bDeInit_SPI( eSPIModule_t eSPIModule )
 {
@@ -224,16 +769,95 @@ static bool bDeinit_MasterMode( eSPIModule_t eModule )
 
     LPSPI_MasterGetDefaultConfig(pstspiMasterConf);
     vRelease_SPISLaves(&pstMasterCtrl->pstSPISlaveHead_Ctrl);//Release previously allocated memory
-    pstSPIModule->bIsInitialized = false;
     vClear_TransferBusyFlag(pstSPIModule);
+    pstSPIModule->bIsInitialized = false;
     pstMasterCtrl->eActiveSlaveId = eNUMBER_OF_SPI_SLAVEs;
     return true;
 }
 
 static bool bDeinit_SlaveMode( eSPIModule_t eModule )
 {
-    FHALT("Not Initialized");
-    return false;
+    sT_SPIModuleConfig_t *pstSPIModule = &staSPIModule[eModule];
+    sT_SPI_SlaveCtrl *pstSlaveCtrl = &pstSPIModule->stTSPIDevCtrl.st_DevCtrlMode.stTSlaveCtrl;
+    lpspi_slave_config_t *pstspiSlaveConf = &pstSlaveCtrl->stSlaveConfig;
+
+    switch(pstSPIModule->eNotificationType)
+    {
+        case eNotify_Interrupt:
+            vDeinit_Slave_InterruptConfigurations(pstSPIModule, pstSlaveCtrl);
+            break;
+        case eNotify_DMA:
+            break;
+        default:
+            FHALT("Invalid Notification Type: %d", pstSPIModule->eNotificationType);
+            break;
+    }
+
+    LPSPI_Deinit(pstSPIModule->pstSPIDevice);
+    LPSPI_SlaveGetDefaultConfig(pstspiSlaveConf);
+
+    switch(pstSlaveCtrl->stTUserNotifyCtrl.eDataPathType)
+    {
+        case eTransfer_Use_Callback:
+            vDeInit_Slave_CallbackConfigs(pstSlaveCtrl);
+            break;
+        case eTransfer_Use_MessageBus:
+        default:
+            FHALT("Not Implemented for this Notification Type : %d", pstSlaveCtrl->stTUserNotifyCtrl.eDataPathType);
+            break;
+    }
+
+    vClear_TransferBusyFlag(pstSPIModule);    
+    vSet_SlaveTransferType(eModule, eTransfer_Rx_Only);
+    pstSPIModule->bIsInitialized = false;
+    return true;
+}
+
+static void vDeinit_Slave_InterruptConfigurations( sT_SPIModuleConfig_t *pstSPIModule, sT_SPI_SlaveCtrl *pstSlaveCtrl)
+{
+    if(pstSlaveCtrl == NULL)
+    {
+        FHALT("Null Pointer Reference");
+        return;
+    }
+
+    vDisable_SPI_IRQ(pstSPIModule->eModuleId);    
+    LPSPI_SlaveTransferAbort(pstSPIModule->pstSPIDevice, &pstSlaveCtrl->stSlaveHandle);
+    
+    if(pstSlaveCtrl->bIsHWMatchRequested)
+    {
+        LPSPI_DisableInterrupts(pstSPIModule->pstSPIDevice, kLPSPI_DataMatchInterruptEnable);
+        pstSlaveCtrl->bIsHWMatchRequested = false;
+        vClear_HWMatchFlag(pstSlaveCtrl);        
+    }
+
+    LPSPI_DisableInterrupts(pstSPIModule->pstSPIDevice, kLPSPI_AllInterruptEnable);
+    LPSPI_ClearStatusFlags(
+        pstSPIModule->pstSPIDevice,
+        kLPSPI_DataMatchFlag |
+        kLPSPI_TransferCompleteFlag |
+        kLPSPI_FrameCompleteFlag |
+        kLPSPI_WordCompleteFlag |
+        kLPSPI_TransmitErrorFlag |
+        kLPSPI_ReceiveErrorFlag
+    );    
+}
+
+static void vDeInit_Slave_CallbackConfigs(sT_SPI_SlaveCtrl *pstSlaveCtrl)
+{
+    if(pstSlaveCtrl == NULL)
+    {
+        FHALT("Null Pointer Reference");
+        return;
+    }
+
+    sT_SlaveCallback_Config_t *pstSlaveCallback = &pstSlaveCtrl->stTUserNotifyCtrl.data_pathConfig.stTCallbackConfig;
+    vFree_SPIRxBuffers(&pstSlaveCallback->pstRxBuffHead);
+    vDeallocate_DrainBufferMemory(pstSlaveCallback);
+    vSet_RxBufferType(pstSlaveCallback, eSPI_RxTarget_AppBuffer);
+    vSet_RxEventType(&pstSlaveCtrl->stTDevRxOverflowControl, eSPI_PeripheralEvent_RxReady);
+    pstSlaveCtrl->stTDevRxOverflowControl.uiDroppedFrameCount = 0U;
+    pstSlaveCtrl->stTDevRxOverflowControl.uiOverflowCount = 0U;
 }
 
 static inline bool bIsModule_Initialized( eSPIModule_t eModule )
@@ -259,7 +883,7 @@ static bool bConfig_SPI_MasterMode( sT_SPIConfig_t *pstSPIConfig )
     }
 
     pstSPIModule->bIsInitialized = false;
-    pstSPIModule->bIsTransferBusy = false;
+    vClear_TransferBusyFlag(pstSPIModule);
     pstSPIModule->eNotificationType = pstSPIConfig->eNotificationType;
     pstSPIModule->stTSPIDevCtrl.eMode = pstSPIConfig->stTSPIModeCtrl.eMode;
     pstMasterCtrl->eActiveSlaveId = eNUMBER_OF_SPI_SLAVEs;
@@ -354,6 +978,14 @@ static void vConfigure_SPIInterrupt(sT_SPIModuleConfig_t *pstSPIModule)
             vEnable_SPI_IRQ(pstSPIModule->eModuleId);
             break;
         case eSPI_Mode_Peripheral:
+            LPSPI_SlaveTransferCreateHandle(
+                pstSPIModule->pstSPIDevice,
+                &pstSPIModule->stTSPIDevCtrl.st_DevCtrlMode.stTSlaveCtrl.stSlaveHandle,
+                vSPI_PeripheralModeCallback,
+                pstSPIModule
+            );
+            vEnable_SPI_IRQ(pstSPIModule->eModuleId);
+            break;
         default:
             FHALT("Not Implemented");
             break;
@@ -397,13 +1029,366 @@ static void vDisable_SPI_IRQ(eSPIModule_t eModule)
 static void vLPSPI0_ISR(const void *arg)
 {
     ARG_UNUSED(arg);
+    vHandle_SPIPeripheral_HWMatch(eSPI_0);
     LPSPI_DriverIRQHandler(0U);
 }
 
 static void vLPSPI1_ISR(const void *arg)
 {
     ARG_UNUSED(arg);
+    vHandle_SPIPeripheral_HWMatch(eSPI_1);
     LPSPI_DriverIRQHandler(1U);
+}
+
+static inline void vHandle_SPIPeripheral_HWMatch(eSPIModule_t eModuleId)
+{
+    sT_SPIModuleConfig_t *pstSPIModule = &staSPIModule[eModuleId];
+    if(pstSPIModule->stTSPIDevCtrl.eMode != eSPI_Mode_Peripheral)
+        return;
+
+    sT_SPI_SlaveCtrl *pstPeriphreralConfig = &pstSPIModule->stTSPIDevCtrl.st_DevCtrlMode.stTSlaveCtrl;
+    if(!pstPeriphreralConfig->bIsHWMatchRequested)
+        return;
+    
+    uint32_t uiFlags = LPSPI_GetStatusFlags(pstSPIModule->pstSPIDevice);
+    if(!(uiFlags & kLPSPI_DataMatchFlag))
+        return;
+    
+    LPSPI_ClearStatusFlags(pstSPIModule->pstSPIDevice, kLPSPI_DataMatchFlag);
+    vSet_HWMatchFlag(pstPeriphreralConfig);
+
+    //To Disable unnecessary execution of HW match, Interrupts are disabled
+    LPSPI_DisableInterrupts(
+        pstSPIModule->pstSPIDevice,
+        kLPSPI_DataMatchInterruptEnable
+    );
+
+    LPSPI_ClearStatusFlags(
+        pstSPIModule->pstSPIDevice,
+        kLPSPI_DataMatchFlag
+    );
+    //printf("HW Match\n\r");
+}
+
+static void vSPI_PeripheralModeCallback(LPSPI_Type *base,
+                                        lpspi_slave_handle_t *handle,
+                                        status_t status,
+                                        void *userData)
+{
+    sT_SPIModuleConfig_t *pstSPIModule = (sT_SPIModuleConfig_t *)userData;
+    sT_SPI_SlaveCtrl *pstPeriphreralConfig = &pstSPIModule->stTSPIDevCtrl.st_DevCtrlMode.stTSlaveCtrl;
+    eTransfer_Type_t eType = eGet_SlaveTransferType(pstSPIModule->eModuleId);
+    
+    vClear_SlaveTransferFlag(pstPeriphreralConfig);
+
+    eSPI_TransferResult_t eResult = (status == kStatus_Success) ? eTransfer_Success : eTransfer_Failed;
+    if(eType == eTransfer_Tx_Only)
+    {
+        vNotify_SlaveTxComplete(pstSPIModule, pstPeriphreralConfig, eResult);
+        return;    
+    }
+
+    if(pstPeriphreralConfig->bIsHWMatchRequested && !bGet_HWMatchFlag(pstPeriphreralConfig))
+    {
+        bArm_SlaveRx_ForCallback(pstSPIModule, pstPeriphreralConfig);
+        return;
+    }
+    
+    vReConfigure_HWMatch_Interrupts(pstSPIModule, pstPeriphreralConfig);
+
+    switch(pstPeriphreralConfig->stTUserNotifyCtrl.eDataPathType)
+    {
+        case eTransfer_Use_Callback:
+            vNotify_Via_Callback(pstSPIModule->eModuleId,
+                                 &pstPeriphreralConfig->stTUserNotifyCtrl.data_pathConfig.stTCallbackConfig,
+                                 handle, eResult);
+            break;
+        case eTransfer_Use_MessageBus:
+        default:
+            break;
+    }
+    
+}
+
+static inline void vReConfigure_HWMatch_Interrupts(sT_SPIModuleConfig_t *pstSPIModule, sT_SPI_SlaveCtrl *pstPeriphreralConfig)
+{    
+    if(!pstPeriphreralConfig->bIsHWMatchRequested)
+        return;
+    if(pstPeriphreralConfig == NULL || pstSPIModule == NULL)
+        return;
+
+    vClear_HWMatchFlag(pstPeriphreralConfig);
+
+    LPSPI_ClearStatusFlags(
+        pstSPIModule->pstSPIDevice,
+        kLPSPI_DataMatchFlag
+    );
+
+    LPSPI_EnableInterrupts(
+        pstSPIModule->pstSPIDevice,
+        kLPSPI_DataMatchInterruptEnable
+    );        
+}
+
+static void vNotify_SlaveTxComplete(sT_SPIModuleConfig_t *pstSPIModule, sT_SPI_SlaveCtrl *pstSlaveCtrl, 
+                                    eSPI_TransferResult_t eResult)
+{    
+    if(pstSPIModule == NULL || pstSlaveCtrl == NULL)
+    {
+        return;
+    }
+
+    if(!pstSlaveCtrl->bIsTxOnlyNotification_Requested)
+    {
+        bArm_SlaveRx_ForCallback(pstSPIModule, pstSlaveCtrl);
+        return;
+    }
+
+    sT_SlaveCallback_Config_t *pstCallbackConf = &pstSlaveCtrl->stTUserNotifyCtrl.data_pathConfig.stTCallbackConfig;
+    if(pstCallbackConf->pvPeripheral_UserCallBack == NULL)
+    {
+        bArm_SlaveRx_ForCallback(pstSPIModule, pstSlaveCtrl);
+        return;
+    }
+
+    sT_RxBuffData_t stTBuffData = {
+        .uiBuffId = SPI_SLAVE_RxCallBack_InvalidBuffId,
+        .eState = eBuffer_None,
+        .puiBuffer = NULL,
+        .uisize = 0U,
+        .bTxCompleted = (eResult == eTransfer_Success)?true:false
+    };
+
+    eSPI_PeripheralEvent_Type_t eEvent = (eResult == eTransfer_Success)? eSPI_PeripheralEvent_TxCompleted: eSPI_PeripheralEvent_TxError;
+    
+    pstCallbackConf->pvPeripheral_UserCallBack(eEvent, eResult, stTBuffData, true);
+    bArm_SlaveRx_ForCallback(pstSPIModule, pstSlaveCtrl);
+}
+
+static inline void vNotify_Via_Callback(eSPIModule_t eModuleId, 
+                                        sT_SlaveCallback_Config_t *pstCallbackConfig, 
+                                        lpspi_slave_handle_t *pshandle,
+                                        eSPI_TransferResult_t eResult)
+{
+    
+    sT_SPIModuleConfig_t *pstSPIModule = &staSPIModule[eModuleId];
+    sT_SPI_SlaveCtrl *pstSlaveControl = &pstSPIModule->stTSPIDevCtrl.st_DevCtrlMode.stTSlaveCtrl;
+
+    if(pstCallbackConfig->pvPeripheral_UserCallBack != NULL)
+    {
+        eSPI_RxTarget_t eBuffType = eGet_RxBufferType(pstCallbackConfig);
+
+        switch(eBuffType)
+        {
+            case eSPI_RxTarget_AppBuffer:
+                vNotify_Application_AtNoError(pstSPIModule, pstSlaveControl, pstCallbackConfig, eResult);
+                break;
+            case eSPI_RxTarget_DrainBuffer:
+                vNotify_Application_AtOverflow(pstSPIModule, pstSlaveControl, pstCallbackConfig, eResult);
+                break;
+            default:
+                FHALT("Invalid Operation on Rx Buffers");
+                return;
+        }
+    }
+    else
+    {
+        bArm_SlaveRx_ForCallback(pstSPIModule, pstSlaveControl);
+    }
+
+}
+
+static void vNotify_Application_AtNoError(sT_SPIModuleConfig_t *pstSPIModule,
+                                          sT_SPI_SlaveCtrl *pstSlaveControl,
+                                          sT_SlaveCallback_Config_t *pstCallbackConfig,
+                                          eSPI_TransferResult_t eResult)
+{
+    eSPI_PeripheralEvent_Type_t eEventType = eGetCurrentRxEventType(&pstSlaveControl->stTDevRxOverflowControl);
+    uint8_t uiBuffId = uiGet_RxBuffId(pstCallbackConfig);
+    bool bArmResult = false;
+
+    if(eResult != eTransfer_Success)
+    {
+        vSet_RxBufferState(uiBuffId, eBuffer_Free, pstCallbackConfig->pstRxBuffHead);
+
+        sT_RxBuffData_t stTBuffData = {
+            .uiBuffId = SPI_SLAVE_RxCallBack_InvalidBuffId,
+            .eState = eBuffer_Error,
+            .puiBuffer = NULL,
+            .uisize = 0U
+        };
+
+        bArmResult = bArm_SlaveRx_ForCallback(pstSPIModule, pstSlaveControl);
+        pstCallbackConfig->pvPeripheral_UserCallBack(eSPI_PeripheralEvent_RxError,
+                                                     eResult, stTBuffData, bArmResult);
+        return;
+    }
+
+    vSet_RxBufferState(uiBuffId, eBuffer_Ready, pstCallbackConfig->pstRxBuffHead);
+    sT_SPIRxBuff_t *pstReadBuff = pstGet_RxReadyBuffer_byId(pstCallbackConfig->pstRxBuffHead, uiBuffId);
+    if(pstReadBuff == NULL)
+        return;
+
+    vSet_RxEventType(&pstSlaveControl->stTDevRxOverflowControl,eSPI_PeripheralEvent_RxReady);
+
+    sT_RxBuffData_t stTBuffData = {
+        .uiBuffId = uiBuffId,
+        .eState = eBuffer_Ready,
+        .puiBuffer = pstReadBuff->puiBuffer,
+        .uisize = pstReadBuff->uisize
+    };
+
+    pstCallbackConfig->pvPeripheral_UserCallBack(eEventType,
+                                                 eResult, stTBuffData, bArmResult);
+    if(!bIsSlaveTransferBusy(pstSlaveControl))
+    {
+        bArm_SlaveRx_ForCallback(pstSPIModule, pstSlaveControl);
+    }
+}
+
+static void vNotify_Application_AtOverflow(sT_SPIModuleConfig_t *pstSPIModule, 
+                                           sT_SPI_SlaveCtrl *pstSlaveControl,
+                                           sT_SlaveCallback_Config_t *pstCallbackConfig,
+                                           eSPI_TransferResult_t eResult)
+{
+    eSPI_PeripheralEvent_Type_t eEventType = eGetCurrentRxEventType(&pstSlaveControl->stTDevRxOverflowControl);
+    pstSlaveControl->stTDevRxOverflowControl.uiDroppedFrameCount++;
+
+    sT_RxBuffData_t stTBuffData = {
+        .uiBuffId = SPI_SLAVE_RxCallBack_InvalidBuffId,
+        .eState = eBuffer_Overflow,
+        .puiBuffer = pstSlaveControl->stTUserNotifyCtrl.data_pathConfig.stTCallbackConfig.puiDrainBuffer,
+        .uisize = pstSlaveControl->stTUserNotifyCtrl.data_pathConfig.stTCallbackConfig.uiBuffSize
+    };
+
+    bool bArmRes = bArm_SlaveRx_ForCallback(pstSPIModule, pstSlaveControl);
+
+    if(pstCallbackConfig->pvPeripheral_UserCallBack != NULL)
+    {
+        pstCallbackConfig->pvPeripheral_UserCallBack(eEventType,
+                                                     eTransfer_Failed, stTBuffData, bArmRes);
+    }
+}
+
+static inline void vSet_RxBufferType(sT_SlaveCallback_Config_t *pstCallbackConfig, eSPI_RxTarget_t eNewTargetType)
+{
+    if(pstCallbackConfig == NULL)
+        return;
+    atomic_store_explicit(&pstCallbackConfig->eActiveRxTarget, eNewTargetType, memory_order_release);
+}
+
+static inline eSPI_RxTarget_t eGet_RxBufferType(sT_SlaveCallback_Config_t *pstCallbackConfig)
+{
+    if(pstCallbackConfig == NULL)
+        return eNUMBER_OF_RXTARGET_BUFFERTYPEs;
+    eSPI_RxTarget_t eBuffType = atomic_load_explicit(&pstCallbackConfig->eActiveRxTarget, memory_order_acquire);
+    return eBuffType;    
+}
+
+static inline eSPI_PeripheralEvent_Type_t eGetCurrentRxEventType(sT_SPI_RxOverflowCtrl_t *pstRxFlowCtrl)
+{
+    eSPI_PeripheralEvent_Type_t eType = atomic_load_explicit(&pstRxFlowCtrl->eEventType, memory_order_acquire);
+    return eType; 
+}
+
+static inline void vSet_RxEventType(sT_SPI_RxOverflowCtrl_t *pstRxFlowCtrl, eSPI_PeripheralEvent_Type_t eType)
+{
+    if(pstRxFlowCtrl == NULL)
+        return;
+    atomic_store_explicit(&pstRxFlowCtrl->eEventType, eType, memory_order_release);
+}
+
+bool bSPI_ReleasePeripheralMode_RxBuffer( eSPIModule_t eModuleId, uint8_t uiBuffId )
+{
+    if(eModuleId >= eNUMBER_OF_SPI_MODULEs)
+    {
+        FHALT("Invalid SPIModule : %d", eModuleId);
+        return false;
+    }
+    if(eGetSPIMode(eModuleId) != eSPI_Mode_Peripheral)
+    {
+        FHALT("SPIMod[%d] is not in Slave Configuration", eModuleId);
+        return false;        
+    }
+
+    sT_SPIModuleConfig_t *pstSPIModule = &staSPIModule[eModuleId];
+    sT_SPI_SlaveCtrl *pstSlaveControl = &pstSPIModule->stTSPIDevCtrl.st_DevCtrlMode.stTSlaveCtrl;
+
+    if(pstSlaveControl->stTUserNotifyCtrl.eDataPathType != eTransfer_Use_Callback)
+    {
+        FHALT("SPIMod[%d] is not in Callback Notification Mode", eModuleId);
+        return false;
+    }
+
+    sT_SlaveCallback_Config_t *pstCallbackConfig = &pstSlaveControl->stTUserNotifyCtrl.data_pathConfig.stTCallbackConfig;
+    sT_SPIRxBuff_t *pstRxBuff = pstGet_RxReadyBuffer_byId(pstCallbackConfig->pstRxBuffHead, uiBuffId);
+    if(pstRxBuff == NULL)
+    {
+        FHALT("Invalid or non-ready SPI Rx Buffer Id: %d", uiBuffId);
+        return false;
+    }
+
+    vSet_RxBufferState(uiBuffId, eBuffer_Free, pstCallbackConfig->pstRxBuffHead);
+    return true;
+}
+
+static inline void vSet_SlaveTransferType(eSPIModule_t eModuleId, eTransfer_Type_t eTransferType)
+{
+    if(eModuleId >= eNUMBER_OF_SPI_MODULEs)
+    {
+        FHALT("Invalid SPI Module: %d", eModuleId);
+        return;        
+    }
+    if(eGetSPIMode(eModuleId) != eSPI_Mode_Peripheral)
+    {
+        FHALT("Invalid Call to set transfer type when SPI is in MasterMode");
+        return;
+    }
+
+    sT_SPI_SlaveCtrl *pstSlaveCtrl = &staSPIModule[eModuleId].stTSPIDevCtrl.st_DevCtrlMode.stTSlaveCtrl;
+    atomic_store_explicit(&pstSlaveCtrl->eTransferType, eTransferType, memory_order_release);
+}
+
+static inline eTransfer_Type_t eGet_SlaveTransferType(eSPIModule_t eModuleId)
+{
+    if(eModuleId >= eNUMBER_OF_SPI_MODULEs)
+    {
+        FHALT("Invalid SPI Module: %d", eModuleId);
+        return eNUMBER_OF_TRANSFER_TYPEs;        
+    }
+
+    sT_SPI_SlaveCtrl *pstSlaveCtrl = &staSPIModule[eModuleId].stTSPIDevCtrl.st_DevCtrlMode.stTSlaveCtrl;
+    eTransfer_Type_t eType = atomic_load_explicit(&pstSlaveCtrl->eTransferType, memory_order_acquire);
+    return eType;
+}
+
+static inline void vSet_RxBuffId(sT_SlaveCallback_Config_t *pstCallbackConfig, uint8_t uiId)
+{
+    atomic_store_explicit(&pstCallbackConfig->uiBuffIndex, uiId, memory_order_release);
+}
+
+static inline uint8_t uiGet_RxBuffId(sT_SlaveCallback_Config_t *pstCallbackConfig)
+{
+    uint8_t uiId = atomic_load_explicit(&pstCallbackConfig->uiBuffIndex, memory_order_acquire);
+    return uiId;
+}
+
+static inline void vSet_HWMatchFlag(sT_SPI_SlaveCtrl *pstPeriphreralConfig)
+{
+    if(pstPeriphreralConfig == NULL)
+        return;
+    atomic_store_explicit(&pstPeriphreralConfig->bIsMatchOccurred, true, memory_order_release);
+}
+
+static inline bool bGet_HWMatchFlag(sT_SPI_SlaveCtrl *pstPeriphreralConfig)
+{
+    bool bIsSet = atomic_load_explicit(&pstPeriphreralConfig->bIsMatchOccurred, memory_order_acquire);
+    return bIsSet;
+}
+
+static inline void vClear_HWMatchFlag(sT_SPI_SlaveCtrl *pstPeriphreralConfig)
+{
+    atomic_store_explicit(&pstPeriphreralConfig->bIsMatchOccurred, false, memory_order_release);
 }
 
 static void vSPI_MasterCallback(LPSPI_Type *base,
@@ -415,7 +1400,7 @@ static void vSPI_MasterCallback(LPSPI_Type *base,
     sT_SPI_MasterCtrl *pstMasterCtrl = &pstSPIModule->stTSPIDevCtrl.st_DevCtrlMode.stTMasterCtrl;
 
     sT_SPISlave_Control_t *pstSlave = pstGetSlaveInfo(pstMasterCtrl->eActiveSlaveId, pstMasterCtrl->pstSPISlaveHead_Ctrl);
-    if(!bClaim_TransferBusyFlag(pstSPIModule))
+    if(!bTryComplete_TransferBusyFlag(pstSPIModule))
         return;
         
     k_work_cancel_delayable(&pstSPIModule->kw_SPITransferMonitor);
@@ -427,7 +1412,7 @@ static void vSPI_MasterCallback(LPSPI_Type *base,
     pstSlave->stTConfigs.pvSPI_CallBack(pstMasterCtrl->eActiveSlaveId, eResult);
 }
 
-static inline bool bClaim_TransferBusyFlag(sT_SPIModuleConfig_t *pstSPIModule)
+static inline bool bTryComplete_TransferBusyFlag(sT_SPIModuleConfig_t *pstSPIModule)
 {
     if(pstSPIModule == NULL)
     {
@@ -448,7 +1433,7 @@ static void vSPI_FaultRecoveryHandler( struct k_work *work )
     eSPIModule_t eModuleId = pstSPIModule->eModuleId;
 
     if(!pstSPIModule->bIsInitialized || 
-       !bClaim_TransferBusyFlag(pstSPIModule) ||
+       !bTryComplete_TransferBusyFlag(pstSPIModule) ||
        eGetSPIMode(eModuleId) != eSPI_Mode_Controller)
        return;
        
@@ -457,13 +1442,9 @@ static void vSPI_FaultRecoveryHandler( struct k_work *work )
 
     sT_SPISlave_Control_t *pstSlave = pstGetSlaveInfo(pstMasterCtrl->eActiveSlaveId, pstMasterCtrl->pstSPISlaveHead_Ctrl);
     if(pstSlave == NULL || pstSlave->stTConfigs.pvSPI_CallBack == NULL)
-    {
-        FHALT("Null Callback Pointer");
         return;
-    }
 
     pstSlave->stTConfigs.pvSPI_CallBack(pstMasterCtrl->eActiveSlaveId, eTransfer_Timeout);
-
 }
 
 static inline sT_SPIModuleConfig_t *pstGetSPIModule_From_KWork(struct k_work_delayable *work)
@@ -487,7 +1468,7 @@ static inline eSPI_Mode_t eGetSPIMode( eSPIModule_t eModule )
     return staSPIModule[eModule].stTSPIDevCtrl.eMode;
 }
 
-bool bSPI_Transfer_InMasterMode(sT_SPITransfer_t stTTransfer)
+bool bSPI_Transfer_InMasterMode(sT_SPIMasterTransfer_t stTTransfer)
 {
     bool bResult = false;
     uint32_t uiPCSFlag = 0;
@@ -503,7 +1484,7 @@ bool bSPI_Transfer_InMasterMode(sT_SPITransfer_t stTTransfer)
         FHALT("Module[%d] not in Master Mode", eModuleId);
         return false;
     }
-    if(bIsTransferBusy(eModuleId))
+    if(bTryClaim_TransferBusyFlag(eModuleId))
     {
         FHALT("Module[%d] Transfer in Progress", eModuleId);
         return false;
@@ -514,6 +1495,7 @@ bool bSPI_Transfer_InMasterMode(sT_SPITransfer_t stTTransfer)
     if((pstMasterCtrl->eSPI_BusWidth == e2bit_Transfer || pstMasterCtrl->eSPI_BusWidth == e4bit_Transfer) &&
         stTTransfer.eType == eTransfer_Transceive)
     {
+        vClear_TransferBusyFlag(pstModule);
         FHALT("Full duplex transfer cannot be executed while Module[%d] with Data Width: %d", eModuleId, pstMasterCtrl->eSPI_BusWidth);
         return false;        
     }
@@ -524,13 +1506,12 @@ bool bSPI_Transfer_InMasterMode(sT_SPITransfer_t stTTransfer)
         bResult = bSetUp_NewSlaveConfig(eModuleId, pstMasterCtrl, stTTransfer.eSlaveId);
         if(!bResult)
         {
+            vClear_TransferBusyFlag(pstModule);
             LPSPI_Enable(pstModule->pstSPIDevice, true);
             return false;
         }
         LPSPI_Enable(pstModule->pstSPIDevice, true);
     }
-
-    vSet_TransferBusyFlag(pstModule);
 
     lpspi_transfer_t stLPSPITransfer = {0};
 
@@ -558,6 +1539,7 @@ bool bSPI_Transfer_InMasterMode(sT_SPITransfer_t stTTransfer)
             }
             break;
         default:
+            vClear_TransferBusyFlag(pstModule);
             FHALT("Invalid Transfer Type: %d", stTTransfer.eType);
             return false;
     }
@@ -615,7 +1597,7 @@ static uint32_t uiGetTransferPCsFlag(eSPI_PCS_t eHW_PCS_Ctrl)
     }
 }
 
-static inline bool bSPI_Master_Send(sT_SPITransfer_t *pstTTransfer, lpspi_transfer_t *pstLPSPITransfer)
+static inline bool bSPI_Master_Send(sT_SPIMasterTransfer_t *pstTTransfer, lpspi_transfer_t *pstLPSPITransfer)
 {
     if(pstTTransfer->puiTxData == NULL || pstTTransfer->uiTxDataLen == 0)
     {
@@ -629,7 +1611,7 @@ static inline bool bSPI_Master_Send(sT_SPITransfer_t *pstTTransfer, lpspi_transf
     return true;
 }
 
-static inline bool bSPI_Master_Receive(sT_SPITransfer_t *pstTTransfer, lpspi_transfer_t *pstLPSPITransfer)
+static inline bool bSPI_Master_Receive(sT_SPIMasterTransfer_t *pstTTransfer, lpspi_transfer_t *pstLPSPITransfer)
 {
     if(pstTTransfer->puiRxData == NULL || pstTTransfer->uiRxDataLen == 0)
     {
@@ -643,7 +1625,7 @@ static inline bool bSPI_Master_Receive(sT_SPITransfer_t *pstTTransfer, lpspi_tra
     return true;
 }
 
-static inline bool bSPI_Master_Transceive(sT_SPITransfer_t *pstTTransfer, lpspi_transfer_t *pstLPSPITransfer)
+static inline bool bSPI_Master_Transceive(sT_SPIMasterTransfer_t *pstTTransfer, lpspi_transfer_t *pstLPSPITransfer)
 {
     if(pstTTransfer->puiTxData == NULL || pstTTransfer->uiTxDataLen == 0)
     {
@@ -866,15 +1848,15 @@ static inline void vClear_TransferBusyFlag(sT_SPIModuleConfig_t *pstSPIModule)
     atomic_store_explicit(&pstSPIModule->bIsTransferBusy, false, memory_order_release);
 }
 
-static inline void vSet_TransferBusyFlag(sT_SPIModuleConfig_t *pstSPIModule)
+static inline bool bTryClaim_TransferBusyFlag(eSPIModule_t eModuleId)
 {
-    atomic_store_explicit(&pstSPIModule->bIsTransferBusy, true, memory_order_release);    
-}
-
-static inline bool bIsTransferBusy(eSPIModule_t eModuleId)
-{
-    bool bIsBusy = atomic_load_explicit(&staSPIModule[eModuleId].bIsTransferBusy, memory_order_acquire);
-    return bIsBusy;
+    bool bIsBusy = atomic_exchange_explicit(&staSPIModule[eModuleId].bIsTransferBusy, true, memory_order_acq_rel);
+    if(bIsBusy)
+    {
+        FHALT("SPIMod[%d] Transfer in progress", eModuleId);
+        return true;
+    }
+    return false;
 }
 
 static void vConfigure_SPI_DMA(sT_SPIModuleConfig_t *pstSPIModule)
