@@ -28,7 +28,7 @@ void vConfigure_SPI( void )
 	stSlaveConfig.eHW_PCS_Ctrl = ePCS_0;
 	stSlaveConfig.eSPI_BusWidth = e1bit_Transfer;
 	stSlaveConfig.uiSPI_Freq_Hz = 1000000;
-	stSlaveConfig.uiDelay_Between_BlockTx_ns = 3000;
+	stSlaveConfig.uiDelay_Between_BlockTx_ns = 6000;
 	stSlaveConfig.uiDelay_CS_Assert_To_SCK_ns = 100;
 	stSlaveConfig.uiDelay_LastSCK_To_CS_Deassert_ns = 300;
 	stSlaveConfig.pvSPI_CallBack = SPI_Slave_0_Callback;

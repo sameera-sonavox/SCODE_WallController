@@ -10,6 +10,9 @@
 #include "NXP_SPI_LinkedList.h"
 
 #define DEBUG_SPI_DEV_INIT
+/* #define DEBUG_SPI_SLAVE_TX
+#define DEBUG_SPI_SLAVE_RX
+#define DEBUG_SPI_SLAVE_IRQ */
 
 /**
  * @brief Initializes the requested SPI module. User should provide all the slave configurations required inside 'sT_SPIConfig_t' 

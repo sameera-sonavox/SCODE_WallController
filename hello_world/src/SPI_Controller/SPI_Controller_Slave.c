@@ -2,8 +2,7 @@
 #include "../Lib/GenericMacro.h"
 #include <zephyr/kernel.h>
 
-//uint8_t uiaTxData[8] = {0x55, 0x66, 0x77, 0x88, 0x99, 0x11, 0x22, 0x33};
-uint8_t uiaTxData[8] = {0x00};
+uint8_t uiaTxData[8] = {0x55, 0x66, 0x77, 0x88, 0x99, 0x11, 0x22, 0x33};
 
 static void vSPI_SlaveCallback(eSPI_PeripheralEvent_Type_t eEventType, 
                                eSPI_TransferResult_t eResult, 
@@ -15,19 +14,20 @@ void vConfigure_SPISLave( void )
 	sT_SPIConfig_t stSPIConfig = {0};
 	stSPIConfig.eModule = eSPI_0;
 	stSPIConfig.eNotificationType = eNotify_Interrupt;
-	stSPIConfig.eDataOutPinState = eData_Out_RetainLastValue;
+	stSPIConfig.eDataOutPinState = eData_Out_TriState;
 	stSPIConfig.ePinConfig = eEn_FullDuplex_Transfer_Normal;
 
 	stSPIConfig.stTSPIModeCtrl.eMode = eSPI_Mode_Peripheral;
     sT_Peripheral_Config_t *pstSlaveControl = &stSPIConfig.stTSPIModeCtrl.spi_mode.stTConfig_Peripheral;
 
-    pstSlaveControl->bRequest_TxNotifications = true;
+    pstSlaveControl->bRequest_TxNotifications = false;
     pstSlaveControl->eCPOLCPH_Ctrl = eCPOL_0_CPH_0;
     pstSlaveControl->eSlaveMode_CS_Ctrl = eCS_Active_Low;
     pstSlaveControl->eCSPin = ePCS_0;
     pstSlaveControl->eEndianFormat = eMSB_First;
     pstSlaveControl->eSPI_BusWidth = e1bit_Transfer;
     pstSlaveControl->uiFrameSize = 8U;
+    pstSlaveControl->eHWRdy_PinState = eSPI_Rdy_Active_High;
 
     sT_HWMatch_Config_t *pstHWMatchConfig = &pstSlaveControl->stTHWMatchConfig;
     pstHWMatchConfig->bFIFO_StoreOnly_MatchedData = false;
@@ -74,7 +74,7 @@ static void vSPI_SlaveCallback(eSPI_PeripheralEvent_Type_t eEventType,
 
     if(eEventType == eSPI_PeripheralEvent_TxCompleted)
     {
-        printf("Slave TX completed\n\r");
+        //printf("Slave TX completed\n\r");
         return;
     }
 

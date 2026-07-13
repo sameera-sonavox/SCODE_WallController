@@ -18,4 +18,13 @@ typedef enum
 #define USE_SPI_0
 //#define USE_SPI_1
 
+/**
+ * @note If a SPI module is configured as slave, it is safe and standard to define a HW RDY pin.
+ *       If you define a GPIO pin in an overlay as below( use exact naming conventions), then the API
+ *       will use that pin automatically.
+ */
+#if defined(USE_SPI_0)
+#define USE_SPI0_SLAVE_HW_RDY_GPIO
+#endif
+
 #endif

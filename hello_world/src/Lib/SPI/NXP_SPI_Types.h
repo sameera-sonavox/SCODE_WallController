@@ -166,6 +166,13 @@ typedef enum
     eNUMBER_OF_PERIPHERAL_EVENT_TYPEs
 } eSPI_PeripheralEvent_Type_t;
 
+typedef enum
+{
+    eSPI_Rdy_Active_Low = 0,
+    eSPI_Rdy_Active_High,
+    eNUMBER_OF_SPI_HW_RDY_STATEs
+} eSPI_HWRDY_PinState_t;
+
 typedef struct
 {
     uint8_t *puiRxData;
@@ -301,7 +308,8 @@ typedef struct
     eSPI_DataLane_Width_t eSPI_BusWidth;
     eSPI_CS_Polarity_t eSlaveMode_CS_Ctrl;
     eSPI_ShiftDirection_t eEndianFormat;
-    eSPI_CPOL_CPHA_Type_t eCPOLCPH_Ctrl;
+    eSPI_CPOL_CPHA_Type_t eCPOLCPH_Ctrl;    
+    eSPI_HWRDY_PinState_t eHWRdy_PinState;
     sT_HWMatch_Config_t stTHWMatchConfig;
     sT_SPISlave_RxControl_t stTRxControl;    
     uint16_t uiFrameSize;

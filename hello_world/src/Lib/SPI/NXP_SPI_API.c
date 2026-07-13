@@ -2,8 +2,27 @@
 
 #if defined(USE_SPI)
 
+#ifdef DEBUG_SPI_SLAVE_TX
+    #define debug_SlaveTx_Print             printf
+#else
+    #define debug_SlaveTx_Print(...)
+#endif
+
+#ifdef DEBUG_SPI_SLAVE_RX
+    #define debug_SlaveRx_Print             printf
+#else
+    #define debug_SlaveRx_Print(...)
+#endif 
+
+#ifdef DEBUG_SPI_SLAVE_IRQ
+    #define debug_SlaveIRQ_Print            printf
+#else
+    #define debug_SlaveIRQ_Print(...)
+#endif
+
 #include <stdbool.h>
 #include <stdatomic.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/pinctrl.h>
 #include "fsl_lpspi.h"
 #include "fsl_clock.h"
@@ -13,6 +32,29 @@
 #include "NXP_SPI_ConfigValidation.h"
 #include "NXP_SPI_LinkedList.h"
 #include "../GenericMacro.h"
+
+#if defined(USE_SPI0_SLAVE_HW_RDY_GPIO)
+    #define SPI0_SLAVE_RDY_GPIO_NODE DT_ALIAS(spi0_slave_hw_rdy)
+    #if DT_NODE_HAS_STATUS(SPI0_SLAVE_RDY_GPIO_NODE, okay)
+        static const struct gpio_dt_spec stSPI0SlaveRdyGPIO = GPIO_DT_SPEC_GET(SPI0_SLAVE_RDY_GPIO_NODE, gpios);
+        #define SPI0_SLAVE_HWRDY_PIN_AVAILABLE
+    #endif
+#endif
+
+#if defined(USE_SPI1_SLAVE_HW_RDY_GPIO)
+    #define SPI1_SLAVE_RDY_GPIO_NODE DT_ALIAS(spi1_slave_hw_rdy)
+    #if DT_NODE_HAS_STATUS(SPI1_SLAVE_RDY_GPIO_NODE, okay)
+        static const struct gpio_dt_spec stSPI1SlaveRdyGPIO = GPIO_DT_SPEC_GET(SPI1_SLAVE_RDY_GPIO_NODE, gpios);
+        #define SPI1_SLAVE_HWRDY_PIN_AVAILABLE
+    #endif
+#endif
+
+typedef enum
+{
+    eSPISlave_Busy,
+    eSPISlave_Ready,
+    eNUMBER_OF_SPISLAVE_STATEs
+} eHWReady_State_t;
 
 typedef struct
 {
@@ -52,6 +94,13 @@ typedef struct
 
 typedef struct
 {
+    bool bHWReady_Used;
+    eSPI_HWRDY_PinState_t eHWRdy_PinState;
+    const struct gpio_dt_spec *pstGPIOStruct;
+} sT_HWReadyPin_Ctrl;
+
+typedef struct
+{
     _Atomic bool bIsTransferBusy;
     bool bIsHWMatchRequested;
     bool bIsTxOnlyNotification_Requested;
@@ -61,7 +110,8 @@ typedef struct
     lpspi_slave_config_t stSlaveConfig;
     lpspi_slave_handle_t stSlaveHandle;
     sT_UserNotify_Ctrl_t stTUserNotifyCtrl;
-    sT_SPI_RxOverflowCtrl_t stTDevRxOverflowControl;
+    sT_SPI_RxOverflowCtrl_t stTDevRxOverflowControl;    
+    sT_HWReadyPin_Ctrl stTHWRdyCtrl;
 } sT_SPI_SlaveCtrl;
 
 typedef struct
@@ -110,6 +160,9 @@ static bool bPrepare_SlaveHW_ForNewTransfer(eSPIModule_t eModuleId);
 static bool bArm_SlaveRx_ForCallback(sT_SPIModuleConfig_t *pstSPIModule,
                                      sT_SPI_SlaveCtrl *pstSlaveControl);
 
+static bool bInit_SPISlave_HWRDY_Control(sT_SPIConfig_t *pstSPIConfig);
+static inline void vSet_SPISlave_HWReadyState(eSPIModule_t eModuleId, eHWReady_State_t eState);
+
 static bool bAllocate_MemoryForDrainBuffer(sT_SlaveCallback_Config_t *pstDevConfig);
 static inline void vDeallocate_DrainBufferMemory(sT_SlaveCallback_Config_t *pstDevConfig);
 
@@ -122,6 +175,7 @@ static bool bApplyPolicy_DropNewest(sT_SPIModuleConfig_t *pstSPIModule,
 static inline bool bTryClaim_SlaveTransfer(sT_SPI_SlaveCtrl *pstSlaveControl);
 static inline void vClear_SlaveTransferFlag(sT_SPI_SlaveCtrl *pstSlaveControl);
 static inline bool bIsSlaveTransferBusy(sT_SPI_SlaveCtrl *pstSlaveControl);
+static inline void vRecover_SlaveHW_AfterError(LPSPI_Type *base);
 
 static void vConfig_TransferHandle(sT_SPIModuleConfig_t *pstSPIModule);
 static void vConfigure_SPIInterrupt(sT_SPIModuleConfig_t *pstSPIModule);
@@ -314,6 +368,8 @@ static bool bConfig_SPI_SlaveMode( sT_SPIConfig_t *pstSPIConfig )
     if(!bSetup_OverflowPolicy(pstOverflowCtrl, 
                               pstSPIConfig->stTSPIModeCtrl.spi_mode.stTConfig_Peripheral.stTRxControl.eOverflowPolicy))
         return false;
+    if(!bInit_SPISlave_HWRDY_Control(pstSPIConfig))
+        return false;
 
     vAssign_PinConfigurations(pstSPIConfig->eModule);
 
@@ -407,6 +463,22 @@ static inline bool bIsSlaveTransferBusy(sT_SPI_SlaveCtrl *pstSlaveControl)
     return bRes;
 }
 
+static inline void vRecover_SlaveHW_AfterError(LPSPI_Type *base)
+{
+    if(base == NULL)
+    {
+        return;
+    }
+
+    LPSPI_FlushFifo(base, true, true);
+    LPSPI_ClearStatusFlags(base,
+                           kLPSPI_TransmitErrorFlag |
+                           kLPSPI_ReceiveErrorFlag |
+                           kLPSPI_TransferCompleteFlag |
+                           kLPSPI_FrameCompleteFlag |
+                           kLPSPI_WordCompleteFlag);
+}
+
 bool bSPI_PeripheralSendResponse(sT_SPIPreipheralResponse_t stTSlaveResponse)
 {
     if(eGetSPIMode(stTSlaveResponse.eModuleId) != eSPI_Mode_Peripheral)
@@ -429,6 +501,7 @@ bool bSPI_PeripheralSendResponse(sT_SPIPreipheralResponse_t stTSlaveResponse)
         FHALT("Slave cannot Transmit");
         return false;
     }
+    vSet_SPISlave_HWReadyState(stTSlaveResponse.eModuleId, eSPISlave_Busy);
 
     lpspi_transfer_t stTransfer = {0};
     sT_SPIRxBuff_t *pstRxBuffer = pstGet_RxBuffer_byState(pstDevConfig->pstRxBuffHead, eBuffer_Filling);
@@ -437,6 +510,7 @@ bool bSPI_PeripheralSendResponse(sT_SPIPreipheralResponse_t stTSlaveResponse)
     {
         FHALT("Cannot arm slave TX while RX buffer is filling");
         vClear_SlaveTransferFlag(pstSlaveControl);
+        vSet_SPISlave_HWReadyState(stTSlaveResponse.eModuleId, eSPISlave_Busy);
         return false;
     }
     
@@ -444,6 +518,8 @@ bool bSPI_PeripheralSendResponse(sT_SPIPreipheralResponse_t stTSlaveResponse)
     stTransfer.txData = stTSlaveResponse.puiTxData;
     stTransfer.dataSize = stTSlaveResponse.uiLen;
     stTransfer.configFlags = 0U;
+
+    vSet_SlaveTransferType(stTSlaveResponse.eModuleId, eTransfer_Tx_Only);
 
     status_t status = LPSPI_SlaveTransferNonBlocking(pstSPIModule->pstSPIDevice,
                                                      &pstSlaveControl->stSlaveHandle,
@@ -456,11 +532,153 @@ bool bSPI_PeripheralSendResponse(sT_SPIPreipheralResponse_t stTSlaveResponse)
             FHALT("Slave HW Preperation failed for Callback");
         }
         vClear_SlaveTransferFlag(pstSlaveControl);
+        vSet_SPISlave_HWReadyState(stTSlaveResponse.eModuleId, eSPISlave_Busy);
         return false;
     }
 
-    vSet_SlaveTransferType(stTSlaveResponse.eModuleId, eTransfer_Tx_Only);
+    vSet_SPISlave_HWReadyState(stTSlaveResponse.eModuleId, eSPISlave_Ready);
+
+#ifdef DEBUG_SPI_SLAVE_TX
+    uint32_t uiTcr = LPSPI_GetTcr(pstSPIModule->pstSPIDevice);
+    uint32_t uiCfgr1 = pstSPIModule->pstSPIDevice->CFGR1;
+    debug_SlaveTx_Print("Slave TX armed: TX=%p Len=%u TCR=0x%08x CFGR1=0x%08x TXMSK=%u RXMSK=%u PCS=%u PINCFG=%u OUTCFG=%u TXFIFO=%u RXFIFO=%u\n\r",
+                        stTransfer.txData,
+                        (unsigned int)stTransfer.dataSize,
+                        (unsigned int)uiTcr,
+                        (unsigned int)uiCfgr1,
+                        (unsigned int)((uiTcr & LPSPI_TCR_TXMSK_MASK) >> LPSPI_TCR_TXMSK_SHIFT),
+                        (unsigned int)((uiTcr & LPSPI_TCR_RXMSK_MASK) >> LPSPI_TCR_RXMSK_SHIFT),
+                        (unsigned int)((uiTcr & LPSPI_TCR_PCS_MASK) >> LPSPI_TCR_PCS_SHIFT),
+                        (unsigned int)((uiCfgr1 & LPSPI_CFGR1_PINCFG_MASK) >> LPSPI_CFGR1_PINCFG_SHIFT),
+                        (unsigned int)((uiCfgr1 & LPSPI_CFGR1_OUTCFG_MASK) >> LPSPI_CFGR1_OUTCFG_SHIFT),
+                        (unsigned int)LPSPI_GetTxFifoCount(pstSPIModule->pstSPIDevice),
+                        (unsigned int)LPSPI_GetRxFifoCount(pstSPIModule->pstSPIDevice));
+#endif
+
     return true;        
+}
+
+static inline void vSet_SPISlave_HWReadyState(eSPIModule_t eModuleId, eHWReady_State_t eState)
+{
+    if(eModuleId >= eNUMBER_OF_SPI_MODULEs)
+        return;
+
+    sT_SPIModuleConfig_t *pstSPIModule = &staSPIModule[eModuleId];
+    sT_HWReadyPin_Ctrl *pstHWRdyCtrl = &pstSPIModule->stTSPIDevCtrl.st_DevCtrlMode.stTSlaveCtrl.stTHWRdyCtrl;
+    if(!pstHWRdyCtrl->bHWReady_Used || pstHWRdyCtrl->pstGPIOStruct == NULL)
+        return;
+    
+    switch(pstHWRdyCtrl->eHWRdy_PinState)
+    {
+        case eSPI_Rdy_Active_Low:
+            if(eState == eSPISlave_Busy)
+                gpio_pin_set_raw(pstHWRdyCtrl->pstGPIOStruct->port, pstHWRdyCtrl->pstGPIOStruct->pin, 1);
+            else if(eState == eSPISlave_Ready)
+                gpio_pin_set_raw(pstHWRdyCtrl->pstGPIOStruct->port, pstHWRdyCtrl->pstGPIOStruct->pin, 0);
+            else
+                return;
+            break;
+        case eSPI_Rdy_Active_High:
+            if(eState == eSPISlave_Busy)
+                gpio_pin_set_raw(pstHWRdyCtrl->pstGPIOStruct->port, pstHWRdyCtrl->pstGPIOStruct->pin, 0);
+            else if(eState == eSPISlave_Ready)
+                gpio_pin_set_raw(pstHWRdyCtrl->pstGPIOStruct->port, pstHWRdyCtrl->pstGPIOStruct->pin, 1);
+            else
+                return;
+            break;
+        default:
+            break;
+    }
+}
+
+static bool bInit_SPISlave_HWRDY_Control(sT_SPIConfig_t *pstSPIConfig)
+{
+    int ret;
+
+    eSPIModule_t eModuleId = pstSPIConfig->eModule;
+    sT_SPIModuleConfig_t *pstSPIModule = &staSPIModule[eModuleId];
+
+    switch(eGetSPIMode(eModuleId))
+    {
+        case eSPI_Mode_Peripheral:
+            break;
+        case eSPI_Mode_Controller:
+        default:
+            FHALT("SPI Master Mode, SPI API has no control over the HW Ready Pin");
+            return false;
+    }
+
+    sT_HWReadyPin_Ctrl *pstHWRdyCtrl = &pstSPIModule->stTSPIDevCtrl.st_DevCtrlMode.stTSlaveCtrl.stTHWRdyCtrl;
+    pstHWRdyCtrl->bHWReady_Used = false;
+    pstHWRdyCtrl->eHWRdy_PinState = pstSPIConfig->stTSPIModeCtrl.spi_mode.stTConfig_Peripheral.eHWRdy_PinState;
+    pstHWRdyCtrl->pstGPIOStruct = NULL;
+
+    switch(eModuleId)
+    {
+        case eSPI_0:
+#ifdef SPI0_SLAVE_HWRDY_PIN_AVAILABLE
+            pstHWRdyCtrl->pstGPIOStruct = &stSPI0SlaveRdyGPIO;
+#endif
+            break;
+        case eSPI_1:
+#ifdef SPI1_SLAVE_HWRDY_PIN_AVAILABLE
+            pstHWRdyCtrl->pstGPIOStruct = &stSPI1SlaveRdyGPIO;
+#endif
+            break;
+        default:
+            return false;
+    }
+
+    if(pstHWRdyCtrl->pstGPIOStruct == NULL)
+    {
+        return true;
+    }
+
+    if(!gpio_is_ready_dt(pstHWRdyCtrl->pstGPIOStruct))
+    {
+        FHALT("HW Ready GPIO device is not ready");
+        return false;
+    }
+
+    switch(pstHWRdyCtrl->eHWRdy_PinState)
+    {
+        case eSPI_Rdy_Active_Low:
+            ret = gpio_pin_configure_dt(pstHWRdyCtrl->pstGPIOStruct, GPIO_OUTPUT);
+            if(ret != 0)
+            {
+                FHALT("GPIO for HW Ready Counld not be configured. Failed with error : %d", ret);
+                return false;
+            }
+            ret = gpio_pin_set_raw(pstHWRdyCtrl->pstGPIOStruct->port, pstHWRdyCtrl->pstGPIOStruct->pin, 1);
+            if(ret != 0)
+            {
+                FHALT("GPIO for HW Ready Pin Counld not be set. Failed with error : %d", ret);
+                return false;                
+            }
+            break;
+        case eSPI_Rdy_Active_High:
+            ret = gpio_pin_configure_dt(pstHWRdyCtrl->pstGPIOStruct, GPIO_OUTPUT);
+            if(ret != 0)
+            {
+                FHALT("GPIO for HW Ready Counld not be configured. Failed with error : %d", ret);
+                return false;
+            }
+            ret = gpio_pin_set_raw(pstHWRdyCtrl->pstGPIOStruct->port, pstHWRdyCtrl->pstGPIOStruct->pin, 0);
+            if(ret != 0)
+            {
+                FHALT("GPIO for HW Ready Pin Counld not be set. Failed with error : %d", ret);
+                return false;                
+            }
+            break;
+        default:
+            FHALT("Invalid HW Ready Pin Configuration : %d", 
+                  pstHWRdyCtrl->eHWRdy_PinState);
+            return false;
+        
+    }
+
+    pstHWRdyCtrl->bHWReady_Used = true;
+    return true;
 }
 
 static bool bArm_SlaveRx_ForCallback(sT_SPIModuleConfig_t *pstSPIModule,
@@ -472,6 +690,7 @@ static bool bArm_SlaveRx_ForCallback(sT_SPIModuleConfig_t *pstSPIModule,
     {
         return true;
     }
+    vSet_SPISlave_HWReadyState(pstSPIModule->eModuleId, eSPISlave_Busy);
 
     sT_SPIRxBuff_t *pstRxBuffer = pstGet_RxBuffer_byState(pstDevConfig->pstRxBuffHead, eBuffer_Free);
     if(pstRxBuffer == NULL)
@@ -491,15 +710,20 @@ static bool bArm_SlaveRx_ForCallback(sT_SPIModuleConfig_t *pstSPIModule,
         .configFlags = 0U
     };
 
+    vSet_SlaveTransferType(pstSPIModule->eModuleId, eTransfer_Rx_Only);
+
     status_t status = LPSPI_SlaveTransferNonBlocking(pstSPIModule->pstSPIDevice,
                                                      &pstSlaveControl->stSlaveHandle,
                                                      &stTransfer);
     if(status != kStatus_Success)
     {
+        vClear_SlaveTransferFlag(pstSlaveControl);
         vSet_RxBufferState(pstRxBuffer->uiBuffId, eBuffer_Free, pstDevConfig->pstRxBuffHead);
+        vSet_SPISlave_HWReadyState(pstSPIModule->eModuleId, eSPISlave_Busy);
         FHALT("Slave HW Preperation failed for Callback");
         return false;
     }
+    vSet_SPISlave_HWReadyState(pstSPIModule->eModuleId, eSPISlave_Ready);
     return true;
 }
 
@@ -539,15 +763,20 @@ static bool bApplyPolicy_DropNewest(sT_SPIModuleConfig_t *pstSPIModule,
     stTransfer.dataSize = pstCallbackConfig->uiBuffSize;
     stTransfer.configFlags = 0U;
 
+    vSet_SlaveTransferType(pstSPIModule->eModuleId, eTransfer_Rx_Only);
+    
     status_t status = LPSPI_SlaveTransferNonBlocking(pstSPIModule->pstSPIDevice,
                                                      &pstSlaveControl->stSlaveHandle,
                                                      &stTransfer);
     if(status != kStatus_Success)
     {
+        vClear_SlaveTransferFlag(pstSlaveControl);
+        vSet_SPISlave_HWReadyState(pstSPIModule->eModuleId, eSPISlave_Busy);
         FHALT("Slave HW Preperation failed for Callback");
         vSet_RxEventType(pstRxOverflowCtrl, eSPI_PeripheralEvent_RxOverflow);
         return false;
     }
+    vSet_SPISlave_HWReadyState(pstSPIModule->eModuleId, eSPISlave_Ready);
     vSet_RxEventType(pstRxOverflowCtrl, eSPI_PeripheralEvent_RxOverflow);
     vSet_RxBufferType(pstCallbackConfig, eSPI_RxTarget_DrainBuffer);
     return true;
@@ -823,6 +1052,7 @@ static void vDeinit_Slave_InterruptConfigurations( sT_SPIModuleConfig_t *pstSPIM
 
     vDisable_SPI_IRQ(pstSPIModule->eModuleId);    
     LPSPI_SlaveTransferAbort(pstSPIModule->pstSPIDevice, &pstSlaveCtrl->stSlaveHandle);
+    vClear_SlaveTransferFlag(pstSlaveCtrl);
     
     if(pstSlaveCtrl->bIsHWMatchRequested)
     {
@@ -832,6 +1062,7 @@ static void vDeinit_Slave_InterruptConfigurations( sT_SPIModuleConfig_t *pstSPIM
     }
 
     LPSPI_DisableInterrupts(pstSPIModule->pstSPIDevice, kLPSPI_AllInterruptEnable);
+    LPSPI_FlushFifo(pstSPIModule->pstSPIDevice, true, true);
     LPSPI_ClearStatusFlags(
         pstSPIModule->pstSPIDevice,
         kLPSPI_DataMatchFlag |
@@ -1080,8 +1311,32 @@ static void vSPI_PeripheralModeCallback(LPSPI_Type *base,
     eTransfer_Type_t eType = eGet_SlaveTransferType(pstSPIModule->eModuleId);
     
     vClear_SlaveTransferFlag(pstPeriphreralConfig);
+    vSet_SPISlave_HWReadyState(pstSPIModule->eModuleId, eSPISlave_Busy);
 
     eSPI_TransferResult_t eResult = (status == kStatus_Success) ? eTransfer_Success : eTransfer_Failed;
+    if(status != kStatus_Success)
+    {
+#ifdef DEBUG_SPI_SLAVE_IRQ
+        uint32_t uiSr = base->SR;
+        debug_SlaveIRQ_Print("Slave IRQ error: status=%d SR=0x%08x TEF=%u REF=%u MBF=%u TXFIFO=%u RXFIFO=%u txRem=%u rxRem=%u wrRem=%u rdRem=%u errCnt=%u TCR=0x%08x CFGR1=0x%08x\n\r",
+                                (int)status,
+                                (unsigned int)uiSr,
+                                (unsigned int)((uiSr & kLPSPI_TransmitErrorFlag) != 0U),
+                                (unsigned int)((uiSr & kLPSPI_ReceiveErrorFlag) != 0U),
+                                (unsigned int)((uiSr & kLPSPI_ModuleBusyFlag) != 0U),
+                                (unsigned int)LPSPI_GetTxFifoCount(base),
+                                (unsigned int)LPSPI_GetRxFifoCount(base),
+                                (unsigned int)handle->txRemainingByteCount,
+                                (unsigned int)handle->rxRemainingByteCount,
+                                (unsigned int)handle->writeRegRemainingTimes,
+                                (unsigned int)handle->readRegRemainingTimes,
+                                (unsigned int)handle->errorCount,
+                                (unsigned int)LPSPI_GetTcr(base),
+                                (unsigned int)base->CFGR1);
+#endif
+        vRecover_SlaveHW_AfterError(base);
+    }
+
     if(eType == eTransfer_Tx_Only)
     {
         vNotify_SlaveTxComplete(pstSPIModule, pstPeriphreralConfig, eResult);
@@ -1160,9 +1415,9 @@ static void vNotify_SlaveTxComplete(sT_SPIModuleConfig_t *pstSPIModule, sT_SPI_S
     };
 
     eSPI_PeripheralEvent_Type_t eEvent = (eResult == eTransfer_Success)? eSPI_PeripheralEvent_TxCompleted: eSPI_PeripheralEvent_TxError;
+    bool bArmResult = bArm_SlaveRx_ForCallback(pstSPIModule, pstSlaveCtrl);
     
-    pstCallbackConf->pvPeripheral_UserCallBack(eEvent, eResult, stTBuffData, true);
-    bArm_SlaveRx_ForCallback(pstSPIModule, pstSlaveCtrl);
+    pstCallbackConf->pvPeripheral_UserCallBack(eEvent, eResult, stTBuffData, bArmResult);
 }
 
 static inline void vNotify_Via_Callback(eSPIModule_t eModuleId, 

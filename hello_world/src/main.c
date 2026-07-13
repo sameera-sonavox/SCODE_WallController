@@ -5,7 +5,11 @@
  */
 
 #include <stdio.h>
+#include <zephyr/device.h>
 #include <zephyr/dfu/mcuboot.h>
+#include <zephyr/drivers/gpio.h>
+#include "fsl_clock.h"
+#include "fsl_port.h"
 #include "Lib/CPULoad/NXP_CPU_LoadMon.h"
 #include "GPIO/Amp_GPIO.h"
 #include "Lib/PWM/NXP_PWM_API.h"
@@ -18,14 +22,20 @@
 #include "SPI_Controller/SPI_Controller_Slave.h"
 
 /* #define USE_SPI_MASTER */
+/* #define DEBUG_TOGGLE_LPSPI0_SDO_AS_GPIO */
 
 uint8_t uiaCMDData[8] = {0x34, 0x22, 0x55, 0xEE, 0x11, 0x22, 0x33, 0x44};
 
 void vInit_Amp( void );
 void vConfigure_DAC( void );
 
+
 int main(void)
 {
+#if defined(DEBUG_TOGGLE_LPSPI0_SDO_AS_GPIO)
+	vDebug_Toggle_LPSPI0_SDO_Pin();
+#endif
+
 	vInit_Amp();
 	vConfirm_MCUbootImage();
 	printk("FW Img Booting over UART....\n\r");
@@ -40,10 +50,10 @@ int main(void)
 	while (1)
 	{
 		#ifdef USE_SPI_MASTER
-			k_msleep(10);
 			bSPI_SendData(eSPI_Slave_0, uiaCMDData, 8);
-			k_msleep(10);
+			k_msleep(2);
 			bSPI_ReceiveData(eSPI_Slave_0, NULL, 0, 8);
+			k_msleep(50);
 		#endif
 	}
 	
@@ -55,7 +65,7 @@ void vInit_Amp( void )
 	vInit_Amp_GPIO();
 	vInit_CANController();
  	vInit_UART_CAN_Bridge();
-	//vConfigure_DAC();
+	vConfigure_DAC();
 	//vInitialize_ADCModule();
 
 	#ifdef USE_SPI_MASTER
@@ -70,7 +80,7 @@ void vInit_Amp( void )
 
 void vConfigure_DAC( void )
 {
-/* 	sT_DAC_Config_t stDACConfig = {0};
+	sT_DAC_Config_t stDACConfig = {0};
 	stDACConfig.eRefVoltSrc = eDAC_RefVoltSrc_VREF_VDD_ANA; // Adjust as needed based on actual hardware configuration
 	stDACConfig.stOutputBuffConfig.bEnableOutputBuffer = true;
 	stDACConfig.stOutputBuffConfig.eOutputBuffLowPowerMode = eDAC_OutputBuff_Higher_LowPowerMode;
@@ -81,9 +91,9 @@ void vConfigure_DAC( void )
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiPeakVoltage_mV = 1000;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiDCOffset_mV = 1010;
 	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.uiFrequencyHz = 1000;
-	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.pvErrorCallback = NULL; */
+	stDACConfig.stOutputConfig.uOutputConfig.stWaveFormOutput.pvErrorCallback = NULL;
 
-	//vDAC_Init(&stDACConfig);
+	vDAC_Init(&stDACConfig);
 	//bDAC_UpdateOutputValue(2500U);
 	// Configure other fields of stDACConfig as needed
 }

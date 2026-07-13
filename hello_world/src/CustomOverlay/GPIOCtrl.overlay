@@ -10,7 +10,18 @@
 		};
 	};
 
+	spi_ready_pins {
+		compatible = "gpio-leds";
+
+		spi0_slave_hw_rdy_pin: spi0_slave_hw_rdy_pin {
+			gpios = <&gpio1 15 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP | KINETIS_GPIO_DS_ALT)>;
+			label = "SPI0 HWReady";
+		};
+
+	};
+
 	aliases {
 		debug-pin-0 = &debug_pin;
+		spi0-slave-hw-rdy = &spi0_slave_hw_rdy_pin;
 	};
 };
