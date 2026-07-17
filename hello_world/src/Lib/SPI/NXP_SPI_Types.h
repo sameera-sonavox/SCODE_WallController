@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdatomic.h>
 #include <stdlib.h>
+#include <zephyr/drivers/gpio.h>
 #include "NXP_SPI_ProjDef.h"
 
 typedef enum
@@ -173,6 +174,23 @@ typedef enum
     eNUMBER_OF_SPI_HW_RDY_STATEs
 } eSPI_HWRDY_PinState_t;
 
+typedef enum
+{
+    eSlave_RdyState_Idle = 0,
+    eSlave_RdyState_WaitingForReady,
+    eSlave_RdyState_Ready,
+    eSlave_RdyState_Timeout,
+    eNUMBER_OF_SLAVE_STATEs
+} eSPI_ExternalSlave_State_t;
+
+typedef enum
+{
+    eSPI_Buffer_None,
+    eSPI_Buffer_Static,
+    eSPI_Buffer_Dynamic_And_Free_ByCaller,
+    eNUMBER_OF_BUFFER_MANAGEMENT_TYPEs
+} eSPIBuffer_ReleaseType_t;
+
 typedef struct
 {
     uint8_t *puiRxData;
@@ -205,6 +223,16 @@ typedef struct
     _Atomic eSPI_PeripheralEvent_Type_t eEventType;
 } sT_SPI_RxOverflowCtrl_t;
 
+typedef struct
+{
+    bool bHWReady_Used;//Set this if slave use HW Ready Signal
+    _Atomic eSPI_ExternalSlave_State_t eSlaveState;//API asynchronously set this state internally. Once configured, the User application
+                                                   //must not touch this. User can get the current status of the slave using 'eGetSPI_MasterModeExt_SlaveState'.
+    int64_t iReadyWaitStartTime;
+    eSPI_HWRDY_PinState_t eHWRdy_PinState;//Defines the active state for the HW ready pin
+    const struct gpio_dt_spec *pstGPIOStruct;//Assign this properly, so the API can update the slave status automatically
+} sT_HWReadyPin_Ctrl;
+
 typedef void (*SPI_Callback_t)(eSPI_Slave_Id_t eSlaveId, eSPI_TransferResult_t eResult);
 
 /**
@@ -233,6 +261,7 @@ typedef struct
     uint32_t uiDelay_Between_BlockTx_ns;
     uint32_t uiDelay_LastSCK_To_CS_Deassert_ns;
     uint32_t uiDelay_CS_Assert_To_SCK_ns;
+    sT_HWReadyPin_Ctrl stTHWReadyCtrl;//Use this struct if the slave is providing HW Ready capability
     SPI_Callback_t pvSPI_CallBack; 
 } sT_SPISlave_Config_t;
 
@@ -247,15 +276,17 @@ typedef struct
     eSPIModule_t eModuleId;
     eSPI_Slave_Id_t eSlaveId;
     eTransfer_Type_t eType;
+
     uint8_t *puiTxData;
-    size_t uiTxDataLen;
+    size_t uiTxDataLen;    
+    eSPIBuffer_ReleaseType_t eTxBufReleaseType;//API does not release any memory. You can use these values for validation at the user application
+                                                //and differntiating between static memory allocation vs dynamic memory allocation and free accordingly
     uint8_t *volatile puiRxData;
     size_t uiRxDataLen;
     size_t uiRxMaskLen;
     _Atomic bool bIsTransferBusy;
-    bool bTxAllocatedInternally;//the controller function that call the API Fn 'bSPI_Transfer_InMasterMode' must set these flags and free the memories accordingly
-    bool bRxAllocatedInternally;//Ex: 'bTxAllocatedInternally == true' -> then the controller must free the memory. The SPI API does not take 
-                                // the responsibility of freeing any memory passed to it
+    eSPIBuffer_ReleaseType_t eRxBufReleaseType;//Same as with 'eTxBufReleaseType'
+
     bool bShould_CS_Asserted_For_EntireTransfer;//This tell the HW that CS should be asserted until all the specified bytes are transmitted.
                                                 //If set to 'false', then CS will be toggled for each frame transfer
 } sT_SPIMasterTransfer_t;

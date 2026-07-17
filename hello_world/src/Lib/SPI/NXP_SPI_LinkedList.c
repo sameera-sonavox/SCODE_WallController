@@ -6,6 +6,7 @@
 #include <string.h>
 #include "NXP_SPI_LinkedList.h"
 #include "NXP_SPI_API.h"
+#include "NXP_SPI_ConfigValidation.h"
 #include "../GenericMacro.h"
 
 sT_SPISlave_Control_t* pstAllocate_MemoryForNode( void );
@@ -86,6 +87,7 @@ void vRelease_SPISLaves(sT_SPISlave_Control_t **ppstHead)
     while(pstSlave != NULL)
     {
         sT_SPISlave_Control_t *pstTemp = pstSlave->pstNextSlave;
+        vUnregister_SlaveDevice(pstSlave->stTConfigs.eSlaveId);
         free(pstSlave);
         pstSlave = pstTemp;
     }

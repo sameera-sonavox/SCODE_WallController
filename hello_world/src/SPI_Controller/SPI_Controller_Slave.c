@@ -74,7 +74,6 @@ static void vSPI_SlaveCallback(eSPI_PeripheralEvent_Type_t eEventType,
 
     if(eEventType == eSPI_PeripheralEvent_TxCompleted)
     {
-        //printf("Slave TX completed\n\r");
         return;
     }
 

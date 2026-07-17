@@ -20,6 +20,7 @@
 #include "ADC_Controller/ADC_Controller.h"
 #include "SPI_Controller/SPI_Controller_Master.h"
 #include "SPI_Controller/SPI_Controller_Slave.h"
+#include "Lib/SPI/NXP_SPI_API.h"
 
 /* #define USE_SPI_MASTER */
 /* #define DEBUG_TOGGLE_LPSPI0_SDO_AS_GPIO */
@@ -36,6 +37,9 @@ int main(void)
 	vDebug_Toggle_LPSPI0_SDO_Pin();
 #endif
 
+	bool bIsSent = false;
+	bool bisReceived = false, bDeinited = false;
+	uint8_t uiCount = 0;
 	vInit_Amp();
 	vConfirm_MCUbootImage();
 	printk("FW Img Booting over UART....\n\r");
@@ -50,10 +54,51 @@ int main(void)
 	while (1)
 	{
 		#ifdef USE_SPI_MASTER
-			bSPI_SendData(eSPI_Slave_0, uiaCMDData, 8);
-			k_msleep(2);
-			bSPI_ReceiveData(eSPI_Slave_0, NULL, 0, 8);
-			k_msleep(50);
+			if(!bIsSent)
+			{
+				if(!bSPI_SendData(eSPI_Slave_0, uiaCMDData, 8))
+				{
+					k_msleep(1);
+					continue;
+				}
+				bIsSent = true;
+				k_msleep(1);
+			}
+			if(bIsSent && !bisReceived)
+			{
+				if(!bSPI_ReceiveData(eSPI_Slave_0, NULL, 0, 8))
+				{
+					k_msleep(1);
+					continue;
+				}
+				bisReceived = true;
+			}
+			k_msleep(1);
+			bIsSent = false; bisReceived = false;
+		#else
+			k_msleep(500);
+			if(uiCount < 12 && !bDeinited)
+			{
+				uiCount++;
+			}
+			
+			if(!bDeinited)
+			{
+				if(!bDeInit_SPI(eSPI_0))
+				{
+					k_msleep(100);
+					continue;
+				}
+
+				uiCount = 0;
+				bDeinited = true;
+				k_msleep(2000);
+			}
+			else{
+				vConfigure_SPISLave();
+				bDeinited = false;
+				k_msleep(100);
+			}
 		#endif
 	}
 	

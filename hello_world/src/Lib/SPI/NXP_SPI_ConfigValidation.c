@@ -8,8 +8,18 @@
 #include "../GenericMacro.h"
 #include "NXP_SPI_ProjDef.h"
 
+typedef struct
+{
+    bool bIsRegistered;
+    eSPIModule_t eOwnerModule;
+} sT_SPISlaveRoute_t;
+
+static sT_SPISlaveRoute_t staSlaveRoute[eNUMBER_OF_SPI_SLAVEs];
+
 static bool bValidate_SPI_Controller_Configs( sT_SPIConfig_t *pstSPIConfig );
 static bool bValidate_SPIBusWidth_Configurations(sT_SPISlave_Control_t *pstSlaveCtrl);
+static bool bValidate_SPISlave_HWReadyControl(sT_HWReadyPin_Ctrl *pstTHWReadyCtrl);
+static bool bTryRegister_ExtSPISlave(eSPIModule_t eModuleId, eSPI_Slave_Id_t eSlaveId);
 
 static bool bValidate_SPI_Peripheral_Configs( sT_SPIConfig_t *pstSPIConfig );
 static bool bValidate_SPISlave_DataConfigPath(sT_SPISlave_RxControl_t *pstSlaveDataPath);
@@ -198,6 +208,8 @@ static bool bValidate_CallbackSettings(sT_Callback_Ctrl *pstCallBackSettings)
 
 static bool bValidate_SPI_Controller_Configs( sT_SPIConfig_t *pstSPIConfig )
 {
+    uint8_t uiSlaveCount = 0;
+
     sT_SPISlave_Control_t *pstSlaveCtrl = pstSPIConfig->stTSPIModeCtrl.spi_mode.pstSPISlaveHead_Ctrl;
     if(pstSlaveCtrl == NULL)
     {
@@ -226,7 +238,6 @@ static bool bValidate_SPI_Controller_Configs( sT_SPIConfig_t *pstSPIConfig )
             FHALT("Invalid Id for Slave : %d", pstSlaveConfig->eSlaveId);
             return false;
         }
-
         if(pstSlaveConfig->eEndianFormat >= eNUMBER_OF_SPIWORD_TXRX_TYPEs)
         {
             pstSPIConfig->bIsOk = false;
@@ -270,12 +281,99 @@ static bool bValidate_SPI_Controller_Configs( sT_SPIConfig_t *pstSPIConfig )
             return false;
         }
 
+        if(!bValidate_SPISlave_HWReadyControl(&pstSlaveConfig->stTHWReadyCtrl))
+        {
+            pstSPIConfig->bIsOk = false;
+            return false;
+        }
+        if(!bTryRegister_ExtSPISlave(pstSPIConfig->eModule, pstSlaveConfig->eSlaveId))
+        {
+            pstSPIConfig->bIsOk = false;
+            return false;            
+        }
+
+        uiSlaveCount++;
         pstTemp = pstTemp->pstNextSlave;
     }
 
     if(!bValidate_SPIBusWidth_Configurations(pstSlaveCtrl))
         return false;
 
+    return true;
+}
+
+static bool bTryRegister_ExtSPISlave(eSPIModule_t eModuleId, eSPI_Slave_Id_t eSlaveId)
+{
+    for(uint8_t i = 0; i < eNUMBER_OF_SPI_SLAVEs; i++)
+    {
+        if(staSlaveRoute[i].bIsRegistered && i == eSlaveId)
+        {
+            FHALT("The Slave with Id: %d, is already in use under SPIModule[%d]", eSlaveId, staSlaveRoute[i].eOwnerModule);
+            return false;
+        }
+    }
+
+    staSlaveRoute[eSlaveId].bIsRegistered = true;
+    staSlaveRoute[eSlaveId].eOwnerModule = eModuleId;
+    return true;
+}
+
+void vUnregister_SlaveDevice(eSPI_Slave_Id_t eSlaveId)
+{
+    if(eSlaveId >= eNUMBER_OF_SPI_SLAVEs)
+    {
+        FHALT("Invalid Slave Id: %d", eSlaveId);
+        return;
+    }
+
+    staSlaveRoute[eSlaveId].bIsRegistered = false;
+    staSlaveRoute[eSlaveId].eOwnerModule = eNUMBER_OF_SPI_MODULEs;
+}
+
+bool bIsTransfer_OnValidModule(sT_SPIMasterTransfer_t *pstTTransfer)
+{
+    if(pstTTransfer == NULL)
+    {
+        FHALT("Null Pointer reference");
+        return false;
+    }
+    if(pstTTransfer->eSlaveId >= eNUMBER_OF_SPI_SLAVEs)
+    {
+        FHALT("Invalid Slave Id : %d", pstTTransfer->eSlaveId);
+        return false;        
+    }
+    if (!staSlaveRoute[pstTTransfer->eSlaveId].bIsRegistered)
+    {
+        FHALT("Slave[%d] is not registered", pstTTransfer->eSlaveId);
+        return false;
+    }
+    if(staSlaveRoute[pstTTransfer->eSlaveId].eOwnerModule != pstTTransfer->eModuleId)
+    {
+        FHALT("Transfer request on Invalid SPI Bus[%d] (Required SPIModule: %d)", 
+              pstTTransfer->eModuleId,
+              staSlaveRoute[pstTTransfer->eSlaveId].eOwnerModule);
+        return false;        
+    }
+    return true;
+}
+
+static bool bValidate_SPISlave_HWReadyControl(sT_HWReadyPin_Ctrl *pstTHWReadyCtrl)
+{
+    if(!pstTHWReadyCtrl->bHWReady_Used && pstTHWReadyCtrl->pstGPIOStruct != NULL)
+    {
+        FHALT("HW Ready Pin not used, but defined a GPIO control, which is not valid.");
+        return false;
+    }
+    if(pstTHWReadyCtrl->bHWReady_Used && pstTHWReadyCtrl->pstGPIOStruct == NULL)
+    {
+        FHALT("HW Ready Pin is used, but not defined a GPIO control, which is not valid.");
+        return false;
+    }
+    if(pstTHWReadyCtrl->eHWRdy_PinState >= eNUMBER_OF_SPI_HW_RDY_STATEs)
+    {
+        FHALT("HW Ready Pin state is not valid : %d", pstTHWReadyCtrl->eHWRdy_PinState);
+        return false;
+    }
     return true;
 }
 

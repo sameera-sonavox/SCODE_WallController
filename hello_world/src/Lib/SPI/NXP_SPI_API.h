@@ -10,9 +10,12 @@
 #include "NXP_SPI_LinkedList.h"
 
 #define DEBUG_SPI_DEV_INIT
-/* #define DEBUG_SPI_SLAVE_TX
-#define DEBUG_SPI_SLAVE_RX
-#define DEBUG_SPI_SLAVE_IRQ */
+
+#define SPI_SLAVE_RDYMONITOR_THREAD_STACK_SIZE_BYTEs        512
+#define SPI_SLAVE_RDYMONITOR_THREAD_PRIORITY                2
+#define SPI_RDY_MONITOR_PERIOD_ms                           1
+#define SPI_RDY_TIMEOUT_PERIOD_ms                           15
+#define SPI_MASTER_RESOURCE_LOCK_TIMEOUT_ms                 10
 
 /**
  * @brief Initializes the requested SPI module. User should provide all the slave configurations required inside 'sT_SPIConfig_t' 
@@ -23,9 +26,23 @@
  */
 extern void vInit_SPI( sT_SPIConfig_t *pstSPIConfig );
 extern bool bDeInit_SPI( eSPIModule_t eSPIModule );
+
+/**
+ * @brief This function will initiate the intended transfer on the requested SPI bus. The API rquires the user to keep the slaves in the global level,
+ * since 'sT_SPIMasterTransfer_t' contains the SPI module id. So it acts as the mapper between slave and SPI module.
+ * 
+ * @brief This function will initiate a transfer on the defined SPI bus with the requested slave. Always checks the return value of the transfer.
+ * @param 'stTTransfer: Refer to the 'sT_SPIMasterTransfer_t' inside NXP_SPI_Types.h'
+ * @return 'True': Transfer is successfull
+ * @return 'False': Transfer is not successful. This can be due to several reasons. In such a situation, always checks the slave status using 'eGetSPI_MasterModeExt_SlaveState'.
+ *                  If the state is 'eSlave_RdyState_Timeout', then it means the slave has not come to active state within the time defined by 'SPI_RDY_TIMEOUT_PERIOD_ms'.
+ * @note  The user application is asynchronously notified by the API with the transfer result through the respective Slave Callback function.
+ *        If the result is 'eTransfer_Timeout', then it means Slave is not in Ready/Active state. Then the next step has to be decided by the user, based on the application requirement.
+ */
 extern bool bSPI_Transfer_InMasterMode(sT_SPIMasterTransfer_t stTTransfer);
-extern const sT_SPISlave_Config_t *pstGetSlaveConfig(eSPIModule_t eModuleId, eSPI_Slave_Id_t eSlaveId);
-//extern bool bSPI_Busy(eSPIModule_t eModuleId);
+
+extern eSPI_ExternalSlave_State_t eGetSPI_MasterModeExt_SlaveState(eSPIModule_t eModuleId, eSPI_Slave_Id_t eSlaveId);
+extern void vReset_SPIMasterMode_ExtSlaveState(eSPIModule_t eModuleId, eSPI_Slave_Id_t eSlaveId);
 
 /**
  * @brief Releases the 'Ready' buffer passed by the API to Application, when API is configured in Callback Mode.

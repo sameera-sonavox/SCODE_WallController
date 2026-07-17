@@ -7,6 +7,7 @@ void SPI_Slave_0_Callback(eSPI_Slave_Id_t eSlaveId, eSPI_TransferResult_t eResul
 void vFree_SPI_TansferBuffers(sT_SPIMasterTransfer_t *pstTTransfer);
 static inline bool bTry_ClaimSlave(eSPI_Slave_Id_t eSlaveId);
 static inline void vClear_SlaveBusyFLag(eSPI_Slave_Id_t eSlaveId);
+bool bCaller_Should_Release_Buffer(eSPIBuffer_ReleaseType_t eReleaseType);
 
 void vConfigure_SPI( void )
 {
@@ -32,6 +33,9 @@ void vConfigure_SPI( void )
 	stSlaveConfig.uiDelay_CS_Assert_To_SCK_ns = 100;
 	stSlaveConfig.uiDelay_LastSCK_To_CS_Deassert_ns = 300;
 	stSlaveConfig.pvSPI_CallBack = SPI_Slave_0_Callback;
+	stSlaveConfig.stTHWReadyCtrl.bHWReady_Used = true;
+	stSlaveConfig.stTHWReadyCtrl.eHWRdy_PinState = eSPI_Rdy_Active_High;
+	stSlaveConfig.stTHWReadyCtrl.pstGPIOStruct = &stSPI0_Slave0_RdyGPIO;
 
 	stSPIConfig.stTSPIModeCtrl.spi_mode.pstSPISlaveHead_Ctrl = pstCreate_SPISlave(&stSlaveConfig);
 
@@ -99,8 +103,8 @@ bool bSPI_SendData(eSPI_Slave_Id_t eSlaveId, uint8_t *puiTxData, uint8_t uiLen)
     pstTTransfer->puiTxData = puiTxData;
     pstTTransfer->uiTxDataLen = uiLen;
 	pstTTransfer->eType = eTransfer_Tx_Only;
-	pstTTransfer->bTxAllocatedInternally = false;
-	pstTTransfer->bRxAllocatedInternally = false;
+	pstTTransfer->eTxBufReleaseType = eSPI_Buffer_Static;
+	pstTTransfer->eRxBufReleaseType = eSPI_Buffer_None;
     
 	bool bRes = bSPI_Transfer_InMasterMode(*pstTTransfer);
 	if(!bRes)
@@ -147,7 +151,7 @@ bool bSPI_ReceiveData(eSPI_Slave_Id_t eSlaveId, uint8_t *puiCMD, uint8_t uiCMDLe
 		memset(pstTTransfer->puiTxData + uiCMDLen, 0, uiRxLen);
 		pstTTransfer->uiRxMaskLen = uiCMDLen;
 		pstTTransfer->eType = eTransfer_Transceive;
-		pstTTransfer->bTxAllocatedInternally = true;
+		pstTTransfer->eTxBufReleaseType = eSPI_Buffer_Dynamic_And_Free_ByCaller;
 	}
 	else
 	{
@@ -155,13 +159,13 @@ bool bSPI_ReceiveData(eSPI_Slave_Id_t eSlaveId, uint8_t *puiCMD, uint8_t uiCMDLe
 		pstTTransfer->uiTxDataLen = uiRxLen;
 		pstTTransfer->uiRxMaskLen = 0;
 		pstTTransfer->eType = eTransfer_Rx_Only;
-		pstTTransfer->bTxAllocatedInternally = false;
+		pstTTransfer->eTxBufReleaseType = eSPI_Buffer_Dynamic_And_Free_ByCaller;
 	}
 
 	uint8_t *puiData = (uint8_t *)malloc(pstTTransfer->uiTxDataLen);
 	if(puiData == NULL)
 	{
-		if(pstTTransfer->bTxAllocatedInternally)
+		if(pstTTransfer->eTxBufReleaseType != eSPI_Buffer_Static)
 		{
 			free(pstTTransfer->puiTxData);
 			pstTTransfer->puiTxData = NULL;
@@ -173,7 +177,7 @@ bool bSPI_ReceiveData(eSPI_Slave_Id_t eSlaveId, uint8_t *puiCMD, uint8_t uiCMDLe
 	
 	pstTTransfer->puiRxData = puiData;
 	pstTTransfer->uiRxDataLen = pstTTransfer->uiTxDataLen;
-	pstTTransfer->bRxAllocatedInternally = true;
+	pstTTransfer->eRxBufReleaseType = eSPI_Buffer_Dynamic_And_Free_ByCaller;
 
 	bool bRes = bSPI_Transfer_InMasterMode(*pstTTransfer);
 	if(bRes)
@@ -228,12 +232,12 @@ void vFree_SPI_TansferBuffers(sT_SPIMasterTransfer_t *pstTTransfer)
 		return;
 	}
 
-	if(pstTTransfer->puiTxData != NULL && pstTTransfer->bTxAllocatedInternally)
+	if(pstTTransfer->puiTxData != NULL && bCaller_Should_Release_Buffer(pstTTransfer->eTxBufReleaseType))
 	{
 		free(pstTTransfer->puiTxData);
 		pstTTransfer->puiTxData = NULL;
 	}
-	if(pstTTransfer->puiRxData != NULL && pstTTransfer->bRxAllocatedInternally)
+	if(pstTTransfer->puiRxData != NULL && bCaller_Should_Release_Buffer(pstTTransfer->eRxBufReleaseType))
 	{
 		free(pstTTransfer->puiRxData);
 		pstTTransfer->puiRxData = NULL;
@@ -242,7 +246,22 @@ void vFree_SPI_TansferBuffers(sT_SPIMasterTransfer_t *pstTTransfer)
 	pstTTransfer->uiTxDataLen = 0;
 	pstTTransfer->uiRxDataLen = 0;
 	pstTTransfer->uiRxMaskLen = 0;
-	pstTTransfer->bTxAllocatedInternally = false;
-	pstTTransfer->bRxAllocatedInternally = false;
+	pstTTransfer->eTxBufReleaseType = eSPI_Buffer_None;
+	pstTTransfer->eRxBufReleaseType = eSPI_Buffer_None;
 	vClear_SlaveBusyFLag(pstTTransfer->eSlaveId);
+}
+
+bool bCaller_Should_Release_Buffer(eSPIBuffer_ReleaseType_t eReleaseType)
+{
+	switch(eReleaseType)
+	{
+    	case eSPI_Buffer_Dynamic_And_Free_ByCaller:
+			return true;
+		case eSPI_Buffer_Static:
+		case eSPI_Buffer_None:
+			return false;
+		default:
+			FHALT("Invalid Buffer release type");
+			return false;
+	}
 }

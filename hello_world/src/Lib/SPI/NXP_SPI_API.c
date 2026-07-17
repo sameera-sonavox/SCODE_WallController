@@ -2,27 +2,8 @@
 
 #if defined(USE_SPI)
 
-#ifdef DEBUG_SPI_SLAVE_TX
-    #define debug_SlaveTx_Print             printf
-#else
-    #define debug_SlaveTx_Print(...)
-#endif
-
-#ifdef DEBUG_SPI_SLAVE_RX
-    #define debug_SlaveRx_Print             printf
-#else
-    #define debug_SlaveRx_Print(...)
-#endif 
-
-#ifdef DEBUG_SPI_SLAVE_IRQ
-    #define debug_SlaveIRQ_Print            printf
-#else
-    #define debug_SlaveIRQ_Print(...)
-#endif
-
 #include <stdbool.h>
 #include <stdatomic.h>
-#include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/pinctrl.h>
 #include "fsl_lpspi.h"
 #include "fsl_clock.h"
@@ -49,6 +30,8 @@
     #endif
 #endif
 
+_Atomic bool bIsSlaveRdyMonitor_Initialized = false;
+
 typedef enum
 {
     eSPISlave_Busy,
@@ -58,8 +41,15 @@ typedef enum
 
 typedef struct
 {
+    bool bPending;
+    SPI_Callback_t pvCallback;
+} sT_SPIReadyNotification_t;
+
+typedef struct
+{
     eSPI_Slave_Id_t eActiveSlaveId;
-    eSPI_DataLane_Width_t eSPI_BusWidth;
+    eSPI_DataLane_Width_t eSPI_BusWidth;    
+    struct k_mutex mutex_spiMaster_DeInitCtrl;   
 
     lpspi_master_config_t stMasterConfig;
     lpspi_master_handle_t stMasterHandle;
@@ -94,13 +84,6 @@ typedef struct
 
 typedef struct
 {
-    bool bHWReady_Used;
-    eSPI_HWRDY_PinState_t eHWRdy_PinState;
-    const struct gpio_dt_spec *pstGPIOStruct;
-} sT_HWReadyPin_Ctrl;
-
-typedef struct
-{
     _Atomic bool bIsTransferBusy;
     bool bIsHWMatchRequested;
     bool bIsTxOnlyNotification_Requested;
@@ -109,6 +92,10 @@ typedef struct
     _Atomic bool bIsPeripheralTransferBusy;
     lpspi_slave_config_t stSlaveConfig;
     lpspi_slave_handle_t stSlaveHandle;
+    uint32_t uiSavedCFGR0;
+    uint32_t uiSavedCFGR1;
+    uint32_t uiSavedDMR0;
+    uint32_t uiSavedDMR1;
     sT_UserNotify_Ctrl_t stTUserNotifyCtrl;
     sT_SPI_RxOverflowCtrl_t stTDevRxOverflowControl;    
     sT_HWReadyPin_Ctrl stTHWRdyCtrl;
@@ -132,7 +119,7 @@ typedef struct
     uint32_t uiSPImodule_Clock_Hz;
     sT_SPI_DeviceControl_t stTSPIDevCtrl;
 
-    bool bIsInitialized;
+    _Atomic bool bIsInitialized;
     _Atomic bool bIsTransferBusy;
     eSPI_NotificationType_t eNotificationType;
     struct k_work_delayable kw_SPITransferMonitor;
@@ -146,11 +133,14 @@ sT_SPIModuleConfig_t staSPIModule[eNUMBER_OF_SPI_MODULEs] = {
 static bool bConfig_SPI_MasterMode( sT_SPIConfig_t *pstSPIConfig );
 static void vAssign_PinConfigurations(eSPIModule_t eModuleId);
 static inline bool bIsModule_Initialized( eSPIModule_t eModule );
+static inline void vSet_ModuleInitFlag( eSPIModule_t eModule );
+static inline void vClear_ModuleInitFlag( eSPIModule_t eModule );
 static inline eSPI_Mode_t eGetSPIMode( eSPIModule_t eModule );
 static bool bDeinit_MasterMode( eSPIModule_t eModule );
 static bool bDeinit_SlaveMode( eSPIModule_t eModule );
 static void vDeInit_Slave_CallbackConfigs(sT_SPI_SlaveCtrl *pstSlaveCtrl);
 static void vDeinit_Slave_InterruptConfigurations( sT_SPIModuleConfig_t *pstSPIModule, sT_SPI_SlaveCtrl *pstSlaveCtrl);
+static const sT_SPISlave_Config_t *pstGetSlaveConfig(eSPIModule_t eModuleId, eSPI_Slave_Id_t eSlaveId);
 
 static bool bConfig_SPI_SlaveMode( sT_SPIConfig_t *pstSPIConfig );
 static bool bSetup_HWMatchConfig(sT_SPIModuleConfig_t *pstSPIModule, sT_Peripheral_Config_t *pstPeripheralConfig);
@@ -176,9 +166,12 @@ static inline bool bTryClaim_SlaveTransfer(sT_SPI_SlaveCtrl *pstSlaveControl);
 static inline void vClear_SlaveTransferFlag(sT_SPI_SlaveCtrl *pstSlaveControl);
 static inline bool bIsSlaveTransferBusy(sT_SPI_SlaveCtrl *pstSlaveControl);
 static inline void vRecover_SlaveHW_AfterError(LPSPI_Type *base);
+static inline void vRestore_SlaveFrameSize(sT_SPIModuleConfig_t *pstSPIModule, sT_SPI_SlaveCtrl *pstSlaveControl);
+static inline void vRestore_SlaveStaticHWConfig(sT_SPIModuleConfig_t *pstSPIModule, sT_SPI_SlaveCtrl *pstSlaveControl);
 
 static void vConfig_TransferHandle(sT_SPIModuleConfig_t *pstSPIModule);
 static void vConfigure_SPIInterrupt(sT_SPIModuleConfig_t *pstSPIModule);
+static void vHandle_LPSPI_ISR(eSPIModule_t eModuleId, uint32_t uiInstance);
 
 static void vSPI_MasterCallback(LPSPI_Type *base,
                                 lpspi_master_handle_t *handle,
@@ -211,7 +204,6 @@ static inline eSPI_PeripheralEvent_Type_t eGetCurrentRxEventType(sT_SPI_RxOverfl
 static inline void vSet_RxEventType(sT_SPI_RxOverflowCtrl_t *pstRxFlowCtrl, eSPI_PeripheralEvent_Type_t eType);
 static inline void vSet_RxBufferType(sT_SlaveCallback_Config_t *pstCallbackConfig, eSPI_RxTarget_t eNewTargetType);
 static inline eSPI_RxTarget_t eGet_RxBufferType(sT_SlaveCallback_Config_t *pstCallbackConfig);
-
 static void vEnable_SPI_IRQ(eSPIModule_t eModule);
 static void vDisable_SPI_IRQ(eSPIModule_t eModule);
 static void vLPSPI0_ISR(const void *arg);
@@ -258,6 +250,7 @@ static inline bool bSPI_Assign_Block_To_Block_DelayTime(eSPIModule_t eModuleId,
 static inline void vClear_TransferBusyFlag(sT_SPIModuleConfig_t *pstSPIModule);
 static inline bool bTryClaim_TransferBusyFlag(eSPIModule_t eModuleId);
 static inline bool bTryComplete_TransferBusyFlag(sT_SPIModuleConfig_t *pstSPIModule);
+static inline bool bGetSPIBus_TransferBusyFlag(eSPIModule_t eModuleId);
 
 static LPSPI_Type *pstGetSPIDevice(eSPIModule_t eModule);
 static lpspi_clock_polarity_t eGetDefault_CPOL(eSPI_CPOL_CPHA_Type_t eSPIConf_CPOL);
@@ -268,7 +261,28 @@ static lpspi_pcs_polarity_config_t eGet_CS_PinActiveState(eSPI_CS_Polarity_t eCS
 static lpspi_pcs_function_config_t eGet_PSCConfiguration(eSPI_DataLane_Width_t eDataLaneWidth);
 static lpspi_pin_config_t eGet_SPIPinConfigurations(eSPI_PinCfg_For_Transfer_t ePinConfig);
 static lpspi_which_pcs_t eGet_SPI_HW_CSPin(eSPI_PCS_t eHW_CSPin);
-static void vAssign_SlaveDevices(sT_SPIModuleConfig_t *pstSPIModule, sT_SPIConfig_t *pstSPIConfig);
+static bool bAssign_SlaveDevices(sT_SPIModuleConfig_t *pstSPIModule, sT_SPIConfig_t *pstSPIConfig);
+
+static void vSPIMaster_SlaveReadyMonitor(void *dummy1, void *dummy2, void *dummy3);
+static void vUpdate_At_TimeOutState(sT_SPISlave_Control_t *pstSlave, sT_HWReadyPin_Ctrl *pstHWRdyCtrl, eSPI_ExternalSlave_State_t eNewState);
+static void vUpdate_At_ReadyState(sT_SPISlave_Control_t *pstSlave, sT_HWReadyPin_Ctrl *pstHWRdyCtrl, eSPI_ExternalSlave_State_t eNewState);
+static void vUpdate_At_WaitForReadyState(sT_SPISlave_Control_t *pstSlave, 
+                                         sT_HWReadyPin_Ctrl *pstHWRdyCtrl, 
+                                         eSPI_ExternalSlave_State_t eNewState,
+                                         sT_SPIReadyNotification_t *pstSlaveRdyTimeOutCtrl);
+static void vUpdate_At_IdleState(sT_SPISlave_Control_t *pstSlave, sT_HWReadyPin_Ctrl *pstHWRdyCtrl, eSPI_ExternalSlave_State_t eNewState);
+
+static inline void vSet_SPIMaster_SlaveRdyMonitor_ThreadInitFlag( void );
+static inline bool bGet_SPIMaster_SlaveRdyMonitor_ThreadInitFlag( void );
+static inline void vClear_SPIMaster_SlaveRdyMonitor_ThreadInitFlag( void );
+static inline void vSet_ExtSlaveState(sT_HWReadyPin_Ctrl *pstHWRdyCtrl, eSPI_ExternalSlave_State_t eState);
+static inline eSPI_ExternalSlave_State_t eGetSlaveState(const sT_HWReadyPin_Ctrl *pstHWRdyCtrl);
+static bool bIsSlaveInActiveState(sT_SPI_MasterCtrl *pstMasterCtrl);
+static inline void vUpdate_SlaveStatus_AsWaitingForReady(sT_SPISlave_Control_t *pstSlave);
+
+K_THREAD_STACK_DEFINE(spi_master_slaveready_threadStack, SPI_SLAVE_RDYMONITOR_THREAD_STACK_SIZE_BYTEs);
+struct k_thread thread_spiMaster_SlaveReadyMonitor;
+k_tid_t kthread_tid_slaveRdyMon;
 
 #pragma region Debugging Printf Definitions
 
@@ -297,6 +311,14 @@ void vInit_SPI( sT_SPIConfig_t *pstSPIConfig )
     if(pstSPIConfig == NULL)
     {
         FHALT("NULL Pointer Reference");
+        return;
+    }
+
+    if(bIsModule_Initialized(pstSPIConfig->eModule))
+    {
+        FHALT("Module[%d] already initialized. The User application must call 'bDeInit_SPI' first and then call 'vInit_SPI'",
+             pstSPIConfig->eModule);
+        pstSPIConfig->bIsOk = false;
         return;
     }
 
@@ -335,7 +357,7 @@ static bool bConfig_SPI_SlaveMode( sT_SPIConfig_t *pstSPIConfig )
     sT_Peripheral_Config_t *pstPeripheralConfig = &pstSPIConfig->stTSPIModeCtrl.spi_mode.stTConfig_Peripheral;
     sT_SPI_RxOverflowCtrl_t *pstOverflowCtrl = &pstSlaveControl->stTDevRxOverflowControl;
 
-    pstSPIModule->bIsInitialized = false;
+    vClear_ModuleInitFlag(pstSPIModule->eModuleId);
     vClear_TransferBusyFlag(pstSPIModule);
     pstSPIModule->eNotificationType = pstSPIConfig->eNotificationType;
     pstSPIModule->stTSPIDevCtrl.eMode = pstSPIConfig->stTSPIModeCtrl.eMode;
@@ -386,8 +408,7 @@ static bool bConfig_SPI_SlaveMode( sT_SPIConfig_t *pstSPIConfig )
 
     vSet_SlaveTransferType(pstSPIModule->eModuleId, eTransfer_Rx_Only);    
 
-    pstSPIModule->bIsInitialized = true;
-    printk("SPI Slave Initialized\n\r");   
+    vSet_ModuleInitFlag(pstSPIModule->eModuleId);
     return true;
 }
 
@@ -479,6 +500,36 @@ static inline void vRecover_SlaveHW_AfterError(LPSPI_Type *base)
                            kLPSPI_WordCompleteFlag);
 }
 
+static inline void vRestore_SlaveFrameSize(sT_SPIModuleConfig_t *pstSPIModule, sT_SPI_SlaveCtrl *pstSlaveControl)
+{
+    if(pstSPIModule == NULL || pstSlaveControl == NULL || pstSPIModule->pstSPIDevice == NULL)
+    {
+        return;
+    }
+
+    LPSPI_SetFrameSize(pstSPIModule->pstSPIDevice, pstSlaveControl->stSlaveConfig.bitsPerFrame);
+}
+
+static inline void vRestore_SlaveStaticHWConfig(sT_SPIModuleConfig_t *pstSPIModule, sT_SPI_SlaveCtrl *pstSlaveControl)
+{
+    if(pstSPIModule == NULL || pstSlaveControl == NULL || pstSPIModule->pstSPIDevice == NULL)
+    {
+        return;
+    }
+
+    LPSPI_Type *base = pstSPIModule->pstSPIDevice;
+
+    LPSPI_SlaveInit(base, &pstSlaveControl->stSlaveConfig);
+
+    bool bWasModEnabled = ((base->CR & LPSPI_CR_MEN_MASK) != 0U);
+    LPSPI_Enable(base, false);
+    base->DMR0 = pstSlaveControl->uiSavedDMR0;
+    base->DMR1 = pstSlaveControl->uiSavedDMR1;
+    base->CFGR0 = pstSlaveControl->uiSavedCFGR0;
+    base->CFGR1 = pstSlaveControl->uiSavedCFGR1;
+    LPSPI_Enable(base, bWasModEnabled);
+}
+
 bool bSPI_PeripheralSendResponse(sT_SPIPreipheralResponse_t stTSlaveResponse)
 {
     if(eGetSPIMode(stTSlaveResponse.eModuleId) != eSPI_Mode_Peripheral)
@@ -505,55 +556,54 @@ bool bSPI_PeripheralSendResponse(sT_SPIPreipheralResponse_t stTSlaveResponse)
 
     lpspi_transfer_t stTransfer = {0};
     sT_SPIRxBuff_t *pstRxBuffer = pstGet_RxBuffer_byState(pstDevConfig->pstRxBuffHead, eBuffer_Filling);
-    uint8_t *puiDrainBuffer = pstSlaveControl->stTUserNotifyCtrl.data_pathConfig.stTCallbackConfig.puiDrainBuffer;
     if(pstRxBuffer != NULL)
     {
-        FHALT("Cannot arm slave TX while RX buffer is filling");
-        vClear_SlaveTransferFlag(pstSlaveControl);
-        vSet_SPISlave_HWReadyState(stTSlaveResponse.eModuleId, eSPISlave_Busy);
-        return false;
+        /*
+         * If this function reached here, the API transfer flag was already claimed successfully.
+         * Therefore a buffer still marked as Filling is stale state left behind after an error/recovery
+         * path, not a valid active RX transaction owned by the API. Recover the peripheral and release
+         * that stale RX buffer before arming the requested slave response.
+         */
+        LPSPI_SlaveTransferAbort(pstSPIModule->pstSPIDevice, &pstSlaveControl->stSlaveHandle);
+        vRestore_SlaveStaticHWConfig(pstSPIModule, pstSlaveControl);
+        vRecover_SlaveHW_AfterError(pstSPIModule->pstSPIDevice);
+        vSet_RxBufferState(pstRxBuffer->uiBuffId, eBuffer_Free, pstDevConfig->pstRxBuffHead);
     }
     
-    stTransfer.rxData = puiDrainBuffer;
+    stTransfer.rxData = NULL;
     stTransfer.txData = stTSlaveResponse.puiTxData;
     stTransfer.dataSize = stTSlaveResponse.uiLen;
     stTransfer.configFlags = 0U;
 
     vSet_SlaveTransferType(stTSlaveResponse.eModuleId, eTransfer_Tx_Only);
+    vRestore_SlaveFrameSize(pstSPIModule, pstSlaveControl);
 
     status_t status = LPSPI_SlaveTransferNonBlocking(pstSPIModule->pstSPIDevice,
                                                      &pstSlaveControl->stSlaveHandle,
                                                      &stTransfer);
+
     if(status != kStatus_Success)
     {
-        if(stTransfer.rxData != puiDrainBuffer)
-        {
-            vSet_RxBufferState(pstRxBuffer->uiBuffId, eBuffer_Free, pstDevConfig->pstRxBuffHead);
-            FHALT("Slave HW Preperation failed for Callback");
-        }
         vClear_SlaveTransferFlag(pstSlaveControl);
         vSet_SPISlave_HWReadyState(stTSlaveResponse.eModuleId, eSPISlave_Busy);
         return false;
     }
 
-    vSet_SPISlave_HWReadyState(stTSlaveResponse.eModuleId, eSPISlave_Ready);
+    /*
+     * The MCUX slave driver uses TXWATER=1 by default. With an 8-bit frame and
+     * a four-entry FIFO, that postpones the refill interrupt until only one
+     * byte remains in the FIFO. Request the refill as soon as the first FIFO
+     * entry is consumed, giving the ISR enough time to queue the remaining
+     * response bytes before a slave TX underrun occurs.
+     */
+    if(pstSlaveControl->stSlaveHandle.fifoSize > 1U)
+    {
+        LPSPI_Type *base = pstSPIModule->pstSPIDevice;
+        base->FCR = (base->FCR & ~LPSPI_FCR_TXWATER_MASK) |
+                    LPSPI_FCR_TXWATER(pstSlaveControl->stSlaveHandle.fifoSize - 1U);
+    }
 
-#ifdef DEBUG_SPI_SLAVE_TX
-    uint32_t uiTcr = LPSPI_GetTcr(pstSPIModule->pstSPIDevice);
-    uint32_t uiCfgr1 = pstSPIModule->pstSPIDevice->CFGR1;
-    debug_SlaveTx_Print("Slave TX armed: TX=%p Len=%u TCR=0x%08x CFGR1=0x%08x TXMSK=%u RXMSK=%u PCS=%u PINCFG=%u OUTCFG=%u TXFIFO=%u RXFIFO=%u\n\r",
-                        stTransfer.txData,
-                        (unsigned int)stTransfer.dataSize,
-                        (unsigned int)uiTcr,
-                        (unsigned int)uiCfgr1,
-                        (unsigned int)((uiTcr & LPSPI_TCR_TXMSK_MASK) >> LPSPI_TCR_TXMSK_SHIFT),
-                        (unsigned int)((uiTcr & LPSPI_TCR_RXMSK_MASK) >> LPSPI_TCR_RXMSK_SHIFT),
-                        (unsigned int)((uiTcr & LPSPI_TCR_PCS_MASK) >> LPSPI_TCR_PCS_SHIFT),
-                        (unsigned int)((uiCfgr1 & LPSPI_CFGR1_PINCFG_MASK) >> LPSPI_CFGR1_PINCFG_SHIFT),
-                        (unsigned int)((uiCfgr1 & LPSPI_CFGR1_OUTCFG_MASK) >> LPSPI_CFGR1_OUTCFG_SHIFT),
-                        (unsigned int)LPSPI_GetTxFifoCount(pstSPIModule->pstSPIDevice),
-                        (unsigned int)LPSPI_GetRxFifoCount(pstSPIModule->pstSPIDevice));
-#endif
+    vSet_SPISlave_HWReadyState(stTSlaveResponse.eModuleId, eSPISlave_Ready);
 
     return true;        
 }
@@ -566,7 +616,9 @@ static inline void vSet_SPISlave_HWReadyState(eSPIModule_t eModuleId, eHWReady_S
     sT_SPIModuleConfig_t *pstSPIModule = &staSPIModule[eModuleId];
     sT_HWReadyPin_Ctrl *pstHWRdyCtrl = &pstSPIModule->stTSPIDevCtrl.st_DevCtrlMode.stTSlaveCtrl.stTHWRdyCtrl;
     if(!pstHWRdyCtrl->bHWReady_Used || pstHWRdyCtrl->pstGPIOStruct == NULL)
+    {
         return;
+    }
     
     switch(pstHWRdyCtrl->eHWRdy_PinState)
     {
@@ -610,6 +662,7 @@ static bool bInit_SPISlave_HWRDY_Control(sT_SPIConfig_t *pstSPIConfig)
 
     sT_HWReadyPin_Ctrl *pstHWRdyCtrl = &pstSPIModule->stTSPIDevCtrl.st_DevCtrlMode.stTSlaveCtrl.stTHWRdyCtrl;
     pstHWRdyCtrl->bHWReady_Used = false;
+    pstHWRdyCtrl->eSlaveState = eSlave_RdyState_Idle;
     pstHWRdyCtrl->eHWRdy_PinState = pstSPIConfig->stTSPIModeCtrl.spi_mode.stTConfig_Peripheral.eHWRdy_PinState;
     pstHWRdyCtrl->pstGPIOStruct = NULL;
 
@@ -685,7 +738,6 @@ static bool bArm_SlaveRx_ForCallback(sT_SPIModuleConfig_t *pstSPIModule,
                                      sT_SPI_SlaveCtrl *pstSlaveControl)
 {
     sT_SlaveCallback_Config_t *pstDevConfig = &pstSlaveControl->stTUserNotifyCtrl.data_pathConfig.stTCallbackConfig;
-
     if(!bTryClaim_SlaveTransfer(pstSlaveControl))
     {
         return true;
@@ -711,6 +763,7 @@ static bool bArm_SlaveRx_ForCallback(sT_SPIModuleConfig_t *pstSPIModule,
     };
 
     vSet_SlaveTransferType(pstSPIModule->eModuleId, eTransfer_Rx_Only);
+    vRestore_SlaveFrameSize(pstSPIModule, pstSlaveControl);
 
     status_t status = LPSPI_SlaveTransferNonBlocking(pstSPIModule->pstSPIDevice,
                                                      &pstSlaveControl->stSlaveHandle,
@@ -764,6 +817,7 @@ static bool bApplyPolicy_DropNewest(sT_SPIModuleConfig_t *pstSPIModule,
     stTransfer.configFlags = 0U;
 
     vSet_SlaveTransferType(pstSPIModule->eModuleId, eTransfer_Rx_Only);
+    vRestore_SlaveFrameSize(pstSPIModule, pstSlaveControl);
     
     status_t status = LPSPI_SlaveTransferNonBlocking(pstSPIModule->pstSPIDevice,
                                                      &pstSlaveControl->stSlaveHandle,
@@ -947,6 +1001,12 @@ static bool bSetup_HWMatchConfig(sT_SPIModuleConfig_t *pstSPIModule, sT_Peripher
     }
 
     LPSPI_Enable(pstSPIDevice, bWasModEnabled);
+
+    pstPeriphreralConfig->uiSavedCFGR0 = pstSPIDevice->CFGR0;
+    pstPeriphreralConfig->uiSavedCFGR1 = pstSPIDevice->CFGR1;
+    pstPeriphreralConfig->uiSavedDMR0 = pstSPIDevice->DMR0;
+    pstPeriphreralConfig->uiSavedDMR1 = pstSPIDevice->DMR1;
+
     return true;
 }
 
@@ -963,6 +1023,11 @@ bool bDeInit_SPI( eSPIModule_t eSPIModule )
     {
         FHALT("SPI Module[%d] not initialized", eSPIModule);
         return false;    
+    }
+    if(bGetSPIBus_TransferBusyFlag(eSPIModule))
+    {
+        FHALT("SPI Module[%d] has an active transfer and cannot be deinited", eSPIModule);
+        return false;         
     }
 
     switch(eGetSPIMode(eSPIModule))
@@ -994,13 +1059,16 @@ static bool bDeinit_MasterMode( eSPIModule_t eModule )
             break;
     }
 
+    k_mutex_lock(&pstMasterCtrl->mutex_spiMaster_DeInitCtrl, K_FOREVER);
+    vClear_ModuleInitFlag(eModule);
     LPSPI_Deinit(pstSPIModule->pstSPIDevice);
 
     LPSPI_MasterGetDefaultConfig(pstspiMasterConf);
     vRelease_SPISLaves(&pstMasterCtrl->pstSPISlaveHead_Ctrl);//Release previously allocated memory
     vClear_TransferBusyFlag(pstSPIModule);
-    pstSPIModule->bIsInitialized = false;
-    pstMasterCtrl->eActiveSlaveId = eNUMBER_OF_SPI_SLAVEs;
+    k_mutex_unlock(&pstMasterCtrl->mutex_spiMaster_DeInitCtrl);
+
+    pstMasterCtrl->eActiveSlaveId = eNUMBER_OF_SPI_SLAVEs;    
     return true;
 }
 
@@ -1010,6 +1078,8 @@ static bool bDeinit_SlaveMode( eSPIModule_t eModule )
     sT_SPI_SlaveCtrl *pstSlaveCtrl = &pstSPIModule->stTSPIDevCtrl.st_DevCtrlMode.stTSlaveCtrl;
     lpspi_slave_config_t *pstspiSlaveConf = &pstSlaveCtrl->stSlaveConfig;
 
+    vSet_SPISlave_HWReadyState(eModule, eSPISlave_Busy);
+    
     switch(pstSPIModule->eNotificationType)
     {
         case eNotify_Interrupt:
@@ -1038,7 +1108,7 @@ static bool bDeinit_SlaveMode( eSPIModule_t eModule )
 
     vClear_TransferBusyFlag(pstSPIModule);    
     vSet_SlaveTransferType(eModule, eTransfer_Rx_Only);
-    pstSPIModule->bIsInitialized = false;
+    vClear_ModuleInitFlag(eModule);
     return true;
 }
 
@@ -1098,7 +1168,31 @@ static inline bool bIsModule_Initialized( eSPIModule_t eModule )
         FHALT("Invalid SPI Module : %d", eModule);
         return false;
     }
-    return staSPIModule[eModule].bIsInitialized;
+
+    bool bIsInit = atomic_load_explicit(&staSPIModule[eModule].bIsInitialized, memory_order_acquire);
+    return bIsInit;
+}
+
+static inline void vSet_ModuleInitFlag( eSPIModule_t eModule )
+{
+    if(eModule >= eNUMBER_OF_SPI_MODULEs)
+    {
+        FHALT("Invalid SPI Module : %d", eModule);
+        return;
+    }
+    
+    atomic_store_explicit(&staSPIModule[eModule].bIsInitialized, true, memory_order_release);
+}
+
+static inline void vClear_ModuleInitFlag( eSPIModule_t eModule )
+{
+    if(eModule >= eNUMBER_OF_SPI_MODULEs)
+    {
+        FHALT("Invalid SPI Module : %d", eModule);
+        return;
+    }
+    
+    atomic_store_explicit(&staSPIModule[eModule].bIsInitialized, false, memory_order_release);
 }
 
 static bool bConfig_SPI_MasterMode( sT_SPIConfig_t *pstSPIConfig )
@@ -1113,7 +1207,7 @@ static bool bConfig_SPI_MasterMode( sT_SPIConfig_t *pstSPIConfig )
         vRelease_SPISLaves(&pstMasterCtrl->pstSPISlaveHead_Ctrl);//Release previously allocated memory
     }
 
-    pstSPIModule->bIsInitialized = false;
+    vClear_ModuleInitFlag(pstSPIModule->eModuleId);
     vClear_TransferBusyFlag(pstSPIModule);
     pstSPIModule->eNotificationType = pstSPIConfig->eNotificationType;
     pstSPIModule->stTSPIDevCtrl.eMode = pstSPIConfig->stTSPIModeCtrl.eMode;
@@ -1147,13 +1241,18 @@ static bool bConfig_SPI_MasterMode( sT_SPIConfig_t *pstSPIConfig )
     pstMasterCtrl->eSPI_BusWidth = pstSlaveConfig->eSPI_BusWidth;
     pstMasterCtrl->eActiveSlaveId = pstSPISlave->stTConfigs.eSlaveId;
 
-    vAssign_SlaveDevices(pstSPIModule, pstSPIConfig);
+    if(!bAssign_SlaveDevices(pstSPIModule, pstSPIConfig))
+    {
+        return false;
+    }
     vAssign_PinConfigurations(pstSPIModule->eModuleId);
 
     LPSPI_MasterInit(pstSPIModule->pstSPIDevice, pstspiMasterConf, pstSPIModule->uiSPImodule_Clock_Hz);
 
     vConfig_TransferHandle(pstSPIModule);
-    pstSPIModule->bIsInitialized = true;
+    k_mutex_init(&pstMasterCtrl->mutex_spiMaster_DeInitCtrl);
+
+    vSet_ModuleInitFlag(pstSPIModule->eModuleId);
     return true;
 }
 
@@ -1260,15 +1359,19 @@ static void vDisable_SPI_IRQ(eSPIModule_t eModule)
 static void vLPSPI0_ISR(const void *arg)
 {
     ARG_UNUSED(arg);
-    vHandle_SPIPeripheral_HWMatch(eSPI_0);
-    LPSPI_DriverIRQHandler(0U);
+    vHandle_LPSPI_ISR(eSPI_0, 0U);
 }
 
 static void vLPSPI1_ISR(const void *arg)
 {
     ARG_UNUSED(arg);
-    vHandle_SPIPeripheral_HWMatch(eSPI_1);
-    LPSPI_DriverIRQHandler(1U);
+    vHandle_LPSPI_ISR(eSPI_1, 1U);
+}
+
+static void vHandle_LPSPI_ISR(eSPIModule_t eModuleId, uint32_t uiInstance)
+{
+    vHandle_SPIPeripheral_HWMatch(eModuleId);
+    LPSPI_DriverIRQHandler(uiInstance);
 }
 
 static inline void vHandle_SPIPeripheral_HWMatch(eSPIModule_t eModuleId)
@@ -1298,7 +1401,6 @@ static inline void vHandle_SPIPeripheral_HWMatch(eSPIModule_t eModuleId)
         pstSPIModule->pstSPIDevice,
         kLPSPI_DataMatchFlag
     );
-    //printf("HW Match\n\r");
 }
 
 static void vSPI_PeripheralModeCallback(LPSPI_Type *base,
@@ -1316,24 +1418,6 @@ static void vSPI_PeripheralModeCallback(LPSPI_Type *base,
     eSPI_TransferResult_t eResult = (status == kStatus_Success) ? eTransfer_Success : eTransfer_Failed;
     if(status != kStatus_Success)
     {
-#ifdef DEBUG_SPI_SLAVE_IRQ
-        uint32_t uiSr = base->SR;
-        debug_SlaveIRQ_Print("Slave IRQ error: status=%d SR=0x%08x TEF=%u REF=%u MBF=%u TXFIFO=%u RXFIFO=%u txRem=%u rxRem=%u wrRem=%u rdRem=%u errCnt=%u TCR=0x%08x CFGR1=0x%08x\n\r",
-                                (int)status,
-                                (unsigned int)uiSr,
-                                (unsigned int)((uiSr & kLPSPI_TransmitErrorFlag) != 0U),
-                                (unsigned int)((uiSr & kLPSPI_ReceiveErrorFlag) != 0U),
-                                (unsigned int)((uiSr & kLPSPI_ModuleBusyFlag) != 0U),
-                                (unsigned int)LPSPI_GetTxFifoCount(base),
-                                (unsigned int)LPSPI_GetRxFifoCount(base),
-                                (unsigned int)handle->txRemainingByteCount,
-                                (unsigned int)handle->rxRemainingByteCount,
-                                (unsigned int)handle->writeRegRemainingTimes,
-                                (unsigned int)handle->readRegRemainingTimes,
-                                (unsigned int)handle->errorCount,
-                                (unsigned int)LPSPI_GetTcr(base),
-                                (unsigned int)base->CFGR1);
-#endif
         vRecover_SlaveHW_AfterError(base);
     }
 
@@ -1367,9 +1451,13 @@ static void vSPI_PeripheralModeCallback(LPSPI_Type *base,
 
 static inline void vReConfigure_HWMatch_Interrupts(sT_SPIModuleConfig_t *pstSPIModule, sT_SPI_SlaveCtrl *pstPeriphreralConfig)
 {    
-    if(!pstPeriphreralConfig->bIsHWMatchRequested)
-        return;
     if(pstPeriphreralConfig == NULL || pstSPIModule == NULL)
+    {
+        FHALT("Null Pointer Reference");
+        return;   
+    }
+
+    if(!pstPeriphreralConfig->bIsHWMatchRequested)
         return;
 
     vClear_HWMatchFlag(pstPeriphreralConfig);
@@ -1392,7 +1480,6 @@ static void vNotify_SlaveTxComplete(sT_SPIModuleConfig_t *pstSPIModule, sT_SPI_S
     {
         return;
     }
-
     if(!pstSlaveCtrl->bIsTxOnlyNotification_Requested)
     {
         bArm_SlaveRx_ForCallback(pstSPIModule, pstSlaveCtrl);
@@ -1657,14 +1744,30 @@ static void vSPI_MasterCallback(LPSPI_Type *base,
     sT_SPISlave_Control_t *pstSlave = pstGetSlaveInfo(pstMasterCtrl->eActiveSlaveId, pstMasterCtrl->pstSPISlaveHead_Ctrl);
     if(!bTryComplete_TransferBusyFlag(pstSPIModule))
         return;
-        
+    
     k_work_cancel_delayable(&pstSPIModule->kw_SPITransferMonitor);
 
     if(pstSlave == NULL || pstSlave->stTConfigs.pvSPI_CallBack == NULL)
         return;
     
     eSPI_TransferResult_t eResult = (status == kStatus_Success) ? eTransfer_Success : eTransfer_Failed;
+    if(eResult == eTransfer_Success)
+    {        
+        vUpdate_SlaveStatus_AsWaitingForReady(pstSlave);
+    }
+
     pstSlave->stTConfigs.pvSPI_CallBack(pstMasterCtrl->eActiveSlaveId, eResult);
+}
+
+static inline void vUpdate_SlaveStatus_AsWaitingForReady(sT_SPISlave_Control_t *pstSlave)
+{
+    if(pstSlave == NULL)
+        return;
+    if(!pstSlave->stTConfigs.stTHWReadyCtrl.bHWReady_Used)
+        return;
+
+    pstSlave->stTConfigs.stTHWReadyCtrl.iReadyWaitStartTime = k_uptime_get();
+    vSet_ExtSlaveState(&pstSlave->stTConfigs.stTHWReadyCtrl, eSlave_RdyState_WaitingForReady);    
 }
 
 static inline bool bTryComplete_TransferBusyFlag(sT_SPIModuleConfig_t *pstSPIModule)
@@ -1687,7 +1790,7 @@ static void vSPI_FaultRecoveryHandler( struct k_work *work )
 
     eSPIModule_t eModuleId = pstSPIModule->eModuleId;
 
-    if(!pstSPIModule->bIsInitialized || 
+    if(!bIsModule_Initialized(eModuleId) || 
        !bTryComplete_TransferBusyFlag(pstSPIModule) ||
        eGetSPIMode(eModuleId) != eSPI_Mode_Controller)
        return;
@@ -1739,6 +1842,11 @@ bool bSPI_Transfer_InMasterMode(sT_SPIMasterTransfer_t stTTransfer)
         FHALT("Module[%d] not in Master Mode", eModuleId);
         return false;
     }
+    if(!bIsTransfer_OnValidModule(&stTTransfer))
+    {
+        printf("Data not sent\n\r");    
+        return false;
+    }
     if(bTryClaim_TransferBusyFlag(eModuleId))
     {
         FHALT("Module[%d] Transfer in Progress", eModuleId);
@@ -1766,6 +1874,12 @@ bool bSPI_Transfer_InMasterMode(sT_SPIMasterTransfer_t stTTransfer)
             return false;
         }
         LPSPI_Enable(pstModule->pstSPIDevice, true);
+    }
+
+    if(!bIsSlaveInActiveState(pstMasterCtrl))
+    {   
+        vClear_TransferBusyFlag(pstModule);
+        return false;
     }
 
     lpspi_transfer_t stLPSPITransfer = {0};
@@ -2114,23 +2228,419 @@ static inline bool bTryClaim_TransferBusyFlag(eSPIModule_t eModuleId)
     return false;
 }
 
+static inline bool bGetSPIBus_TransferBusyFlag(eSPIModule_t eModuleId)
+{
+    bool bIsBusy = atomic_load_explicit(&staSPIModule[eModuleId].bIsTransferBusy,memory_order_acquire);
+    return bIsBusy;
+}
+
 static void vConfigure_SPI_DMA(sT_SPIModuleConfig_t *pstSPIModule)
 {
     FHALT("Not Implemented yet");
 }
 
-static void vAssign_SlaveDevices(sT_SPIModuleConfig_t *pstSPIModule, sT_SPIConfig_t *pstSPIConfig)
+static bool bAssign_SlaveDevices(sT_SPIModuleConfig_t *pstSPIModule, sT_SPIConfig_t *pstSPIConfig)
 {
-    if(pstSPIModule == NULL || pstSPIConfig == NULL)
+    uint8_t uiCount = 0;
+    if(pstSPIConfig == NULL)
+    {
+        FHALT("Null Pointer reference for the module config");
+        return false;
+    }
+    if(pstSPIModule == NULL)
     {
         FHALT("Null Pointer reference for the slave device");
-        return;
+        pstSPIConfig->bIsOk = false;
+        return false;
     }
 
     sT_SPI_MasterCtrl *pstMasterCtrl = &pstSPIModule->stTSPIDevCtrl.st_DevCtrlMode.stTMasterCtrl;
     pstMasterCtrl->pstSPISlaveHead_Ctrl = pstSPIConfig->stTSPIModeCtrl.spi_mode.pstSPISlaveHead_Ctrl;
     pstSPIConfig->stTSPIModeCtrl.spi_mode.pstSPISlaveHead_Ctrl = NULL;
 
+    sT_SPISlave_Control_t *pstTempSlave = pstMasterCtrl->pstSPISlaveHead_Ctrl;
+    while(pstTempSlave != NULL)
+    {
+
+        sT_HWReadyPin_Ctrl *pstHWPinCtrl = &pstTempSlave->stTConfigs.stTHWReadyCtrl;
+        if(pstHWPinCtrl == NULL)
+        {
+            FHALT("Null Pointer reference for Slave Control");
+            pstSPIConfig->bIsOk = false;
+            return false;            
+        }
+
+        vSet_ExtSlaveState(pstHWPinCtrl, eSlave_RdyState_Idle);
+        if(!pstHWPinCtrl->bHWReady_Used)
+        {
+            pstHWPinCtrl->eSlaveState = eSlave_RdyState_Idle;
+            pstTempSlave = pstTempSlave->pstNextSlave;
+            continue;
+        }
+
+        const struct gpio_dt_spec *pstGPIO = pstHWPinCtrl->pstGPIOStruct;        
+        if(!gpio_is_ready_dt(pstGPIO))
+        {
+            FHALT("GPIO Pin(Pin: %d) is not ready", pstGPIO->pin);
+            pstSPIConfig->bIsOk = false;
+            return false;            
+        }
+        int ret = gpio_pin_configure_dt(pstGPIO, GPIO_INPUT);
+        if(ret != 0)
+        {
+            FHALT("GPIO Pin(Pin: %d) config cannot be retrieved", pstGPIO->pin);
+            pstSPIConfig->bIsOk = false;
+            return false;            
+        }
+        uiCount++;
+        pstTempSlave = pstTempSlave->pstNextSlave;
+    }
+
+    if(uiCount == 0 || bGet_SPIMaster_SlaveRdyMonitor_ThreadInitFlag())
+    {
+        return true;
+    }    
+    
+    kthread_tid_slaveRdyMon = k_thread_create(&thread_spiMaster_SlaveReadyMonitor,
+                                                spi_master_slaveready_threadStack,
+                                                K_THREAD_STACK_SIZEOF(spi_master_slaveready_threadStack),
+                                                vSPIMaster_SlaveReadyMonitor, NULL, NULL, NULL,
+                                                SPI_SLAVE_RDYMONITOR_THREAD_PRIORITY, 0, K_NO_WAIT);
+    vSet_SPIMaster_SlaveRdyMonitor_ThreadInitFlag();
+    return true;
+}
+
+static void vSPIMaster_SlaveReadyMonitor(void *dummy1, void *dummy2, void *dummy3)
+{
+    ARG_UNUSED(dummy1);
+    ARG_UNUSED(dummy2);
+    ARG_UNUSED(dummy3);
+
+    sT_SPIReadyNotification_t staSlaveReadyTimeOutCtrl[eNUMBER_OF_SPI_SLAVEs] = {0};
+    
+    while(true)
+    {
+        for(eSPIModule_t i = 0; i < eNUMBER_OF_SPI_MODULEs; i++)
+        {
+            sT_SPI_MasterCtrl *pstMasterCtrl = &staSPIModule[i].stTSPIDevCtrl.st_DevCtrlMode.stTMasterCtrl;
+
+            if(!bIsModule_Initialized(i))
+            {
+                continue;
+            }
+
+            if(k_mutex_lock(&pstMasterCtrl->mutex_spiMaster_DeInitCtrl, K_MSEC(SPI_MASTER_RESOURCE_LOCK_TIMEOUT_ms)) != 0)
+                continue;
+
+            //Intentional    
+            if(!bIsModule_Initialized(i))
+            {
+                k_mutex_unlock(&pstMasterCtrl->mutex_spiMaster_DeInitCtrl);
+                continue;
+            }
+
+            if(eGetSPIMode(i) != eSPI_Mode_Controller)
+            {
+                k_mutex_unlock(&pstMasterCtrl->mutex_spiMaster_DeInitCtrl);
+                continue;
+            }
+            bool bModuleTransferBusy = bGetSPIBus_TransferBusyFlag(i);
+
+            sT_SPISlave_Control_t *pstSlave = pstMasterCtrl->pstSPISlaveHead_Ctrl;
+
+            while(pstSlave != NULL)
+            {
+                if (bModuleTransferBusy && pstSlave->stTConfigs.eSlaveId == pstMasterCtrl->eActiveSlaveId)
+                {
+                    pstSlave = pstSlave->pstNextSlave;
+                    continue;
+                }
+
+                sT_HWReadyPin_Ctrl *pstHWRdyCtrl = &pstSlave->stTConfigs.stTHWReadyCtrl;
+                if(!pstHWRdyCtrl->bHWReady_Used)
+                {
+                    pstHWRdyCtrl->eSlaveState = eSlave_RdyState_Idle;
+                    pstSlave = pstSlave->pstNextSlave; 
+                    continue;
+                }
+
+                eSPI_ExternalSlave_State_t eCurrentState = eGetSlaveState(pstHWRdyCtrl);
+                int iVal = gpio_pin_get_raw(pstHWRdyCtrl->pstGPIOStruct->port, pstHWRdyCtrl->pstGPIOStruct->pin);
+                if(iVal < 0)
+                {
+                    FHALT("Slave[%d] RDY Pin Value could not be retrieved", pstSlave->stTConfigs.eSlaveId);
+                    pstSlave = pstSlave->pstNextSlave;
+                    continue;
+                }
+
+                eSPI_ExternalSlave_State_t eNewState;
+                switch(pstHWRdyCtrl->eHWRdy_PinState)
+                {
+                    case eSPI_Rdy_Active_High:
+                        if((uint8_t)iVal == 1U)
+                        {
+                            eNewState = eSlave_RdyState_Ready;
+                        }
+                        else
+                        { 
+                            eNewState = eSlave_RdyState_WaitingForReady;
+                        }
+                        break;
+                    case eSPI_Rdy_Active_Low:
+                        if((uint8_t)iVal == 0U)
+                        {
+                            eNewState = eSlave_RdyState_Ready;
+                        }
+                        else
+                        {
+                            eNewState = eSlave_RdyState_WaitingForReady;
+                        }
+                        break;
+                    default:
+                        FHALT("Invalid HW Ready Pin State: %d", pstHWRdyCtrl->eHWRdy_PinState);
+                        pstSlave = pstSlave->pstNextSlave;
+                        continue;
+                }
+
+                switch(eCurrentState)
+                {
+                    case eSlave_RdyState_Idle:
+                        vUpdate_At_IdleState(pstSlave, pstHWRdyCtrl, eNewState);
+                        break;
+                    case eSlave_RdyState_WaitingForReady:
+                        vUpdate_At_WaitForReadyState(pstSlave, pstHWRdyCtrl, eNewState, &staSlaveReadyTimeOutCtrl[pstSlave->stTConfigs.eSlaveId]);
+                        break;
+                    case eSlave_RdyState_Ready:
+                        vUpdate_At_ReadyState(pstSlave, pstHWRdyCtrl, eNewState);
+                        break;
+                    case eSlave_RdyState_Timeout:
+                        vUpdate_At_TimeOutState(pstSlave, pstHWRdyCtrl, eNewState);
+                        break;
+                    default:
+                        break;
+                }
+
+                pstSlave = pstSlave->pstNextSlave;
+            }
+            k_mutex_unlock(&pstMasterCtrl->mutex_spiMaster_DeInitCtrl);
+
+            for(uint8_t j = 0; j < eNUMBER_OF_SPI_SLAVEs; j++)
+            {
+                if(!staSlaveReadyTimeOutCtrl[j].bPending)
+                    continue;
+                
+                staSlaveReadyTimeOutCtrl[j].pvCallback(j, eTransfer_Timeout);
+                staSlaveReadyTimeOutCtrl[j].bPending = false;
+            }
+        }
+
+        k_msleep(SPI_RDY_MONITOR_PERIOD_ms);
+    }
+}
+
+//CurrentState: eSlave_RdyState_Timeout
+static void vUpdate_At_TimeOutState(sT_SPISlave_Control_t *pstSlave, sT_HWReadyPin_Ctrl *pstHWRdyCtrl, eSPI_ExternalSlave_State_t eNewState)
+{
+    if(eNewState == eSlave_RdyState_Idle || 
+       eNewState == eSlave_RdyState_Ready)
+    {
+        vSet_ExtSlaveState(pstHWRdyCtrl, eNewState);
+        pstHWRdyCtrl->iReadyWaitStartTime = k_uptime_get();
+    }
+}
+
+//CurrentState: eSlave_RdyState_Ready
+static void vUpdate_At_ReadyState(sT_SPISlave_Control_t *pstSlave, sT_HWReadyPin_Ctrl *pstHWRdyCtrl, eSPI_ExternalSlave_State_t eNewState)
+{
+    if(eNewState == eSlave_RdyState_Idle ||
+       eNewState == eSlave_RdyState_WaitingForReady)
+    {
+        vSet_ExtSlaveState(pstHWRdyCtrl, eNewState);
+        pstHWRdyCtrl->iReadyWaitStartTime = k_uptime_get();
+    }
+}
+
+//CurrentState: eSlave_RdyState_WaitingForReady
+static void vUpdate_At_WaitForReadyState(sT_SPISlave_Control_t *pstSlave, 
+                                         sT_HWReadyPin_Ctrl *pstHWRdyCtrl, 
+                                         eSPI_ExternalSlave_State_t eNewState,
+                                         sT_SPIReadyNotification_t *pstSlaveRdyTimeOutCtrl)
+{
+    if(eNewState == eSlave_RdyState_Idle ||
+       eNewState == eSlave_RdyState_Ready)
+    {
+        vSet_ExtSlaveState(pstHWRdyCtrl, eNewState);
+        pstHWRdyCtrl->iReadyWaitStartTime = k_uptime_get();
+    }
+    else if(eNewState == eSlave_RdyState_Timeout)
+    {
+        vSet_ExtSlaveState(pstHWRdyCtrl, eNewState);
+    }
+    else if(eNewState == eSlave_RdyState_WaitingForReady)
+    {
+        if((k_uptime_get() - pstHWRdyCtrl->iReadyWaitStartTime) >= SPI_RDY_TIMEOUT_PERIOD_ms)
+        {
+            eNewState = eSlave_RdyState_Timeout;
+            vSet_ExtSlaveState(pstHWRdyCtrl, eNewState);
+
+            if(pstSlave->stTConfigs.pvSPI_CallBack != NULL)
+            {
+                pstSlaveRdyTimeOutCtrl->bPending = true;
+                pstSlaveRdyTimeOutCtrl->pvCallback = pstSlave->stTConfigs.pvSPI_CallBack;
+            } 
+        }
+    }
+}
+
+//CurrentState: eSlave_RdyState_Idle
+static void vUpdate_At_IdleState(sT_SPISlave_Control_t *pstSlave, sT_HWReadyPin_Ctrl *pstHWRdyCtrl, eSPI_ExternalSlave_State_t eNewState)
+{
+    if(eNewState == eSlave_RdyState_Ready || 
+       eNewState == eSlave_RdyState_WaitingForReady)
+    {
+        vSet_ExtSlaveState(pstHWRdyCtrl, eNewState);
+        pstHWRdyCtrl->iReadyWaitStartTime = k_uptime_get();
+    }
+}
+
+static bool bIsSlaveInActiveState(sT_SPI_MasterCtrl *pstMasterCtrl)
+{
+    if(pstMasterCtrl == NULL)
+    {
+        FHALT("Null Pointer reference for Master SPI control");
+        return false;
+    }
+
+    sT_SPISlave_Control_t *pstSlave = pstGetSlaveInfo(pstMasterCtrl->eActiveSlaveId ,pstMasterCtrl->pstSPISlaveHead_Ctrl);
+    if(pstSlave == NULL)
+    {
+        FHALT("Null Pointer reference for Master SPI Ext Slave for Id: %d", pstMasterCtrl->eActiveSlaveId);
+        return false;        
+    }
+
+    sT_HWReadyPin_Ctrl *pstPinCtrl = &pstSlave->stTConfigs.stTHWReadyCtrl;
+    if(!pstPinCtrl->bHWReady_Used)
+    {
+        return true;
+    }
+    eSPI_ExternalSlave_State_t eState = eGetSlaveState(pstPinCtrl);
+    
+    switch(eState)
+    {
+        case eSlave_RdyState_Ready:
+            return true;
+        case eSlave_RdyState_Idle:
+        case eSlave_RdyState_WaitingForReady:
+        case eSlave_RdyState_Timeout:
+        default:
+            return false;       
+    }
+
+}
+
+eSPI_ExternalSlave_State_t eGetSPI_MasterModeExt_SlaveState(eSPIModule_t eModuleId, eSPI_Slave_Id_t eSlaveId)
+{
+    if(eModuleId >= eNUMBER_OF_SPI_MODULEs)
+    {
+        FHALT("Invalid Module Id: %d", eModuleId);
+        return eNUMBER_OF_SLAVE_STATEs;
+    }
+    if(eSlaveId >= eNUMBER_OF_SPI_SLAVEs)
+    {
+        FHALT("Invalid Slave Id: %d", eSlaveId);
+        return eNUMBER_OF_SLAVE_STATEs;        
+    }
+    if(!bIsModule_Initialized(eModuleId) || eGetSPIMode(eModuleId) != eSPI_Mode_Controller)
+    {
+        FHALT("Module[%d] not initialized Or not in Controller mode", eModuleId);
+        return eNUMBER_OF_SLAVE_STATEs;        
+    }
+
+    struct k_mutex *pstMutex = &staSPIModule[eModuleId].stTSPIDevCtrl.st_DevCtrlMode.stTMasterCtrl.mutex_spiMaster_DeInitCtrl;
+    k_mutex_lock(pstMutex, K_FOREVER);
+
+    const sT_SPISlave_Config_t *pstSlaveConfig = pstGetSlaveConfig(eModuleId, eSlaveId);
+    if(pstSlaveConfig == NULL)
+    {
+        k_mutex_unlock(pstMutex);
+        FHALT("Requested Slave Id[Id : %d] is not enlisted for SPI Module[%d]", eSlaveId, eModuleId);
+        return eNUMBER_OF_SLAVE_STATEs;          
+    }
+    if(!pstSlaveConfig->stTHWReadyCtrl.bHWReady_Used)
+    {
+        k_mutex_unlock(pstMutex);
+        FHALT("Requested Slave Id[Id : %d] is not defined as it uses HW Ready Pin", eSlaveId);
+        return eNUMBER_OF_SLAVE_STATEs;        
+    }
+
+    eSPI_ExternalSlave_State_t eState = eGetSlaveState(&pstSlaveConfig->stTHWReadyCtrl);
+    k_mutex_unlock(pstMutex);
+    return eState;
+}
+
+void vReset_SPIMasterMode_ExtSlaveState(eSPIModule_t eModuleId, eSPI_Slave_Id_t eSlaveId)
+{
+    if(eModuleId >= eNUMBER_OF_SPI_MODULEs)
+    {
+        FHALT("Invalid Module Id: %d", eModuleId);
+        return;
+    }
+    if(eSlaveId >= eNUMBER_OF_SPI_SLAVEs)
+    {
+        FHALT("Invalid Slave Id: %d", eSlaveId);
+        return;        
+    }
+    if(!bIsModule_Initialized(eModuleId) || eGetSPIMode(eModuleId) != eSPI_Mode_Controller)
+    {
+        FHALT("Module[%d] not initialized Or not in Controller mode", eModuleId);
+        return;        
+    }
+
+    struct k_mutex *pstMutex = &staSPIModule[eModuleId].stTSPIDevCtrl.st_DevCtrlMode.stTMasterCtrl.mutex_spiMaster_DeInitCtrl;
+    k_mutex_lock(pstMutex, K_FOREVER);
+
+    sT_SPISlave_Config_t *pstSlaveConfig = (sT_SPISlave_Config_t *)pstGetSlaveConfig(eModuleId, eSlaveId);
+    if(pstSlaveConfig == NULL)
+    {
+        k_mutex_unlock(pstMutex);
+        FHALT("Requested Slave Id[Id : %d] is not enlisted for SPI Module[%d]", eSlaveId, eModuleId);
+        return;          
+    }
+    if(!pstSlaveConfig->stTHWReadyCtrl.bHWReady_Used)
+    {
+        k_mutex_unlock(pstMutex);
+        return;
+    }
+    
+    vSet_ExtSlaveState(&pstSlaveConfig->stTHWReadyCtrl, eSlave_RdyState_Idle);
+    k_mutex_unlock(pstMutex);
+}
+
+static inline void vSet_SPIMaster_SlaveRdyMonitor_ThreadInitFlag( void )
+{
+    atomic_store_explicit(&bIsSlaveRdyMonitor_Initialized, true, memory_order_release);
+}
+
+static inline bool bGet_SPIMaster_SlaveRdyMonitor_ThreadInitFlag( void )
+{
+    bool bres = atomic_load_explicit(&bIsSlaveRdyMonitor_Initialized, memory_order_acquire);
+    return bres;
+}
+
+static inline void vClear_SPIMaster_SlaveRdyMonitor_ThreadInitFlag( void )
+{
+    atomic_store_explicit(&bIsSlaveRdyMonitor_Initialized, false, memory_order_release);
+}
+
+static inline void vSet_ExtSlaveState(sT_HWReadyPin_Ctrl *pstHWRdyCtrl, eSPI_ExternalSlave_State_t eState)
+{
+    atomic_store_explicit(&pstHWRdyCtrl->eSlaveState, eState, memory_order_release);
+}
+
+static inline eSPI_ExternalSlave_State_t eGetSlaveState(const sT_HWReadyPin_Ctrl *pstHWRdyCtrl)
+{
+    eSPI_ExternalSlave_State_t eState = atomic_load_explicit(&pstHWRdyCtrl->eSlaveState, memory_order_acquire);
+    return eState;
 }
 
 static lpspi_which_pcs_t eGet_SPI_HW_CSPin(eSPI_PCS_t eHW_CSPin)
@@ -2263,7 +2773,7 @@ static LPSPI_Type *pstGetSPIDevice(eSPIModule_t eModule)
 
 #pragma region Utility Functions
 
-const sT_SPISlave_Config_t *pstGetSlaveConfig(eSPIModule_t eModuleId, eSPI_Slave_Id_t eSlaveId)
+static const sT_SPISlave_Config_t *pstGetSlaveConfig(eSPIModule_t eModuleId, eSPI_Slave_Id_t eSlaveId)
 {
     if(eModuleId >= eNUMBER_OF_SPI_MODULEs)
     {
