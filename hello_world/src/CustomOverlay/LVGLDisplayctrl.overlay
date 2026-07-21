@@ -1,0 +1,37 @@
+/ {
+    chosen {
+        zephyr,display = &st7735r_display;
+    };
+
+    mipi_dbi_lcd {
+        compatible = "zephyr,mipi-dbi-spi";
+
+        spi-dev = <&lpspi0>;
+
+        dc-gpios = <&gpio3 30 GPIO_ACTIVE_HIGH>;
+        reset-gpios = <&gpio3 29 GPIO_ACTIVE_LOW>;
+
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        st7735r_display: st7735r@0 {
+            compatible = "sitronix,st7735r";
+            status = "okay";
+            reg = <0>;
+
+            width = <160>;
+            height = <128>;
+            x-offset = <0>;
+            y-offset = <0>;
+
+            mipi-max-frequency = <16000000>;
+            mipi-mode = "MIPI_DBI_MODE_SPI_4WIRE";
+
+            madctl = <0xA8>;
+            colmod = <0x05>;
+
+            gamctrp1 = [ 04 22 07 0a 2e 30 25 2a 28 26 2e 3a 00 01 03 13 ];
+            gamctrn1 = [ 04 16 06 0d 2d 26 23 27 27 25 2d 3b 00 01 04 13 ];
+        };
+    };
+};

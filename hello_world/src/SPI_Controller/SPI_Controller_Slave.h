@@ -1,6 +1,7 @@
 #ifndef SPI_CONTROLLER_SLAVE_H
 #define SPI_CONTROLLER_SLAVE_H
 
+#ifdef USE_SPI
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -10,4 +11,5 @@
 
 extern void vConfigure_SPISLave( void );
 
+#endif
 #endif

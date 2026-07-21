@@ -53,53 +53,7 @@ int main(void)
 
 	while (1)
 	{
-		#ifdef USE_SPI_MASTER
-			if(!bIsSent)
-			{
-				if(!bSPI_SendData(eSPI_Slave_0, uiaCMDData, 8))
-				{
-					k_msleep(1);
-					continue;
-				}
-				bIsSent = true;
-				k_msleep(1);
-			}
-			if(bIsSent && !bisReceived)
-			{
-				if(!bSPI_ReceiveData(eSPI_Slave_0, NULL, 0, 8))
-				{
-					k_msleep(1);
-					continue;
-				}
-				bisReceived = true;
-			}
-			k_msleep(1);
-			bIsSent = false; bisReceived = false;
-		#else
-			k_msleep(500);
-			if(uiCount < 12 && !bDeinited)
-			{
-				uiCount++;
-			}
-			
-			if(!bDeinited)
-			{
-				if(!bDeInit_SPI(eSPI_0))
-				{
-					k_msleep(100);
-					continue;
-				}
 
-				uiCount = 0;
-				bDeinited = true;
-				k_msleep(2000);
-			}
-			else{
-				vConfigure_SPISLave();
-				bDeinited = false;
-				k_msleep(100);
-			}
-		#endif
 	}
 	
 }
@@ -113,11 +67,6 @@ void vInit_Amp( void )
 	vConfigure_DAC();
 	//vInitialize_ADCModule();
 
-	#ifdef USE_SPI_MASTER
-		vConfigure_SPI();
-	#else
-		vConfigure_SPISLave();
-	#endif
 
 	SET_AMP_SD();
 	//bUpdate_PWM_Duty(eCTPWM1, 50);

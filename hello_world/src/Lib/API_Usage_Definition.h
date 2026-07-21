@@ -4,6 +4,7 @@
 // #define USE_ADC
 #define USE_DAC
 // #define USE_PWM
-#define USE_SPI
+// #define USE_SPI
+#define USE_LVGL_DISPLAY
 
 #endif

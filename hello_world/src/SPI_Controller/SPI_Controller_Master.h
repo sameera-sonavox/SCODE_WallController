@@ -1,6 +1,8 @@
 #ifndef SPI_CONTROLLER_MASTER_H
 #define SPI_CONTROLLER_MASTER_H
 
+#ifdef USE_SPI
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -10,5 +12,7 @@
 extern void vConfigure_SPI( void );
 extern bool bSPI_SendData(eSPI_Slave_Id_t eSlaveId, uint8_t *puiTxData, uint8_t uiLen);
 extern bool bSPI_ReceiveData(eSPI_Slave_Id_t eSlaveId, uint8_t *puiCMD, uint8_t uiCMDLen, uint8_t uiRxLen);
+
+#endif
 
 #endif

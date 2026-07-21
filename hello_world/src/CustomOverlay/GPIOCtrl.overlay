@@ -18,15 +18,10 @@
 			label = "SPI0 HWReady";
 		};
 
-		spi0_slave0_hw_rdy_pin: spi0_slave0_hw_rdy_pin {
-			gpios = <&gpio3 30 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN | KINETIS_GPIO_DS_ALT)>;
-			label = "Slave0 HWReady";
-		};
 	};
 
 	aliases {
 		debug-pin-0 = &debug_pin;
 		spi0-slave-hw-rdy = &spi0_slave_hw_rdy_pin;
-		spi0-slave0-hw-rdy = &spi0_slave0_hw_rdy_pin;
 	};
 };

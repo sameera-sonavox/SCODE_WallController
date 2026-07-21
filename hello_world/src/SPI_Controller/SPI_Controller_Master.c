@@ -2,6 +2,7 @@
 #include "../Lib/SPI/NXP_SPI_API.h"
 #include "../Lib/GenericMacro.h"
 
+#ifdef USE_SPI
 sT_SPIMasterTransfer_t stTTransfer[eNUMBER_OF_SPI_SLAVEs] = {0};
 void SPI_Slave_0_Callback(eSPI_Slave_Id_t eSlaveId, eSPI_TransferResult_t eResult);
 void vFree_SPI_TansferBuffers(sT_SPIMasterTransfer_t *pstTTransfer);
@@ -265,3 +266,4 @@ bool bCaller_Should_Release_Buffer(eSPIBuffer_ReleaseType_t eReleaseType)
 			return false;
 	}
 }
+#endif

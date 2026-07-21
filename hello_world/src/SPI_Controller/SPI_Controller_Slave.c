@@ -1,3 +1,5 @@
+#ifdef USE_SPI
+
 #include "SPI_Controller_Slave.h"
 #include "../Lib/GenericMacro.h"
 #include <zephyr/kernel.h>
@@ -83,3 +85,5 @@ static void vSPI_SlaveCallback(eSPI_PeripheralEvent_Type_t eEventType,
           stTBuffData.eState,
           stTBuffData.uisize);
 }
+
+#endif
