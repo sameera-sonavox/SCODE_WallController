@@ -1,27 +1,29 @@
 #include <zephyr/dt-bindings/gpio/nxp-kinetis-gpio.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
 
 / {
-	debug_pins {
-		compatible = "gpio-leds";
+	input_pins {
+		compatible = "gpio-keys";
+		debounce-interval-ms = <30>;
 
-		debug_pin: debug_pin {
-			gpios = <&gpio1 14 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP | KINETIS_GPIO_DS_ALT)>;
-			label = "Debug Pin";
+		eqdc_sw_pin: eqdc_sw_pin {
+			gpios = <&gpio3 31 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+            zephyr,code = <INPUT_KEY_0>;
+            label = "Encoder switch";
 		};
 	};
 
-	spi_ready_pins {
+	output_pins {
 		compatible = "gpio-leds";
 
-		spi0_slave_hw_rdy_pin: spi0_slave_hw_rdy_pin {
-			gpios = <&gpio1 15 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN | KINETIS_GPIO_DS_ALT)>;
-			label = "SPI0 HWReady";
+		lvgl_bk_light_en: lvgl_bk_light_en{
+			gpios = <&gpio3 30 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+			label = "Display BackLightControl";
 		};
-
 	};
 
 	aliases {
-		debug-pin-0 = &debug_pin;
-		spi0-slave-hw-rdy = &spi0_slave_hw_rdy_pin;
+		enc-sw = &eqdc_sw_pin;
+		lvgl-bk-en = &lvgl_bk_light_en;
 	};
 };

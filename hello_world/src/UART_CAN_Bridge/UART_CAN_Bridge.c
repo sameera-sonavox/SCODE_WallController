@@ -8,7 +8,7 @@
 #include <zephyr/kernel.h>
 
 #include "../CAN_Controller/CAN_Controller.h"
-#include "../Lib/CAN/NXP_CAN_ProjDef.h"
+#include "CAN/NXP_CAN_ProjDef.h"
 
 #include "UART_CAN_Bridge.h"
 

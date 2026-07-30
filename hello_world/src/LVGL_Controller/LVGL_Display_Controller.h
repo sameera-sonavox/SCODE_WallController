@@ -1,10 +1,7 @@
 #ifndef LVGL_DISPLAY_CONTROLLER_H
 #define LVGL_DISPLAY_CONTROLLER_H
 
-#include "../Lib/API_Usage_Definition.h"
-
-#ifdef USE_LVGL_DISPLAY
-
+#include "API_Usage_Definition.h"
 #include "LVGL_Display_Types.h"
 
 extern void vInit_UI( void );
@@ -12,7 +9,13 @@ extern void vLoad_Screen( eScreenId_t eID );
 extern bool bRemove_AudioSource( eAudioSrc_Id_t eSrcId );
 extern bool bSet_AudioSource_ActiveState( eAudioSrc_Id_t eSrcId, bool bIsActive );
 extern bool bSet_AudioSource_MuteState( eAudioSrc_Id_t eSrcId, bool bIsMute );
+extern void vRun_UI( void );
 
-#endif
+extern void vClear_EncSWPressed( void );
+extern bool bIsEncSWPressed( void );
+
+extern void vSet_ScreenActive(eScreenId_t eId);
+extern void vSet_ScreenInactive(eScreenId_t eId);
+extern eScreenId_t eGetActiveScreen( void );
 
 #endif

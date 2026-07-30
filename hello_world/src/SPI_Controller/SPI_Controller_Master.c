@@ -1,6 +1,6 @@
 #include "SPI_Controller_Master.h"
-#include "../Lib/SPI/NXP_SPI_API.h"
-#include "../Lib/GenericMacro.h"
+#include "SPI/NXP_SPI_API.h"
+#include "GenericMacro.h"
 
 #ifdef USE_SPI
 sT_SPIMasterTransfer_t stTTransfer[eNUMBER_OF_SPI_SLAVEs] = {0};

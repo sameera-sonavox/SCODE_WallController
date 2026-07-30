@@ -1,15 +1,15 @@
 #ifndef LVGL_DISPLAY_TYPES_H
 #define LVGL_DISPLAY_TYPES_H
 
-#include "../Lib/API_Usage_Definition.h"
-
-#ifdef USE_LVGL_DISPLAY
+#include "API_Usage_Definition.h"
 
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdatomic.h>
 #include <lvgl.h>
+#include <zephyr/kernel.h>
 
+#include "../Lib/QDC/NXP_eQDC_Types.h"
 #include "LVGL_ProjDef.h"
 
 typedef enum
@@ -63,6 +63,30 @@ typedef enum
     eNUMBER_OF_AUDIO_SOURCES
 } eAudioSrc_Id_t;
 
+typedef enum{
+    eFont_Size_10,
+    eFont_Size_12,
+    eFont_Size_14,
+    eFont_Size_16,
+    eFont_Size_18,
+    eFont_Size_20,
+/*     eFont_Size_22,
+    eFont_Size_24,
+    eFont_Size_26,
+    eFont_Size_28,
+    eFont_Size_30,
+    eFont_Size_32,
+    eFont_Size_34,
+    eFont_Size_36,
+    eFont_Size_38,
+    eFont_Size_40,
+    eFont_Size_42,
+    eFont_Size_44,
+    eFont_Size_46,
+    eFont_Size_48, */
+    eNUMBER_OF_FONT_SIZEs
+} eFontSize_t;
+
 typedef struct
 {
     lv_coord_t lx;
@@ -88,13 +112,23 @@ typedef struct
     eAudioSrc_Id_t eSrcId;
     lv_obj_t *pstAudSrcObj;
     char acName[24];
+    _Atomic bool bIsExlusivelyOwned;//Only one entity will own the source
+    _Atomic bool bIsInclusivelyOwned;//Multiple entities can own the resource
     _Atomic bool bIsActive;
     _Atomic bool bIsMute;
     _Atomic bool bIsSelected;
     _Atomic bool bIsVisible;
-    uint16_t uiVolume;
+    _Atomic uint16_t uiVolume;
     sT_UIControl staUIControls[NUMBER_OF_UI_CONTROLS_PER_AUDIO_SOURCE];
+    lv_point_precise_t sourceHoriz_SeparatorPoints[2];
 } sT_AudioSource_t;
+
+typedef struct
+{
+    sT_eQDC_PosChangeNotify_t stTEncPhaseData;
+    _Atomic bool bIsEncPressed;
+    struct k_mutex stkIsLocked;
+} sT_QEncData_t;
 
 typedef struct
 {
@@ -106,19 +140,17 @@ typedef struct
 
 } sT_UIScreenDisplay;
 
-typedef struct
+typedef struct sT_UIScreen_t
 {
     eScreenId_t eScreenId;
     _Atomic bool bIsActive;
     lv_obj_t *pstScreenObj;
 
-    void (*pfCreate)(void);
+    void (*pfCreate)(struct sT_UIScreen_t *pstUIScreen);
     void (*pfShow)(void);
     void (*pfDestroy)(void);
 
     sT_UIScreenDisplay stTDisplayInfo;
 } sT_UIScreen_t;
-
-#endif
 
 #endif

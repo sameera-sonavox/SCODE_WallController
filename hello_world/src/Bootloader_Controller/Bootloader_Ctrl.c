@@ -3,7 +3,7 @@
 #include <zephyr/dfu/mcuboot.h>
 #include <zephyr/sys/reboot.h>
 
-#include "../Lib/CAN/NXP_CAN_API.h"
+#include "CAN/NXP_CAN_API.h"
 #include "Bootloader_Ctrl.h"
 
 #if defined(DEBUG_BOOTLOADER)

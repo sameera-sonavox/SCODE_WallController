@@ -1,0 +1,22 @@
+#include <nxp/mcx/MCXA156VLL-pinctrl.h>
+
+&pinctrl {
+    pinmux_eqdc0_phase: pinmux_eqdc0_phase {
+        group0 {
+            pinmux = <TRIG_IN4_P4_6>,
+                     <TRIG_IN9_P2_17>;
+            slew-rate = "slow";
+            drive-strength = "low";
+            input-enable;
+        };
+    };
+};
+
+/ {
+    eqdc0_phase_pins: eqdc0-phase-pins {
+        compatible = "nxp,eqdc-phase-pins";
+        pinctrl-0 = <&pinmux_eqdc0_phase>;
+        pinctrl-names = "default";
+        status = "okay";
+    };
+};

@@ -1,7 +1,7 @@
 #include "CAN_Controller.h"
 #include <stdint.h>
 #include <stdbool.h>
-#include "../Lib/GenericMacro.h"
+#include "GenericMacro.h"
 #include "../Bootloader_Controller/Bootloader_Ctrl.h"
 #include "../Bootloader_Controller/Bootloader_TypeDef.h"
 #include "../UART_CAN_Bridge/UART_CAN_Bridge.h"

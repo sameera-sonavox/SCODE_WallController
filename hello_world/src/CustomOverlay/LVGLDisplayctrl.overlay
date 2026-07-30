@@ -8,7 +8,7 @@
 
         spi-dev = <&lpspi0>;
 
-        dc-gpios = <&gpio3 30 GPIO_ACTIVE_HIGH>;
+        dc-gpios = <&gpio3 18 GPIO_ACTIVE_HIGH>;
         reset-gpios = <&gpio3 29 GPIO_ACTIVE_LOW>;
 
         #address-cells = <1>;

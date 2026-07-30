@@ -1,42 +1,44 @@
 
-#include "../Lib/API_Usage_Definition.h"
-
-#ifdef USE_LVGL_DISPLAY
+#include "API_Usage_Definition.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/display.h>
 #include <lvgl_zephyr.h>
+#include <zephyr/drivers/gpio.h>
+#include <zephyr/input/input.h>
+#include <zephyr/drivers/pinctrl.h>
 
 #include "LVGL_Display_Controller.h"
-#include "../Lib/GenericMacro.h"
+#include "GenericMacro.h"
 #include "Screen_Parameters/LVGL_AudioSources_UIParam.h"
+#include "Screen_Parameters/LVGL_AudioSource_UIScreen.h"
+#include "QDC/NXP_eQDC_API.h"
+
+PINCTRL_DT_DEFINE(EQDC0_PHASE_PIN_NODE);
+
+static const struct device *const pstEncSWInputDevice = DEVICE_DT_GET(DT_PARENT(ENC_SW_PIN_NODE));
+static const struct gpio_dt_spec stLVGL_BKPWEn = GPIO_DT_SPEC_GET(LVGL_BACKLIGHT_EN_PIN_NODE, gpios);
+
+static sT_eQDCConfig_t eQDCUIScreen = {0};
+static sT_QEncData_t stTEncData = {0};
 
 static void vInit_Screens(void);
-static void vInit_SourceSelectScreen_Controls(sT_UIScreen_t *pstAudioSrcSelect);
+static void vInitialize_eQDC( void );
+static bool bConfigure_eQDC_PhasePins( void );
+static void vEncoder_Callback(sT_eQDC_PosChangeNotify_t stTeQDCData);
+static inline void vMark_EncDataInvalid(sT_eQDC_PosChangeNotify_t *pstNotifyCtrl);
 
-static void vSetup_AudioSourceList( void );
-static void vCreate_SourceList( void );
-static lv_obj_t *pstCreate_UILabel(lv_obj_t *pstParent, sT_UIObj_Label *pstTObj_Label, sT_AudioSource_t *pstAudioSrc);
+static bool bConfigure_EncSWPin( void );
+static void vEnc_SWPressed_InterruptHandler(struct input_event *pstEvent, void *puserData);
+static bool bConfigure_LVGL_BKCtrlPin( void );
+static inline bool bEn_Display_Backlight( void );
+static inline bool bDis_Display_Backlight( void );
 
-static inline void vSet_ScreenActive(eScreenId_t eId);
-static inline void vSet_ScreenInactive(eScreenId_t eId);
-static inline eScreenId_t eGetActiveScreen( void );
+static inline void vSet_EncSWPressed( void );
 
-static inline bool bIsAudioSourceVisible(sT_AudioSource_t *pstAudioSrc);
-static inline bool bIsAudioSourceActive(sT_AudioSource_t *pstAudioSrc);
-static inline bool bIsAudioSrcSelected(sT_AudioSource_t *pstAudioSrc);
-static inline bool bIsAudioSrcMuted(sT_AudioSource_t *pstAudioSrc);
-
-static inline void vSet_AudioSourceVisibilityFlag(sT_AudioSource_t *pstAudioSrc);
-static inline void vSet_AudioSourceActiveFlag(sT_AudioSource_t *pstAudioSrc);
-static inline void vSet_AudioSourceSelectedFlag(sT_AudioSource_t *pstAudioSrc);
-static inline void vSet_AudioSourceMutedFlag(sT_AudioSource_t *pstAudioSrc);
-
-static inline void vClear_AudioSourceVisibilityFlag(sT_AudioSource_t *pstAudioSrc);
-static inline void vClear_AudioSourceActiveFlag(sT_AudioSource_t *pstAudioSrc);
-static inline void vClear_AudioSourceSelectedFlag(sT_AudioSource_t *pstAudioSrc);
-static inline void vClear_AudioSourceMutedFlag(sT_AudioSource_t *pstAudioSrc);
+K_MSGQ_DEFINE(kmsgq_eQDC_MessageQueue, sizeof(sT_eQDC_PosChangeNotify_t), MAX_ENCODER_MESSAGEs, 4);
+INPUT_CALLBACK_DEFINE(pstEncSWInputDevice, vEnc_SWPressed_InterruptHandler, NULL);
 
 sT_UIScreen_t staUIScreens[eNUMBER_OF_SCREENs] = {
     
@@ -53,11 +55,29 @@ sT_UIScreen_t staUIScreens[eNUMBER_OF_SCREENs] = {
                 .acName = "BT Audio",
                 .bIsActive = true,
                 .bIsVisible = true,
+                .sourceHoriz_SeparatorPoints[0] = {.x = 0U, .y = DEFAULT_AUDIOSRC_SEPARATOR_COORD_Y},
+                .sourceHoriz_SeparatorPoints[1] = {.x = AUDIO_SOURCE_LIST_DISPLAY_WIDTH, .y = DEFAULT_AUDIOSRC_SEPARATOR_COORD_Y},
             },
             {
                 .acName = "MIC",
                 .bIsActive = true,
                 .bIsVisible = true,
+                .sourceHoriz_SeparatorPoints[0] = {.x = 0U, .y = DEFAULT_AUDIOSRC_SEPARATOR_COORD_Y},
+                .sourceHoriz_SeparatorPoints[1] = {.x = AUDIO_SOURCE_LIST_DISPLAY_WIDTH, .y = DEFAULT_AUDIOSRC_SEPARATOR_COORD_Y},
+            },
+            {
+                .acName = "Conference RM",
+                .bIsActive = true,
+                .bIsVisible = true,
+                .sourceHoriz_SeparatorPoints[0] = {.x = 0U, .y = DEFAULT_AUDIOSRC_SEPARATOR_COORD_Y},
+                .sourceHoriz_SeparatorPoints[1] = {.x = AUDIO_SOURCE_LIST_DISPLAY_WIDTH, .y = DEFAULT_AUDIOSRC_SEPARATOR_COORD_Y},
+            },
+            {
+                .acName = "Office",
+                .bIsActive = true,
+                .bIsVisible = true,
+                .sourceHoriz_SeparatorPoints[0] = {.x = 0U, .y = DEFAULT_AUDIOSRC_SEPARATOR_COORD_Y},
+                .sourceHoriz_SeparatorPoints[1] = {.x = AUDIO_SOURCE_LIST_DISPLAY_WIDTH, .y = DEFAULT_AUDIOSRC_SEPARATOR_COORD_Y},
             }
         },        
     }
@@ -67,9 +87,198 @@ void vInit_UI( void )
 {
     vInit_Screens();
 
-    vSetup_AudioSourceList();
+    vSetup_AudioSourceList( &staUIScreens[eScreen_SourceSelect] );
+
+    bEn_Display_Backlight();
 
     vLoad_Screen(eScreen_SourceSelect);
+
+    vInitialize_eQDC();
+}
+
+static void vInitialize_eQDC( void )
+{
+    if(!bConfigure_eQDC_PhasePins())
+        return;
+
+    eQDCUIScreen.bIsConfigOk = false;
+    eQDCUIScreen.eID = eQDC_0;
+    eQDCUIScreen.eQDCCountMode = eQDC_QuadratureCycle_1Count;
+    eQDCUIScreen.eQuadratureMode = eQDCMode_NormalQuadrature;
+    eQDCUIScreen.eInpRoute_PhaseA = eQDCIN_4;
+    eQDCUIScreen.eInpRoute_PhaseB = eQDCIN_9;
+
+    eQDCUIScreen.stTHWTrigCtrl.bUseHWTriggerForEncRead = true;
+    eQDCUIScreen.stTHWTrigCtrl.eCTimerSrc = eTrigSrc_CTIMER0_MAT2;
+    eQDCUIScreen.stTHWTrigCtrl.uiTrigFrequency_Hz = 500;
+
+    eQDCUIScreen.stTInpFiltConfig.bIsEnabled = true;
+    eQDCUIScreen.stTInpFiltConfig.eFilterSampleCount = eQDC_FiltSampleCOunt_3U;
+    eQDCUIScreen.stTInpFiltConfig.eRefClock_PreScalar = eQDC_Prescalar_4096U;
+    eQDCUIScreen.stTInpFiltConfig.uiSamplePeriod_us = 250U;
+    eQDCUIScreen.pvUserCallback = vEncoder_Callback;
+
+    k_mutex_init(&stTEncData.stkIsLocked);
+
+    if(!bConfigure_EncSWPin())
+        return;
+
+    vInit_eQDC(&eQDCUIScreen);
+
+    if(!eQDCUIScreen.bIsConfigOk)
+    {
+        FHALT("Quadrature Encoder Configuration Failed");
+    }
+    printf("eQDC Initialized\n\r");
+}
+
+static bool bConfigure_eQDC_PhasePins( void )
+{
+    static const struct pinctrl_dev_config *pstPinConfig = PINCTRL_DT_DEV_CONFIG_GET(EQDC0_PHASE_PIN_NODE);
+
+    int res = pinctrl_apply_state(pstPinConfig, PINCTRL_STATE_DEFAULT);
+    if(res != 0)
+    {
+        FHALT("eQDC phase pin configuration failed: %d", res);
+        return false;        
+    }
+
+    return true;
+}
+
+static bool bConfigure_EncSWPin(void)
+{
+    if (!device_is_ready(pstEncSWInputDevice))
+    {
+        FHALT("Encoder switch input device is not ready");
+        return false;
+    }
+
+    return true;
+}
+
+static bool bConfigure_LVGL_BKCtrlPin( void )
+{
+    if(!gpio_is_ready_dt(&stLVGL_BKPWEn))
+    {
+        FHALT("GPIO for BackLight Control is not ready");
+        return false;
+    }
+
+    int ret = gpio_pin_configure_dt(&stLVGL_BKPWEn, GPIO_OUTPUT);
+    if(ret != 0)
+    {
+        FHALT("GPIO for BackLight Control cannot be configured as output");
+        return false;        
+    }
+
+    if(!bDis_Display_Backlight())
+    {
+        FHALT("GPIO for BackLight Control cannot be driven");
+        return false;         
+    }
+    return true;
+}
+
+static inline bool bEn_Display_Backlight( void )
+{
+    int ret = gpio_pin_set_dt(&stLVGL_BKPWEn, 1);
+    if(ret != 0)
+        return false;
+    return true;
+}
+
+static inline bool bDis_Display_Backlight( void )
+{
+    int ret = gpio_pin_set_dt(&stLVGL_BKPWEn, 0);
+    if(ret != 0)
+        return false;
+    return true;
+}
+
+static void vEnc_SWPressed_InterruptHandler(struct input_event *pstEvent, void *puserData)
+{
+    ARG_UNUSED(puserData);
+
+    if ((pstEvent->type == INPUT_EV_KEY) &&
+        (pstEvent->code == INPUT_KEY_0) &&
+        (pstEvent->value == 1))
+    {
+        vSet_EncSWPressed();
+    }    
+}
+
+static void vEncoder_Callback(sT_eQDC_PosChangeNotify_t stTeQDCData)
+{
+    uint32_t uiFreeMsgs = k_msgq_num_free_get(&kmsgq_eQDC_MessageQueue);
+    if(uiFreeMsgs > 0)
+    {
+        k_msgq_put(&kmsgq_eQDC_MessageQueue, &stTeQDCData, K_NO_WAIT);
+        printf("message received bye...\n\r");
+    }
+    else
+    {
+        sT_eQDC_PosChangeNotify_t stTTemp = {0};
+        (void)k_msgq_get(&kmsgq_eQDC_MessageQueue, &stTTemp, K_NO_WAIT);
+        (void)k_msgq_put(&kmsgq_eQDC_MessageQueue, &stTeQDCData, K_NO_WAIT);
+    }
+}
+
+struct k_msgq *pstGetMessageQueue( void )
+{
+    return &kmsgq_eQDC_MessageQueue;
+}
+
+void vRun_UI( void )
+{
+    int ret = k_msgq_get(pstGetMessageQueue(), &stTEncData.stTEncPhaseData, K_NO_WAIT);
+    
+    if(ret !=0 && !bIsEncSWPressed())
+        return;
+    if(bIsEncSWPressed() && ret !=0)
+    {
+        vMark_EncDataInvalid(&stTEncData.stTEncPhaseData);
+    }
+
+    k_mutex_lock(&stTEncData.stkIsLocked, K_FOREVER);
+    eScreenId_t eActiveScreen = eGetActiveScreen();
+
+    switch(eActiveScreen)
+    {
+        case eScreen_Welcome:
+            break;
+        case eScreen_SourceSelect:
+            vRun_AudioSourceScreen(&staUIScreens[eScreen_SourceSelect], &stTEncData);
+            break;
+        default:
+            k_mutex_unlock(&stTEncData.stkIsLocked);
+            FHALT("Screen : %d, is not yet implemented", eActiveScreen);
+            break;
+    }
+    k_mutex_unlock(&stTEncData.stkIsLocked);
+}
+
+static inline void vMark_EncDataInvalid(sT_eQDC_PosChangeNotify_t *pstNotifyCtrl)
+{
+    if(pstNotifyCtrl == NULL)
+        return;
+    atomic_store_explicit(&pstNotifyCtrl->bIsValid, false, memory_order_release);
+}
+
+static inline void vSet_EncSWPressed( void )
+{
+    atomic_store_explicit(&stTEncData.bIsEncPressed, true, memory_order_release);
+}
+
+void vClear_EncSWPressed( void )
+{
+    atomic_store_explicit(&stTEncData.bIsEncPressed, false, memory_order_release);
+}
+
+bool bIsEncSWPressed( void )
+{
+    bool bIsPressed = atomic_load_explicit(&stTEncData.bIsEncPressed, memory_order_acquire);
+    return bIsPressed;
 }
 
 void vLoad_Screen( eScreenId_t eID )
@@ -79,13 +288,36 @@ void vLoad_Screen( eScreenId_t eID )
         FHALT("Invalid Screen Id: %d", eID);
         return;
     }
+    if(staUIScreens[eID].pstScreenObj == NULL)
+    {
+        FHALT("Scrren[%d] could not be loaded, since it is not registered.", eID);
+        return;
+    }
 
+    lvgl_lock();
     lv_screen_load(staUIScreens[eID].pstScreenObj);
+    lvgl_unlock();
+
     vSet_ScreenActive(eID);
+
+    switch(eID)
+    {
+        case eScreen_Welcome:
+            break;
+        case eScreen_SourceSelect:
+            vSetup_AudioSrc_ScreenStartup(&staUIScreens[eID]);
+            break;
+        default:
+            FHALT("Screen Not Implemented Screen: %d", eID);
+            break;
+    }
 }
 
 static void vInit_Screens(void)
-{
+{    
+    if(!bConfigure_LVGL_BKCtrlPin())
+        return;
+
     for(uint8_t i = eScreen_Welcome; i < eNUMBER_OF_SCREENs; i++)
     {
         switch(i)
@@ -115,23 +347,19 @@ bool bSet_AudioSource_MuteState( eAudioSrc_Id_t eSrcId, bool bIsMute )
     {
         FHALT("Invalid Request while Audion Souce is removed");
         return false;
-    }
-    if(!bIsAudioSourceActive(pstAudSrc))
-    {
-        return true;//Should not change color, since the source is already disabled
-    }  
-    if(pstAudSrc->pstAudSrcObj == NULL)
-    {
-        vClear_AudioSourceActiveFlag(pstAudSrc);
-        FHALT("The Audio Src is NULL and Not Permitted.");
-        return false;
-    }
+    }    
     
     if(bIsMute)
         vSet_AudioSourceMutedFlag(pstAudSrc);
     else
         vClear_AudioSourceMutedFlag(pstAudSrc);
 
+    if(pstAudSrc->pstAudSrcObj == NULL)
+    {
+        FHALT("The Audio Src is NULL and Not Permitted.");
+        return false;
+    }
+    
     lvgl_lock();
 
     for(uint8_t i = 0; i < NUMBER_OF_UI_CONTROLS_PER_AUDIO_SOURCE; i++)
@@ -145,9 +373,16 @@ bool bSet_AudioSource_MuteState( eAudioSrc_Id_t eSrcId, bool bIsMute )
 
         switch(pstUICtrl->eObjType)
         {
-            case eUIObj_Label:
-                pstUICtrl->uiObject.stTObj_Label.lcolor_Text = (bIsMute)? lv_color_hex(MUTE_AUDIO_SRC_TEXT_COLOR):
-                                                                          lv_color_hex(ACTIVE_AUDIO_SRC_TEXT_COLOR);
+            case eUIObj_Label:                
+                if(!bIsAudioSourceActive(pstAudSrc))
+                {
+                    pstUICtrl->uiObject.stTObj_Label.lcolor_Text = lv_color_hex(INACTIVE_AUDIO_SRC_TEXT_COLOR);        
+                }
+                else
+                {
+                    pstUICtrl->uiObject.stTObj_Label.lcolor_Text = (bIsMute)? lv_color_hex(MUTE_AUDIO_SRC_TEXT_COLOR):
+                                                                            lv_color_hex(ACTIVE_AUDIO_SRC_TEXT_COLOR);
+                }
                 lv_obj_set_style_text_color(pstUICtrl->pstUIObj, 
                                             pstUICtrl->uiObject.stTObj_Label.lcolor_Text, LV_PART_MAIN);
                 break;
@@ -174,18 +409,17 @@ bool bSet_AudioSource_ActiveState( eAudioSrc_Id_t eSrcId, bool bIsActive )
         FHALT("Invalid Request while Audion Souce is removed");
         return false;
     }
-    
-    if(pstAudSrc->pstAudSrcObj == NULL)
-    {
-        vClear_AudioSourceActiveFlag(pstAudSrc);
-        FHALT("The Audio Src is NULL and Not Permitted.");
-        return false;
-    }
 
     if(bIsActive)
         vSet_AudioSourceActiveFlag(pstAudSrc);
     else
         vClear_AudioSourceActiveFlag(pstAudSrc);
+            
+    if(pstAudSrc->pstAudSrcObj == NULL)
+    {
+        FHALT("The Audio Src is NULL and Not Permitted.");
+        return false;
+    }
     
     lvgl_lock();
 
@@ -201,8 +435,15 @@ bool bSet_AudioSource_ActiveState( eAudioSrc_Id_t eSrcId, bool bIsActive )
         switch(pstUICtrl->eObjType)
         {
             case eUIObj_Label:
-                pstUICtrl->uiObject.stTObj_Label.lcolor_Text = (bIsActive)? lv_color_hex(ACTIVE_AUDIO_SRC_TEXT_COLOR):
-                                                                            lv_color_hex(INACTIVE_AUDIO_SRC_TEXT_COLOR);
+                if(bIsAudioSrcMuted(pstAudSrc))
+                {
+                    pstUICtrl->uiObject.stTObj_Label.lcolor_Text = lv_color_hex(MUTE_AUDIO_SRC_TEXT_COLOR);
+                }
+                else
+                {
+                    pstUICtrl->uiObject.stTObj_Label.lcolor_Text = (bIsActive)? lv_color_hex(ACTIVE_AUDIO_SRC_TEXT_COLOR):
+                                                                                lv_color_hex(INACTIVE_AUDIO_SRC_TEXT_COLOR);
+                }
                 lv_obj_set_style_text_color(pstUICtrl->pstUIObj, 
                                             pstUICtrl->uiObject.stTObj_Label.lcolor_Text, LV_PART_MAIN);
                 break;
@@ -250,104 +491,7 @@ bool bRemove_AudioSource( eAudioSrc_Id_t eSrcId )
     return true;
 }
 
-static void vInit_SourceSelectScreen_Controls(sT_UIScreen_t *pstAudioSrcSelect)
-{
-    pstAudioSrcSelect->pfCreate = vCreate_SourceList;
-    pstAudioSrcSelect->stTDisplayInfo.eScreenId = eScreen_SourceSelect;
-
-    for(uint8_t uiSrc = eAudio_Src_0; uiSrc < eNUMBER_OF_AUDIO_SOURCES; uiSrc++)
-    {
-        sT_AudioSource_t *pstAudSrc = &pstAudioSrcSelect->stTDisplayInfo.screenType.staAudioSources[uiSrc];
-        sT_UIControl *pstUIControl = pstAudSrc->staUIControls;
-        
-        //Setup Label Physical Positions
-        pstUIControl[0].eObjType = eUIObj_Label;
-        sT_UIObj_Label *pstLabel = &pstUIControl[0].uiObject.stTObj_Label;
-        memcpy(pstLabel, &stTAudioSrcList_FirstLabel, sizeof(sT_UIObj_Label));
-        if(uiSrc != 0)
-        {
-            pstLabel->ly = stTAudioSrcList_FirstLabel.ly;
-            pstLabel->lx = stTAudioSrcList_FirstLabel.lx;
-            pstLabel->iwidth = stTAudioSrcList_FirstLabel.iwidth;
-            pstLabel->iheight = stTAudioSrcList_FirstLabel.iheight;
-        }
-        
-    }
-}
-
-static void vSetup_AudioSourceList( void )
-{
-    staUIScreens[eScreen_SourceSelect].pfCreate();
-    vSet_ScreenActive(eScreen_SourceSelect);
-}
-
-static void vCreate_SourceList( void )
-{
-    sT_UIScreen_t *pstSoucreScreen = &staUIScreens[eScreen_SourceSelect];
-    lv_obj_t *pstAudioSrcList;
-
-    pstSoucreScreen->pstScreenObj = lv_obj_create(NULL);
-
-    pstAudioSrcList = lv_list_create(pstSoucreScreen->pstScreenObj);
-    lv_obj_set_size(pstAudioSrcList, AUDIO_SOURCE_LIST_DISPLAY_WIDTH, AUDIO_SOURCE_LIST_DISPLAY_HEIGHT);
-    lv_obj_align(pstAudioSrcList, LV_ALIGN_CENTER, 0, 0);
-
-    sT_AudioSource_t *pstAudioSrc = pstSoucreScreen->stTDisplayInfo.screenType.staAudioSources;
-    for(uint8_t i = 0; i < eNUMBER_OF_AUDIO_SOURCES; i++)
-    {
-        if(!bIsAudioSourceVisible(&pstAudioSrc[i]))
-            continue;
-        
-        sT_UIControl *pstUIControl = pstAudioSrc[i].staUIControls;
-        lv_obj_t *pstSrcContainer = lv_obj_create(pstAudioSrcList);
-
-        lv_obj_set_size(pstSrcContainer, AUDIO_SRC_CONTAINER_WIDTH, AUDIO_SRC_CONTAINER_HEIGHT);
-                
-        for(uint8_t j = 0; j < NUMBER_OF_UI_CONTROLS_PER_AUDIO_SOURCE; j++)
-        {
-            switch(pstUIControl[j].eObjType)
-            {
-                case eUIObj_Label:
-                     pstUIControl[j].pstUIObj = pstCreate_UILabel(pstSrcContainer, 
-                                                                  &pstUIControl[j].uiObject.stTObj_Label, 
-                                                                  &pstAudioSrc[i]);                   
-                    break;
-                case eUIObj_Button:
-                    break;
-                default:
-                    FHALT("Obj Type: %d, not implemented yet.", pstUIControl[j].eObjType);
-                    break;
-            }
-        }
-
-        pstAudioSrc[i].pstAudSrcObj = pstSrcContainer;
-    }
-}
-
-static lv_obj_t *pstCreate_UILabel(lv_obj_t *pstParent, sT_UIObj_Label *pstTObj_Label, sT_AudioSource_t *pstAudioSrc)
-{
-    lv_obj_t *pstLabel = lv_label_create(pstParent);
-
-    lv_obj_set_size(pstLabel, pstTObj_Label->iwidth, pstTObj_Label->iheight);
-    lv_label_set_text(pstLabel, (const char*)pstAudioSrc->acName);
-    lv_obj_set_style_text_align(pstLabel, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
-    lv_obj_set_pos(pstLabel, pstTObj_Label->lx, pstTObj_Label->ly);
-
-    bool bIsActive = bIsAudioSourceActive(pstAudioSrc);
-    if(bIsActive)
-    {
-        pstTObj_Label->lcolor_Text = lv_color_hex(ACTIVE_AUDIO_SRC_TEXT_COLOR);
-    }
-    else
-    {
-        pstTObj_Label->lcolor_Text = lv_color_hex(INACTIVE_AUDIO_SRC_TEXT_COLOR);
-    }
-
-    lv_obj_set_style_text_color(pstLabel, pstTObj_Label->lcolor_Text, LV_PART_MAIN);
-    return pstLabel;
-}
-
-static inline void vSet_ScreenActive(eScreenId_t eId)
+void vSet_ScreenActive(eScreenId_t eId)
 {
     for(uint8_t i = 0; i < eNUMBER_OF_SCREENs; i++)
     {
@@ -363,12 +507,12 @@ static inline void vSet_ScreenActive(eScreenId_t eId)
     
 }
 
-static inline void vSet_ScreenInactive(eScreenId_t eId)
+void vSet_ScreenInactive(eScreenId_t eId)
 {
     atomic_store_explicit(&staUIScreens[eId].bIsActive, false, memory_order_release);
 }
 
-static inline eScreenId_t eGetActiveScreen( void )
+eScreenId_t eGetActiveScreen( void )
 {
     for(uint8_t i = 0; i < eNUMBER_OF_SCREENs; i++)
     {
@@ -378,68 +522,3 @@ static inline eScreenId_t eGetActiveScreen( void )
     }
     return eNUMBER_OF_SCREENs;
 }
-
-static inline bool bIsAudioSourceVisible(sT_AudioSource_t *pstAudioSrc)
-{
-    bool bVisible = atomic_load_explicit(&pstAudioSrc->bIsVisible, memory_order_acquire);
-    return bVisible;
-}
-
-static inline void vSet_AudioSourceVisibilityFlag(sT_AudioSource_t *pstAudioSrc)
-{
-    atomic_store_explicit(&pstAudioSrc->bIsVisible, true, memory_order_release);
-}
-
-static inline void vClear_AudioSourceVisibilityFlag(sT_AudioSource_t *pstAudioSrc)
-{
-    atomic_store_explicit(&pstAudioSrc->bIsVisible, false, memory_order_release);
-}
-
-static inline bool bIsAudioSourceActive(sT_AudioSource_t *pstAudioSrc)
-{
-    bool bIsActive= atomic_load_explicit(&pstAudioSrc->bIsActive, memory_order_acquire);
-    return bIsActive;
-}
-
-static inline void vSet_AudioSourceActiveFlag(sT_AudioSource_t *pstAudioSrc)
-{
-    atomic_store_explicit(&pstAudioSrc->bIsActive, true, memory_order_release);
-}
-
-static inline void vClear_AudioSourceActiveFlag(sT_AudioSource_t *pstAudioSrc)
-{
-    atomic_store_explicit(&pstAudioSrc->bIsActive, false, memory_order_release);
-}
-
-static inline bool bIsAudioSrcSelected(sT_AudioSource_t *pstAudioSrc)
-{
-    bool bIsSelected = atomic_load_explicit(&pstAudioSrc->bIsSelected, memory_order_acquire);
-    return bIsSelected;
-}
-
-static inline void vSet_AudioSourceSelectedFlag(sT_AudioSource_t *pstAudioSrc)
-{
-    atomic_store_explicit(&pstAudioSrc->bIsSelected, true, memory_order_release);
-}
-
-static inline void vClear_AudioSourceSelectedFlag(sT_AudioSource_t *pstAudioSrc)
-{
-    atomic_store_explicit(&pstAudioSrc->bIsSelected, false, memory_order_release);
-}
-
-static inline bool bIsAudioSrcMuted(sT_AudioSource_t *pstAudioSrc)
-{
-    bool bIsMute = atomic_load_explicit(&pstAudioSrc->bIsMute, memory_order_acquire);
-    return bIsMute;
-}
-
-static inline void vSet_AudioSourceMutedFlag(sT_AudioSource_t *pstAudioSrc)
-{
-    atomic_store_explicit(&pstAudioSrc->bIsMute, true, memory_order_release);
-}
-
-static inline void vClear_AudioSourceMutedFlag(sT_AudioSource_t *pstAudioSrc)
-{
-    atomic_store_explicit(&pstAudioSrc->bIsMute, false, memory_order_release);
-}
-#endif

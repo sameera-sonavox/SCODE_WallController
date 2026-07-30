@@ -5,10 +5,10 @@
 #if defined(USE_ADC)
 
 #include "ADC_Controller.h"
-#include "../Lib/ADC/NXP_ADC_API.h"
-#include "../Lib/ADC/NXP_ADC_ProjDef.h"
-#include "../Lib/TrigSrcControl/TrigSrcControl.h"
-#include "../Lib/GenericMacro.h"
+#include "ADC/NXP_ADC_API.h"
+#include "ADC/NXP_ADC_ProjDef.h"
+#include "TrigSrcControl/TrigSrcControl.h"
+#include "GenericMacro.h"
 #include "../UART_CAN_Bridge/UART_CAN_Bridge.h"
 
 #define ADC0_TRIGGER_FREQUENCY_HZ               40000U

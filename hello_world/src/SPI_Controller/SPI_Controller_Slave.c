@@ -1,7 +1,7 @@
 #ifdef USE_SPI
 
 #include "SPI_Controller_Slave.h"
-#include "../Lib/GenericMacro.h"
+#include "GenericMacro.h"
 #include <zephyr/kernel.h>
 
 uint8_t uiaTxData[8] = {0x55, 0x66, 0x77, 0x88, 0x99, 0x11, 0x22, 0x33};
