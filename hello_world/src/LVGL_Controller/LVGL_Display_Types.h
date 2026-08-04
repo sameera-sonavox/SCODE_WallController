@@ -22,7 +22,8 @@ typedef enum
 typedef enum
 {
     eUIObj_Label,
-    eUIObj_Button,
+    eUIObj_Indicator,
+    eUIObj_VolControl,
     eNUMBER_OF_UI_OBJECTs
 } eUI_Obj_Type_t;
 
@@ -87,6 +88,15 @@ typedef enum{
     eNUMBER_OF_FONT_SIZEs
 } eFontSize_t;
 
+typedef enum
+{
+    eHostSystem_None,
+    eHostSystem_DCM,
+    eHostSystem_LMA,
+    eHostSystem_DMA,
+    eNUMBER_OF_HOST_SYSTEMs
+} eHostSystemType_t;
+
 typedef struct
 {
     lv_coord_t lx;
@@ -99,10 +109,34 @@ typedef struct
 
 typedef struct
 {
+    lv_coord_t lx;
+    lv_coord_t ly;
+    int32_t iwidth;
+    int32_t iheight;
+    lv_color_t lcolor_Border;
+    _Atomic bool bIsVisible;
+} sT_UIObj_Indicator;
+
+typedef struct
+{
+    lv_coord_t lx_Top;
+    lv_coord_t ly_Top;
+    int32_t iWidth;
+    int32_t iHeight;
+    _Atomic bool baIsLocked[eNUMBER_OF_AUDIO_SOURCES];
+    _Atomic uint8_t uiMaxVolume;
+    _Atomic uint8_t uiVol;
+    lv_color_t lcolor_VolColor;    
+} sT_UIObj_VolControl;
+
+typedef struct
+{
     eUI_Obj_Type_t eObjType;
     lv_obj_t *pstUIObj;
     union{
         sT_UIObj_Label stTObj_Label;
+        sT_UIObj_Indicator stTObj_Indicator;
+        sT_UIObj_VolControl stTObj_VolCtrl;
     } uiObject;
 
 } sT_UIControl;
@@ -132,10 +166,17 @@ typedef struct
 
 typedef struct
 {
+    lv_obj_t *pstSrcVolObj;
+    sT_UIObj_VolControl stTVolCtrl;
+    sT_AudioSource_t staAudioSources[eNUMBER_OF_AUDIO_SOURCES];
+} sT_AudioSrc_Display_t;
+
+typedef struct
+{
     eScreenId_t eScreenId;
     union
     {
-        sT_AudioSource_t staAudioSources[eNUMBER_OF_AUDIO_SOURCES];
+        sT_AudioSrc_Display_t stTAudioSrcDisplay;
     } screenType;
 
 } sT_UIScreenDisplay;

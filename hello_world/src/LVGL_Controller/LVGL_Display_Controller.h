@@ -17,5 +17,8 @@ extern bool bIsEncSWPressed( void );
 extern void vSet_ScreenActive(eScreenId_t eId);
 extern void vSet_ScreenInactive(eScreenId_t eId);
 extern eScreenId_t eGetActiveScreen( void );
+extern sT_UIScreenDisplay *pstGetDisplayScreen(eScreenId_t eId);
+extern void vClear_EncoderRotationData(sT_QEncData_t *pstQEncData);
+extern void vClear_eQDCMessageQueue( void );
 
 #endif

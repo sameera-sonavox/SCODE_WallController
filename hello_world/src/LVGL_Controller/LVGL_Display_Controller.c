@@ -22,6 +22,7 @@ static const struct gpio_dt_spec stLVGL_BKPWEn = GPIO_DT_SPEC_GET(LVGL_BACKLIGHT
 
 static sT_eQDCConfig_t eQDCUIScreen = {0};
 static sT_QEncData_t stTEncData = {0};
+_Atomic eHostSystemType_t eHostSystemType = eHostSystem_None;
 
 static void vInit_Screens(void);
 static void vInitialize_eQDC( void );
@@ -34,6 +35,8 @@ static void vEnc_SWPressed_InterruptHandler(struct input_event *pstEvent, void *
 static bool bConfigure_LVGL_BKCtrlPin( void );
 static inline bool bEn_Display_Backlight( void );
 static inline bool bDis_Display_Backlight( void );
+static inline void vSet_HostSystemType( eHostSystemType_t eType );
+static inline eHostSystemType_t eGet_HostSystemType( void );
 
 static inline void vSet_EncSWPressed( void );
 
@@ -49,7 +52,7 @@ sT_UIScreen_t staUIScreens[eNUMBER_OF_SCREENs] = {
     {
         .eScreenId = eScreen_SourceSelect,
         .bIsActive = false,
-        .stTDisplayInfo.screenType.staAudioSources = {
+        .stTDisplayInfo.screenType.stTAudioSrcDisplay.staAudioSources = {
             
             {
                 .acName = "BT Audio",
@@ -57,6 +60,7 @@ sT_UIScreen_t staUIScreens[eNUMBER_OF_SCREENs] = {
                 .bIsVisible = true,
                 .sourceHoriz_SeparatorPoints[0] = {.x = 0U, .y = DEFAULT_AUDIOSRC_SEPARATOR_COORD_Y},
                 .sourceHoriz_SeparatorPoints[1] = {.x = AUDIO_SOURCE_LIST_DISPLAY_WIDTH, .y = DEFAULT_AUDIOSRC_SEPARATOR_COORD_Y},
+                .uiVolume = 20,
             },
             {
                 .acName = "MIC",
@@ -64,6 +68,7 @@ sT_UIScreen_t staUIScreens[eNUMBER_OF_SCREENs] = {
                 .bIsVisible = true,
                 .sourceHoriz_SeparatorPoints[0] = {.x = 0U, .y = DEFAULT_AUDIOSRC_SEPARATOR_COORD_Y},
                 .sourceHoriz_SeparatorPoints[1] = {.x = AUDIO_SOURCE_LIST_DISPLAY_WIDTH, .y = DEFAULT_AUDIOSRC_SEPARATOR_COORD_Y},
+                .uiVolume = 70,
             },
             {
                 .acName = "Conference RM",
@@ -71,6 +76,7 @@ sT_UIScreen_t staUIScreens[eNUMBER_OF_SCREENs] = {
                 .bIsVisible = true,
                 .sourceHoriz_SeparatorPoints[0] = {.x = 0U, .y = DEFAULT_AUDIOSRC_SEPARATOR_COORD_Y},
                 .sourceHoriz_SeparatorPoints[1] = {.x = AUDIO_SOURCE_LIST_DISPLAY_WIDTH, .y = DEFAULT_AUDIOSRC_SEPARATOR_COORD_Y},
+                .uiVolume = 50,
             },
             {
                 .acName = "Office",
@@ -78,6 +84,7 @@ sT_UIScreen_t staUIScreens[eNUMBER_OF_SCREENs] = {
                 .bIsVisible = true,
                 .sourceHoriz_SeparatorPoints[0] = {.x = 0U, .y = DEFAULT_AUDIOSRC_SEPARATOR_COORD_Y},
                 .sourceHoriz_SeparatorPoints[1] = {.x = AUDIO_SOURCE_LIST_DISPLAY_WIDTH, .y = DEFAULT_AUDIOSRC_SEPARATOR_COORD_Y},
+                .uiVolume = 90,
             }
         },        
     }
@@ -112,7 +119,7 @@ static void vInitialize_eQDC( void )
     eQDCUIScreen.stTHWTrigCtrl.eCTimerSrc = eTrigSrc_CTIMER0_MAT2;
     eQDCUIScreen.stTHWTrigCtrl.uiTrigFrequency_Hz = 500;
 
-    eQDCUIScreen.stTInpFiltConfig.bIsEnabled = true;
+    eQDCUIScreen.stTInpFiltConfig.bIsEnabled = false;
     eQDCUIScreen.stTInpFiltConfig.eFilterSampleCount = eQDC_FiltSampleCOunt_3U;
     eQDCUIScreen.stTInpFiltConfig.eRefClock_PreScalar = eQDC_Prescalar_4096U;
     eQDCUIScreen.stTInpFiltConfig.uiSamplePeriod_us = 250U;
@@ -128,6 +135,23 @@ static void vInitialize_eQDC( void )
     if(!eQDCUIScreen.bIsConfigOk)
     {
         FHALT("Quadrature Encoder Configuration Failed");
+        return;
+    }
+    //
+    switch(eQDCUIScreen.eQDCCountMode)
+    {
+        case eQDC_QuadratureCycle_1Count:
+            uiNAV_COUNTS_PER_DETENT = 1U;
+            break;
+        case eQDC_QuadratureCycle_2Count:
+            uiNAV_COUNTS_PER_DETENT = 2U;
+            break;
+        case eQDC_QuadratureCycle_4Count:
+            uiNAV_COUNTS_PER_DETENT = 4U;
+            break;
+        default:
+            uiNAV_COUNTS_PER_DETENT = 1U;            
+            break;
     }
     printf("eQDC Initialized\n\r");
 }
@@ -196,6 +220,23 @@ static inline bool bDis_Display_Backlight( void )
     return true;
 }
 
+static inline void vSet_HostSystemType( eHostSystemType_t eType )
+{
+    if(eType >= eNUMBER_OF_HOST_SYSTEMs)
+    {
+        FHALT("Host System : %d, is not supported by the current implementation", eType);
+        return;
+    }
+
+    atomic_store_explicit(&eHostSystemType, eType, memory_order_release);
+}
+
+static inline eHostSystemType_t eGet_HostSystemType( void )
+{
+    eHostSystemType_t eType = atomic_load_explicit(&eHostSystemType, memory_order_acquire);
+    return eType;
+}
+
 static void vEnc_SWPressed_InterruptHandler(struct input_event *pstEvent, void *puserData)
 {
     ARG_UNUSED(puserData);
@@ -214,7 +255,6 @@ static void vEncoder_Callback(sT_eQDC_PosChangeNotify_t stTeQDCData)
     if(uiFreeMsgs > 0)
     {
         k_msgq_put(&kmsgq_eQDC_MessageQueue, &stTeQDCData, K_NO_WAIT);
-        printf("message received bye...\n\r");
     }
     else
     {
@@ -234,7 +274,10 @@ void vRun_UI( void )
     int ret = k_msgq_get(pstGetMessageQueue(), &stTEncData.stTEncPhaseData, K_NO_WAIT);
     
     if(ret !=0 && !bIsEncSWPressed())
+    {
+        vCheck_UIMode_Timeout(&stTEncData);
         return;
+    }
     if(bIsEncSWPressed() && ret !=0)
     {
         vMark_EncDataInvalid(&stTEncData.stTEncPhaseData);
@@ -251,11 +294,26 @@ void vRun_UI( void )
             vRun_AudioSourceScreen(&staUIScreens[eScreen_SourceSelect], &stTEncData);
             break;
         default:
-            k_mutex_unlock(&stTEncData.stkIsLocked);
             FHALT("Screen : %d, is not yet implemented", eActiveScreen);
             break;
     }
     k_mutex_unlock(&stTEncData.stkIsLocked);
+}
+
+void vClear_eQDCMessageQueue( void )
+{
+    k_msgq_purge(&kmsgq_eQDC_MessageQueue);
+}
+
+sT_UIScreenDisplay *pstGetDisplayScreen(eScreenId_t eId)
+{
+    if(eId >= eNUMBER_OF_SCREENs)
+    {
+        FHALT("Invalid Screen Id : %d", eId);
+        return NULL;
+    }
+
+    return &staUIScreens[eId].stTDisplayInfo;
 }
 
 static inline void vMark_EncDataInvalid(sT_eQDC_PosChangeNotify_t *pstNotifyCtrl)
@@ -279,6 +337,14 @@ bool bIsEncSWPressed( void )
 {
     bool bIsPressed = atomic_load_explicit(&stTEncData.bIsEncPressed, memory_order_acquire);
     return bIsPressed;
+}
+
+void vClear_EncoderRotationData(sT_QEncData_t *pstQEncData)
+{
+    if(pstQEncData == NULL)
+        return;
+
+    vMark_EncDataInvalid(&pstQEncData->stTEncPhaseData);    
 }
 
 void vLoad_Screen( eScreenId_t eID )
@@ -342,7 +408,8 @@ bool bSet_AudioSource_MuteState( eAudioSrc_Id_t eSrcId, bool bIsMute )
         return false;
     }
     sT_UIScreen_t *pstAudioScreen = &staUIScreens[eScreen_SourceSelect];
-    sT_AudioSource_t *pstAudSrc = &pstAudioScreen->stTDisplayInfo.screenType.staAudioSources[eSrcId];
+    sT_AudioSource_t *pstAudSrc =
+        &pstAudioScreen->stTDisplayInfo.screenType.stTAudioSrcDisplay.staAudioSources[eSrcId];
     if(!bIsAudioSourceVisible(pstAudSrc))
     {
         FHALT("Invalid Request while Audion Souce is removed");
@@ -403,7 +470,8 @@ bool bSet_AudioSource_ActiveState( eAudioSrc_Id_t eSrcId, bool bIsActive )
         return false;
     }
     sT_UIScreen_t *pstAudioScreen = &staUIScreens[eScreen_SourceSelect];
-    sT_AudioSource_t *pstAudSrc = &pstAudioScreen->stTDisplayInfo.screenType.staAudioSources[eSrcId];
+    sT_AudioSource_t *pstAudSrc =
+        &pstAudioScreen->stTDisplayInfo.screenType.stTAudioSrcDisplay.staAudioSources[eSrcId];
     if(!bIsAudioSourceVisible(pstAudSrc))
     {
         FHALT("Invalid Request while Audion Souce is removed");
@@ -464,7 +532,8 @@ bool bRemove_AudioSource( eAudioSrc_Id_t eSrcId )
         return false;
     }
     sT_UIScreen_t *pstAudioScreen = &staUIScreens[eScreen_SourceSelect];
-    sT_AudioSource_t *pstAudSrc = &pstAudioScreen->stTDisplayInfo.screenType.staAudioSources[eSrcId];
+    sT_AudioSource_t *pstAudSrc =
+        &pstAudioScreen->stTDisplayInfo.screenType.stTAudioSrcDisplay.staAudioSources[eSrcId];
     if(!bIsAudioSourceVisible(pstAudSrc))
         return true;
     

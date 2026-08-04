@@ -10,6 +10,8 @@ extern void vInit_SourceSelectScreen_Controls(sT_UIScreen_t *pstAudioSrcSelect);
 extern void vRun_AudioSourceScreen( sT_UIScreen_t *pstUIScreen, sT_QEncData_t *pstQEncData );
 extern void vSetup_AudioSrc_ScreenStartup( sT_UIScreen_t *pstUIScreen );
 extern struct k_msgq *pstGetMessageQueue( void );
+extern void vUpdate_SrcVolume(sT_AudioSource_t *pstAudioSource, uint8_t uiVol);
+extern void vCheck_UIMode_Timeout( sT_QEncData_t *pstQEncData );
 
 static inline bool TryClaim_SourceModifyOwnership( sT_AudioSource_t *pstAudioSrc )
 {

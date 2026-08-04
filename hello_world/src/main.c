@@ -40,8 +40,6 @@ int main(void)
 	vConfirm_MCUbootImage();
 	vInit_Amp();
 	vInit_UI();
-	
-	printk("FW Img Booting over UART....\n\r");
 
 	while (1)
 	{
