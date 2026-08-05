@@ -61,4 +61,5 @@ target_sources(app PRIVATE
                 src/LVGL_Controller/Screen_Parameters/LVGL_AudioSource_UIScreen.c
                 ${MCUX_SDK_NG_DIR}/drivers/lpadc/fsl_lpadc.c 
                 ${MCUX_SDK_NG_DIR}/drivers/lpspi/fsl_lpspi.c 
-                ${MCUX_SDK_NG_DIR}/drivers/eqdc/fsl_eqdc.c)
+                ${MCUX_SDK_NG_DIR}/drivers/eqdc/fsl_eqdc.c
+                src/ExtFlash_Controller/ExtFlash_Controller.c)

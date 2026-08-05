@@ -20,5 +20,8 @@ extern eScreenId_t eGetActiveScreen( void );
 extern sT_UIScreenDisplay *pstGetDisplayScreen(eScreenId_t eId);
 extern void vClear_EncoderRotationData(sT_QEncData_t *pstQEncData);
 extern void vClear_eQDCMessageQueue( void );
+extern eHostSystemType_t eGet_HostSystemType( void );
+extern void vSet_HostSystemType( eHostSystemType_t eType );
+extern void vNotify_SrcVolumeChange( eAudioSrc_Id_t eSrcId, uint8_t uiVol );
 
 #endif

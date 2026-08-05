@@ -107,8 +107,12 @@ static inline void vSet_UIMode(eUI_Mode_t eMode);
 static inline eUI_Mode_t eGet_UIMode( void );
 static inline void vUpdate_TrigTime(uint32_t uiTime);
 static inline uint32_t uiGet_TrigTime( void );
+
 static inline void vSet_AudioSrc_Volume(sT_AudioSource_t *pstAudioSource, uint8_t uiVol);
 static inline uint8_t uiGet_AudioSrc_Volume(sT_AudioSource_t *pstAudioSource);
+static void vIndicate_VolUpdate_InVolControl( void );
+static void vVolumeBar_OpacityAnim(void *pvObj, int32_t iOpacity);
+static void vNotify_VolBar_BorderStyleChange(lv_obj_t *pstVolBar, bool bIsExiting);
 
 static void vProcess_Encoder_Data(sT_QEncData_t *pstTEncData);
 static void vProcess_Initial_State( sT_QEncData_t *pstTEncData );
@@ -195,6 +199,7 @@ static void vProcess_UIMode_VolumeUpdate( sT_QEncData_t *pstTEncData )
     {
         vClear_EncoderTransientState(pstTEncData);
         vSet_UIMode(eUI_Mode_SourceSelect);
+        vNotify_VolBar_BorderStyleChange(NULL, true);
         return;
     }
 
@@ -202,6 +207,7 @@ static void vProcess_UIMode_VolumeUpdate( sT_QEncData_t *pstTEncData )
     {
         vClear_EncoderTransientState(pstTEncData);
         vSet_UIMode(eUI_Mode_SourceSelect);
+        vNotify_VolBar_BorderStyleChange(NULL, true);
         return;
     }
 
@@ -305,6 +311,8 @@ static void vUpdate_SelectedSourceVOlume(void)
     }
     
     vUpdate_SrcVolume(pstAudioSrc, (uint8_t)iNewVolume);
+    //Notify the host
+    vNotify_SrcVolumeChange(pstAudioSrc->eSrcId, (uint8_t)iNewVolume);
 
     stTVolumeEditState.uiLastStepTime = uiCurrentTime;
     stTVolumeEditState.bHasLastStepTime = true;
@@ -318,7 +326,6 @@ static void vReset_VolumeEditState( void )
     stTVolumeEditState.ePreviousDirection = eQDC_Dir_CW;
     stTVolumeEditState.bHasPreviousDirection = false;
     stTVolumeEditState.bHasLastStepTime = false;
-
 }
 
 static void vProcess_UIMode_SourceSelection( sT_QEncData_t *pstTEncData )
@@ -327,6 +334,7 @@ static void vProcess_UIMode_SourceSelection( sT_QEncData_t *pstTEncData )
     {
         vClear_EncoderTransientState(pstTEncData);
         vSet_UIMode(eUI_Mode_VolumeUpdate);
+        vIndicate_VolUpdate_InVolControl();
         printf("Encoder SW Pressed, Setting Event to Update\n\r");
         return;
     }
@@ -336,6 +344,95 @@ static void vProcess_UIMode_SourceSelection( sT_QEncData_t *pstTEncData )
         vNavigate_Sources();
         vUpdate_TrigTime(k_uptime_get_32());
     }
+}
+
+static void vIndicate_VolUpdate_InVolControl( void )
+{
+    if(eGet_UIMode() != eUI_Mode_VolumeUpdate)
+    {
+        FHALT("Invalid state for volume bar animation");
+        return;
+    }
+    if(pstAudioSrcScreen == NULL)
+    {
+        FHALT("Invalid audio source screen");
+        return;
+    }
+
+    lv_obj_t *pstVolParent = pstAudioSrcScreen->stTDisplayInfo.screenType.stTAudioSrcDisplay.pstSrcVolObj;
+    if(pstVolParent == NULL)
+    {
+        FHALT("Invalid volume bar object");
+        return;
+    }
+
+    lvgl_lock();
+    lv_obj_t *pstVolBar = lv_obj_get_child_by_type(pstVolParent, 0, &lv_bar_class);
+    if(pstVolBar == NULL)
+    {
+        FHALT("Invalid volume bar object");
+        lvgl_unlock();
+        return;
+    }
+    
+    lv_anim_delete(pstVolBar, vVolumeBar_OpacityAnim);
+
+    //Change bvolbar border color
+    vNotify_VolBar_BorderStyleChange(pstVolBar, false);
+
+    lv_anim_t stTVolBarAnim;
+    lv_anim_init(&stTVolBarAnim);
+
+    lv_anim_set_var(&stTVolBarAnim, pstVolBar);
+    lv_anim_set_exec_cb(&stTVolBarAnim, vVolumeBar_OpacityAnim);
+    lv_anim_set_values(&stTVolBarAnim, LV_OPA_TRANSP, LV_OPA_COVER);
+    lv_anim_set_duration(&stTVolBarAnim, VOL_BAR_ANIM_DURATION_ms);
+    lv_anim_set_path_cb(&stTVolBarAnim, lv_anim_path_ease_out);
+    lv_anim_start(&stTVolBarAnim);
+    lvgl_unlock();    
+}
+
+static void vNotify_VolBar_BorderStyleChange(lv_obj_t *pstVolBar, bool bIsExiting)
+{
+    lvgl_lock();
+
+    if(pstVolBar == NULL)
+    {
+        lv_obj_t *pstVolParent = pstAudioSrcScreen->stTDisplayInfo.screenType.stTAudioSrcDisplay.pstSrcVolObj;
+        pstVolBar = lv_obj_get_child_by_type(pstVolParent, 0, &lv_bar_class);
+        if(pstVolBar == NULL)
+        {
+            lvgl_unlock();
+            FHALT("Invalid volume bar object");
+            return;
+        }
+    }
+
+    if(bIsExiting)
+    {
+        lv_obj_set_style_outline_width(pstVolBar, 0U, LV_PART_MAIN);
+        lv_obj_set_style_border_color(pstVolBar, lv_color_hex(VOL_BAR_BORDER_COLOR), LV_PART_MAIN);
+        lv_obj_set_style_border_width(pstVolBar, VOL_BAR_BORDER_WIDTH, LV_PART_MAIN);
+    }
+    else
+    {
+        lv_obj_set_style_outline_color(pstVolBar, lv_color_hex(VOL_BAR_SELECTED_BORDER_COLOR), LV_PART_MAIN);
+        lv_obj_set_style_outline_width(pstVolBar, VOL_BAR_SELECTED_BORDER_WIDTH, LV_PART_MAIN);
+        lv_obj_set_style_outline_opa(pstVolBar, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_outline_pad(pstVolBar, 1, LV_PART_MAIN);
+    }
+
+    lvgl_unlock();
+}
+
+static void vVolumeBar_OpacityAnim(void *pvObj, int32_t iOpacity)
+{
+    lv_obj_t *pstBar = pvObj;
+
+    lv_obj_set_style_opa(
+        pstBar,
+        (lv_opa_t)iOpacity,
+        LV_PART_INDICATOR);
 }
 
 static void vProcess_Initial_State( sT_QEncData_t *pstTEncData )
@@ -412,6 +509,7 @@ void vCheck_UIMode_Timeout( sT_QEncData_t *pstQEncData )
     }
 
     vClear_EncoderTransientState(pstQEncData);
+    vNotify_VolBar_BorderStyleChange(NULL, true);
     vSet_UIMode(eUI_Mode_SourceSelect);
 }
 
@@ -454,8 +552,7 @@ static void vNavigate_Sources( void )
         
     vUpdate_UI_ForSourceSelection(eCurrentSrcId, eNextSrcId);
     vReset_VolumeEditState();
-    //Need to update the style for the currently selected src and clear the style for the
-    //previously selected src
+
     printf("Current Source: %d (PosCur: %d, PoPrev: %d)\n\r", eNextSrcId, stTEncPosition.uiPosition_Current, stTEncPosition.uiPosition_Previous);
 }
 
@@ -508,6 +605,10 @@ static void vClear_PrevSelectedSource_Style(sT_AudioSource_t *pstAudioSource)
             vSet_Indicator_StateVisible(pstUIIndicator_Control->pstUIObj);
         }
     }
+
+    sT_UIControl *pstUILabel = pstGetUIObject(pstAudioSource->staUIControls, eUIObj_Label);    
+    lv_obj_set_style_text_color(pstUILabel->pstUIObj, lv_color_hex(ACTIVE_AUDIO_SRC_TEXT_COLOR), LV_PART_MAIN);
+
     lv_obj_set_style_bg_color(pstAudioSource->pstAudSrcObj, lv_color_hex(SOURCE_LIST_BACKGROUND_COLOR), LV_PART_MAIN);    
 }
 
@@ -519,6 +620,10 @@ static void vSet_CurrentSelectedSource_Style(sT_AudioSource_t *pstAudioSource)
         return;
     
     vSet_Indicator_AtSourceSelected(pstAudioSource);
+    
+    sT_UIControl *pstUILabel = pstGetUIObject(pstAudioSource->staUIControls, eUIObj_Label);    
+    lv_obj_set_style_text_color(pstUILabel->pstUIObj, lv_color_hex(AUDIO_SRC_SELECTED_TEXT_COLOR), LV_PART_MAIN);
+
     lv_obj_set_style_bg_color(pstAudioSource->pstAudSrcObj, lv_color_hex(AUDIO_SRC_SELECTED_COLOR), LV_PART_MAIN);    
     lv_obj_scroll_to_view(pstAudioSource->pstAudSrcObj, LV_ANIM_ON);
     
@@ -606,7 +711,35 @@ void vUpdate_SrcVolume(sT_AudioSource_t *pstAudioSource, uint8_t uiVol)
 
     lv_obj_t *pstVolParent = pstAudioDisplay->pstSrcVolObj;
     vUpdate_UI_VolControl(pstVolParent, uiVol);
+}
 
+void vUpdate_AudioSourceIndicatorVisibility( bool bIsVisible )
+{
+    if(pstAudioSrcScreen == NULL)
+    {
+        FHALT("Audio source screen is not initialized");
+        return;
+    }
+
+    for(uint8_t i = eAudio_Src_0; i < eNUMBER_OF_AUDIO_SOURCES; i++)
+    {
+        sT_AudioSource_t *pstAudioSrc = &pstAudioSrcScreen->stTDisplayInfo.screenType.stTAudioSrcDisplay.staAudioSources[i];
+        if(!bIsAudioSourceVisible(pstAudioSrc))
+            continue;
+
+        sT_UIControl *pstUIIndicator_Control = pstGetUIObject(pstAudioSrc->staUIControls, eUIObj_Indicator);
+        if(pstUIIndicator_Control == NULL)
+            continue;
+
+        if(bIsVisible)
+        {
+            vSet_UIIndicator_Visibility(&pstUIIndicator_Control->uiObject.stTObj_Indicator);
+        }
+        else
+        {
+            vClear_UIIndicator_Visibility(&pstUIIndicator_Control->uiObject.stTObj_Indicator);
+        }
+    }
 }
 
 static sT_UIControl *pstGetUIObject(sT_UIControl *pstUIControls, eUI_Obj_Type_t eObjType)
@@ -740,9 +873,8 @@ static inline uint32_t uiGet_TrigTime( void )
     return uiTime;
 }
 
-void vSetup_AudioSrc_ScreenStartup( sT_UIScreen_t *pstUIScreen )
+void vSetup_AudioSrc_ScreenStartup( void )
 {    
-    pstAudioSrcScreen = pstUIScreen;
     sT_AudioSource_t *pstAudioSrc =
         pstAudioSrcScreen->stTDisplayInfo.screenType.stTAudioSrcDisplay.staAudioSources;
 
@@ -752,6 +884,7 @@ void vSetup_AudioSrc_ScreenStartup( sT_UIScreen_t *pstUIScreen )
            !bIsAudioSourceVisible(&pstAudioSrc[i]))
             continue;
         vUpdate_UI_ForSourceSelection(eNUMBER_OF_AUDIO_SOURCES, i);
+        vSet_UIMode(eUI_Mode_SourceSelect);
         return;
     }    
 }
@@ -767,6 +900,13 @@ void vSetup_AudioSourceList( sT_UIScreen_t *pstUIScreen )
 
 void vInit_SourceSelectScreen_Controls(sT_UIScreen_t *pstAudioSrcSelect)
 {
+    if(pstAudioSrcSelect == NULL)
+    {
+        FHALT("Audio source screen is NULL");
+        return;
+    }
+
+    pstAudioSrcScreen = pstAudioSrcSelect;
     pstAudioSrcSelect->pfCreate = vCreate_SourceList;
     pstAudioSrcSelect->stTDisplayInfo.eScreenId = eScreen_SourceSelect;
 

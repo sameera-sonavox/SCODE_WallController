@@ -194,4 +194,9 @@ typedef struct sT_UIScreen_t
     sT_UIScreenDisplay stTDisplayInfo;
 } sT_UIScreen_t;
 
+typedef struct
+{
+    _Atomic eHostSystemType_t eHostSystem;
+} sT_HostSystem_t;
+
 #endif

@@ -45,7 +45,8 @@
 #define ACTIVE_AUDIO_SRC_TEXT_COLOR             0xF8F9FB
 #define INACTIVE_AUDIO_SRC_TEXT_COLOR           0xF7BD
 #define MUTE_AUDIO_SRC_TEXT_COLOR               0xC163
-#define AUDIO_SRC_SELECTED_COLOR                0x494A4D
+#define AUDIO_SRC_SELECTED_COLOR                0xA1A3A5//0x494A4D
+#define AUDIO_SRC_SELECTED_TEXT_COLOR           0x0F2F4F
 
 #define AUDIO_SRC_INDICATOR_WIDTH               5U
 #define AUDIO_SRC_INDICATOR_HEIGHT              5U
@@ -60,6 +61,9 @@
 #define VOL_BAR_TITLE_LABEL_HEIGHT              15U
 #define VOL_BAR_TEXT_FONT_SIZE                  eFont_Size_12
 #define VOL_BAR_TEXT_COLOR                      0xFFFFFF
+#define VOL_BAR_ANIM_DURATION_ms                500U
+#define VOL_BAR_SELECTED_BORDER_COLOR           0xA1A3A5
+#define VOL_BAR_SELECTED_BORDER_WIDTH           2U
 
 #pragma endregion
 

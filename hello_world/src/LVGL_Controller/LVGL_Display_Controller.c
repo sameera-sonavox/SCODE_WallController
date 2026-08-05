@@ -24,6 +24,10 @@ static sT_eQDCConfig_t eQDCUIScreen = {0};
 static sT_QEncData_t stTEncData = {0};
 _Atomic eHostSystemType_t eHostSystemType = eHostSystem_None;
 
+static void vUpdate_HostSystemType( void );
+static void vNotify_DMA_LMA_SrcVolumeChange( eAudioSrc_Id_t eSrcId, uint8_t uiVol );
+static void vNotify_DCM_SrcVolumeChange( eAudioSrc_Id_t eSrcId, uint8_t uiVol );
+
 static void vInit_Screens(void);
 static void vInitialize_eQDC( void );
 static bool bConfigure_eQDC_PhasePins( void );
@@ -35,13 +39,15 @@ static void vEnc_SWPressed_InterruptHandler(struct input_event *pstEvent, void *
 static bool bConfigure_LVGL_BKCtrlPin( void );
 static inline bool bEn_Display_Backlight( void );
 static inline bool bDis_Display_Backlight( void );
-static inline void vSet_HostSystemType( eHostSystemType_t eType );
-static inline eHostSystemType_t eGet_HostSystemType( void );
 
 static inline void vSet_EncSWPressed( void );
 
 K_MSGQ_DEFINE(kmsgq_eQDC_MessageQueue, sizeof(sT_eQDC_PosChangeNotify_t), MAX_ENCODER_MESSAGEs, 4);
 INPUT_CALLBACK_DEFINE(pstEncSWInputDevice, vEnc_SWPressed_InterruptHandler, NULL);
+
+sT_HostSystem_t stTHostSystem = {
+    .eHostSystem = eHostSystem_None
+};
 
 sT_UIScreen_t staUIScreens[eNUMBER_OF_SCREENs] = {
     
@@ -92,15 +98,67 @@ sT_UIScreen_t staUIScreens[eNUMBER_OF_SCREENs] = {
 
 void vInit_UI( void )
 {
+    vInitialize_eQDC();
     vInit_Screens();
 
+    vUpdate_HostSystemType();
+
+    //The rest of the initialization has to be done based on host system type
     vSetup_AudioSourceList( &staUIScreens[eScreen_SourceSelect] );
 
     bEn_Display_Backlight();
 
     vLoad_Screen(eScreen_SourceSelect);
 
-    vInitialize_eQDC();
+}
+
+static void vUpdate_HostSystemType( void )
+{
+    vSet_HostSystemType(eHostSystem_DCM);
+
+    switch(eGet_HostSystemType())
+    {
+        case eHostSystem_DCM:
+            vUpdate_AudioSourceIndicatorVisibility( true );
+            break;
+        case eHostSystem_LMA:
+        case eHostSystem_DMA:
+            vUpdate_AudioSourceIndicatorVisibility( false );
+            break;
+        default:           
+            break;
+    }
+}
+
+void vNotify_SrcVolumeChange( eAudioSrc_Id_t eSrcId, uint8_t uiVol )
+{
+    eHostSystemType_t eHostType = eGet_HostSystemType();
+
+    switch(eHostType)
+    {
+        case eHostSystem_DCM:
+            vNotify_DCM_SrcVolumeChange(eSrcId, uiVol);
+            break;
+        case eHostSystem_LMA:
+        case eHostSystem_DMA:
+            vNotify_DMA_LMA_SrcVolumeChange(eSrcId, uiVol);
+            break;
+        default:
+            FHALT("Invalid Host System Type: %d, for Volume Change Notification", eHostType);
+            break;
+    }
+}
+
+static void vNotify_DMA_LMA_SrcVolumeChange( eAudioSrc_Id_t eSrcId, uint8_t uiVol )
+{
+    //Notify the host system about the volume change for the source
+    printf("Host System: %d, Source: %d, Volume: %d\n\r", eGet_HostSystemType(), eSrcId, uiVol);
+}
+
+static void vNotify_DCM_SrcVolumeChange( eAudioSrc_Id_t eSrcId, uint8_t uiVol )
+{
+    //Notify the host system about the volume change for the source
+    printf("Host System: %d, Source: %d, Volume: %d\n\r", eGet_HostSystemType(), eSrcId, uiVol);
 }
 
 static void vInitialize_eQDC( void )
@@ -220,7 +278,7 @@ static inline bool bDis_Display_Backlight( void )
     return true;
 }
 
-static inline void vSet_HostSystemType( eHostSystemType_t eType )
+void vSet_HostSystemType( eHostSystemType_t eType )
 {
     if(eType >= eNUMBER_OF_HOST_SYSTEMs)
     {
@@ -228,12 +286,12 @@ static inline void vSet_HostSystemType( eHostSystemType_t eType )
         return;
     }
 
-    atomic_store_explicit(&eHostSystemType, eType, memory_order_release);
+    atomic_store_explicit(&stTHostSystem.eHostSystem, eType, memory_order_release);
 }
 
-static inline eHostSystemType_t eGet_HostSystemType( void )
+eHostSystemType_t eGet_HostSystemType( void )
 {
-    eHostSystemType_t eType = atomic_load_explicit(&eHostSystemType, memory_order_acquire);
+    eHostSystemType_t eType = atomic_load_explicit(&stTHostSystem.eHostSystem, memory_order_acquire);
     return eType;
 }
 
@@ -371,7 +429,7 @@ void vLoad_Screen( eScreenId_t eID )
         case eScreen_Welcome:
             break;
         case eScreen_SourceSelect:
-            vSetup_AudioSrc_ScreenStartup(&staUIScreens[eID]);
+            vSetup_AudioSrc_ScreenStartup();
             break;
         default:
             FHALT("Screen Not Implemented Screen: %d", eID);
