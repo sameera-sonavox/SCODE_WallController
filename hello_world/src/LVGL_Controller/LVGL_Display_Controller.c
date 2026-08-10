@@ -96,7 +96,7 @@ sT_UIScreen_t staUIScreens[eNUMBER_OF_SCREENs] = {
     }
 };
 
-void vInit_UI( void )
+void vInit_LVGLDisplay( void )
 {
     vInitialize_eQDC();
     vInit_Screens();

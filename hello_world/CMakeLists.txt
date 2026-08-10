@@ -10,13 +10,19 @@ if(NOT EXISTS "${MCXA_LIB_DIR}/PWM/NXP_PWM_API.c")
     message(FATAL_ERROR "MCXA_LIB_DIR is invalid: ${MCXA_LIB_DIR}")
 endif()
 
-list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/GPIOCtrl.overlay")
-list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/PWMCtrl.overlay")
-list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/DACCtrl.overlay")
-list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/ADCCtrl.overlay")
-# list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/SPIPinCtrl.overlay")
-list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/LVGLDisplayctrl.overlay")
-list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/eQDCCtrl.overlay")
+set(DTC_OVERLAY_FILE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/GPIOCtrl.overlay"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/PWMCtrl.overlay"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/DACCtrl.overlay"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/ADCCtrl.overlay"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/SPIPinCtrl.overlay"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/LVGLDisplayctrl.overlay"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/eQDCCtrl.overlay"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/SPI1_ExtFlashCtrl.overlay"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/FlashPartitions.overlay"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/ExtFlash_Ctrl.overlay"
+    CACHE STRING "Application devicetree overlays" FORCE)
+#list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/ExtFlash_Ctrl.overlay")
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(hello_world)
@@ -62,4 +68,7 @@ target_sources(app PRIVATE
                 ${MCUX_SDK_NG_DIR}/drivers/lpadc/fsl_lpadc.c 
                 ${MCUX_SDK_NG_DIR}/drivers/lpspi/fsl_lpspi.c 
                 ${MCUX_SDK_NG_DIR}/drivers/eqdc/fsl_eqdc.c
-                src/ExtFlash_Controller/ExtFlash_Controller.c)
+                src/ExtFlash_Controller/ExtFlash_Controller.c 
+                src/ExtFlash_Controller/SPIController/SPIController.c 
+                src/ExtFlash_Controller/ExtFlashInitialSetup/ExtFlash_InitialSetupCtrl.c 
+                src/ExtFlash_Controller/ExtFlashReadWrite/ExtFlash_ReadWriteControl.c)

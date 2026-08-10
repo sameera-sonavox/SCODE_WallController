@@ -553,7 +553,6 @@ static void vNavigate_Sources( void )
     vUpdate_UI_ForSourceSelection(eCurrentSrcId, eNextSrcId);
     vReset_VolumeEditState();
 
-    printf("Current Source: %d (PosCur: %d, PoPrev: %d)\n\r", eNextSrcId, stTEncPosition.uiPosition_Current, stTEncPosition.uiPosition_Previous);
 }
 
 static void vUpdate_UI_ForSourceSelection(eAudioSrc_Id_t ePrevSelectedSrc, eAudioSrc_Id_t eNewSelectedSrc)

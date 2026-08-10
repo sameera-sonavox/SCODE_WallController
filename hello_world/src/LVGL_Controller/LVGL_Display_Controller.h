@@ -4,7 +4,7 @@
 #include "API_Usage_Definition.h"
 #include "LVGL_Display_Types.h"
 
-extern void vInit_UI( void );
+extern void vInit_LVGLDisplay( void );
 extern void vLoad_Screen( eScreenId_t eID );
 extern bool bRemove_AudioSource( eAudioSrc_Id_t eSrcId );
 extern bool bSet_AudioSource_ActiveState( eAudioSrc_Id_t eSrcId, bool bIsActive );
