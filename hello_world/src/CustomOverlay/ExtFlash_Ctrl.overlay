@@ -1,0 +1,57 @@
+&lpspi1 {
+    flashmx25r64: flash@0 {
+        compatible = "jedec,spi-nor";
+        reg = <0>;
+
+        spi-max-frequency = <4000000>;
+
+        jedec-id = [c2 28 17];
+
+        /* Devicetree size is expressed in bits: 64 Mbit = 8 MiB. */
+        size = <67108864>;
+
+        page-size = <256>;
+
+        /* Re-enabled when the custom MX25R6435F Zephyr flash wrapper is added. */
+        status = "disabled";
+
+        partitions {
+
+            compatible = "fixed-partitions";
+            #address-cells = <1>;
+            #size-cells = <1>;
+
+            ext_fw_partition: partition@0 {
+                label = "ext-fw";
+                reg = <0x000000 0x100000>;
+            };
+
+            ext_storage_partition: partition@100000 {
+                label = "ext-storage";
+                reg = <0x100000 0x700000>;
+            };
+        };
+    };
+};
+
+/{
+    fstab {
+        compatible = "zephyr,fstab";
+
+        ext_littlefs: littlefs {
+
+            compatible = "zephyr,fstab,littlefs";
+            status = "disabled";
+            partition = <&ext_storage_partition>;
+            mount-point = "/lfs";
+
+            read-size = <16>;
+            prog-size = <16>;
+            cache-size = <256>;
+            lookahead-size = <32>;
+            block-cycles = <512>;
+
+            automount;
+        };        
+    };
+};

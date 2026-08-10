@@ -1,0 +1,29 @@
+/*
+ * 1 MiB internal flash layout:
+ *   MCUBoot:  64 KiB
+ *   Image 0: 456 KiB
+ *   Image 1: 456 KiB
+ *   Storage:  48 KiB
+ *
+ * All boundaries are aligned to the MCXA156 8 KiB erase block.
+ */
+&slot0_partition {
+    reg = <0x00010000 0x00072000>;
+};
+
+&flash {
+    partitions {
+        /delete-node/ partition@7a000;
+        /delete-node/ partition@e4000;
+
+        slot1_partition: partition@82000 {
+            label = "image-1";
+            reg = <0x00082000 0x00072000>;
+        };
+
+        storage_partition: partition@f4000 {
+            label = "storage";
+            reg = <0x000F4000 0x0000C000>;
+        };
+    };
+};
