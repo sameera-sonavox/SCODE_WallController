@@ -12,6 +12,11 @@
 #define EXT_FLASH_SECTOR_SIZE_BYTES 4096U
 
 static int iPoll_ExtBusyStatus_Sync(uint32_t uiTimeout_ms);
+static void vPrepare_MultiPhaseConfig(sT_SPIMultiPhase_MasterTransfer_t *pstTMultiPhaseCtrl, 
+                                      sT_SPITransferPhase_Config_t *pstaPhaseConfig,
+                                      const uint8_t *puiCMD_Phase1,
+                                      const uint8_t *puiDummy_Phase2,
+                                      uint8_t *puiRecvData);
 
 int iWrite_DataToFlash(uint32_t uiAddr, const uint8_t *puiData, size_t uiDataLen)
 {
@@ -275,23 +280,83 @@ int iRead_DataFromFlash_Quad(uint32_t uiAddr, uint8_t *puiRecvData, size_t uiDat
     }
 
     //Need to validate the size against the allocated partition size once the wrapper is completed
-    uint32_t uiTotLength = 0U, uiCurrentReadLen = 0U, uiMemAddr = uiAddr;
-    uint8_t uiCMD[DEFAULT_READ_BUFF_LENGTH + 4U];
-    memset(uiCMD, 0, sizeof(uiCMD));
+    size_t uiTotalReadLength = 0U;
+    while(uiTotalReadLength < uiDataLen)
+    {
+        size_t uiCurrentReadLength = uiDataLen - uiTotalReadLength;
+        if(uiCurrentReadLength > QUAD_READ_MAX_TRANSACTION_LENGTH)
+        {
+            uiCurrentReadLength = QUAD_READ_MAX_TRANSACTION_LENGTH;
+        }
 
-    uint8_t uiRxData[DEFAULT_READ_BUFF_LENGTH + 4U];
-    memset(uiRxData, 0, sizeof(uiRxData));
+        uint32_t uiCurrentAddress = uiAddr + (uint32_t)uiTotalReadLength;
+        uint8_t uiaCMD_FirstPhase[4] = {
+            EXT_FLASH_QUAD_READ_CMD,
+            (uint8_t)(uiCurrentAddress >> 16U),
+            (uint8_t)(uiCurrentAddress >> 8U),
+            (uint8_t)uiCurrentAddress
+        };
+        uint8_t uiaDummyData[1] = {0};
+        sT_SPITransferPhase_Config_t staConfigArray[3] = {0};
+        sT_SPIMultiPhase_MasterTransfer_t stTMultiPhaseCtrl = {
+            .pstPhase = staConfigArray,
+            .uiPhaseCount = ARRAY_SIZE(staConfigArray)
+        };
 
-    sT_SPIMasterTransfer_t stTSPITransfer = {0};
-    stTSPITransfer.eModuleId = eSPI_1;
-    stTSPITransfer.eSlaveId = eSPI_Slave_0;
-    stTSPITransfer.eType = eTransfer_Transceive;
-    stTSPITransfer.puiTxData = uiCMD;
-    stTSPITransfer.puiRxData = uiRxData;
-    stTSPITransfer.eRxBufReleaseType = eSPI_Buffer_Static;
-    stTSPITransfer.eTxBufReleaseType = eSPI_Buffer_Static;
-    stTSPITransfer.bIsTransferBusy = false;
-    stTSPITransfer.bShould_CS_Asserted_For_EntireTransfer = true;
-    stTSPITransfer.uiRxMaskLen = 4U;    
+        vPrepare_MultiPhaseConfig(&stTMultiPhaseCtrl,
+                                  staConfigArray,
+                                  uiaCMD_FirstPhase,
+                                  uiaDummyData,
+                                  &puiRecvData[uiTotalReadLength]);
+        staConfigArray[0].uiDataLen = sizeof(uiaCMD_FirstPhase);
+        staConfigArray[1].uiDataLen = sizeof(uiaDummyData);
+        staConfigArray[2].uiDataLen = uiCurrentReadLength;
+
+        if(!bSPI_MultiPhaseTranseive(&stTMultiPhaseCtrl))
+        {
+            FHALT("ExtFlash: Quad read failed @0x%08X, length: %zu",
+                  uiCurrentAddress,
+                  uiCurrentReadLength);
+            return -EIO;
+        }
+
+        uiTotalReadLength += uiCurrentReadLength;
+    }
+
+    return 0;
+}
+
+static void vPrepare_MultiPhaseConfig(sT_SPIMultiPhase_MasterTransfer_t *pstTMultiPhaseCtrl, 
+                                      sT_SPITransferPhase_Config_t *pstaPhaseConfig,
+                                      const uint8_t *puiCMD_Phase1,
+                                      const uint8_t *puiDummy_Phase2,
+                                      uint8_t *puiRecvData)
+{
+    pstTMultiPhaseCtrl->eModuleId = eSPI_1;
+    pstTMultiPhaseCtrl->eSlaveId = eSPI_Slave_0;
+    pstTMultiPhaseCtrl->bKeepCSAssertedBetweenPhases = true;
     
+    sT_SPITransferPhase_Config_t *pstPhaseConfig = &pstaPhaseConfig[0];
+    pstPhaseConfig->eType = eTransfer_Tx_Only;
+    pstPhaseConfig->eWidth = e1bit_Transfer;
+    pstPhaseConfig->puiRxData = NULL;
+    pstPhaseConfig->puiTxData = puiCMD_Phase1;
+    pstPhaseConfig->eRxBufReleaseType = eSPI_Buffer_None;
+    pstPhaseConfig->eTxBufReleaseType = eSPI_Buffer_Static;
+
+    pstPhaseConfig = &pstaPhaseConfig[1];
+    pstPhaseConfig->eType = eTransfer_Tx_Only;
+    pstPhaseConfig->eWidth = e1bit_Transfer;
+    pstPhaseConfig->puiRxData = NULL;
+    pstPhaseConfig->puiTxData = puiDummy_Phase2;
+    pstPhaseConfig->eRxBufReleaseType = eSPI_Buffer_None;
+    pstPhaseConfig->eTxBufReleaseType = eSPI_Buffer_Static;
+
+    pstPhaseConfig = &pstaPhaseConfig[2];
+    pstPhaseConfig->eType = eTransfer_Rx_Only;
+    pstPhaseConfig->eWidth = e4bit_Transfer;
+    pstPhaseConfig->puiRxData = puiRecvData;
+    pstPhaseConfig->puiTxData = NULL;
+    pstPhaseConfig->eRxBufReleaseType = eSPI_Buffer_Static;
+    pstPhaseConfig->eTxBufReleaseType = eSPI_Buffer_None;
 }

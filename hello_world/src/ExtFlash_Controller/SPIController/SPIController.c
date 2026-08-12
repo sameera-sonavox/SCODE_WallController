@@ -48,8 +48,8 @@ static bool bSetup_LPSPI_Configurations( void )
 
     stTSPISlaveConfig.stTHWReadyCtrl.bHWReady_Used = false;
 
-    stTSPISlaveConfig.uiSPI_Freq_Hz = 2000000;
-    stTSPISlaveConfig.uiDelay_Between_BlockTx_ns = 1000;
+    stTSPISlaveConfig.uiSPI_Freq_Hz = 4000000;
+    stTSPISlaveConfig.uiDelay_Between_BlockTx_ns = 100U;
     stTSPISlaveConfig.uiDelay_CS_Assert_To_SCK_ns = 100;
     stTSPISlaveConfig.uiDelay_LastSCK_To_CS_Deassert_ns = 100;
     
@@ -108,9 +108,56 @@ bool bSPI_Write(sT_SPIMasterTransfer_t *pstTSPITransfer)
         return false;
     }
 
-    bRes = (eLastTransferResult == eTransfer_Success);
+    if(eLastTransferResult != eTransfer_Success)
+    {
+        FHALT("SPI transfer callback result: %d", eLastTransferResult);
+        k_mutex_unlock(&stSPITransferMutex);
+        return false;
+    }
+
+    bRes = true;
     k_mutex_unlock(&stSPITransferMutex);
-    return bRes;    
+    return bRes;        
+}
+
+bool bSPI_MultiPhaseTranseive(sT_SPIMultiPhase_MasterTransfer_t *pstMultiPhaseTransfer)
+{
+    if(pstMultiPhaseTransfer == NULL)
+    {
+        FHALT("Invalid SPI Transfer Pointer");
+        return false;
+    }
+
+    if(k_mutex_lock(&stSPITransferMutex, K_MSEC(100)) != 0)
+    {
+        return false;
+    }
+
+    k_sem_reset(&stTSem_SPITransferDone);
+    eLastTransferResult = eTransfer_Failed;
+
+    bool bRes = bSPI_TransferSequence_InMasterMode(pstMultiPhaseTransfer);
+    if(!bRes)
+    {
+        k_mutex_unlock(&stSPITransferMutex);
+        FHALT("Failed to perform SPI Transfer in Master Mode");
+        return false;
+    }
+
+    if(k_sem_take(&stTSem_SPITransferDone, K_MSEC(200)) != 0)
+    {
+        k_mutex_unlock(&stSPITransferMutex);
+        FHALT("Timeout waiting for SPI Transfer to complete");
+        return false;
+    }
+
+    bRes = (eLastTransferResult == eTransfer_Success);
+    if(!bRes)
+    {
+        FHALT("SPI multiphase callback result: %d", eLastTransferResult);
+    }
+    k_mutex_unlock(&stSPITransferMutex);
+    return bRes;        
 }
 
 bool bSPI_Transceive(sT_SPIMasterTransfer_t *pstTSPITransfer)

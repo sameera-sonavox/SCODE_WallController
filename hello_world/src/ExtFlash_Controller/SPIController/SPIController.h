@@ -9,6 +9,7 @@
 
 extern bool bInit_LPSPI_ForExtFlash( void );
 extern bool bSPI_Transceive(sT_SPIMasterTransfer_t *pstTSPITransfer);
+extern bool bSPI_MultiPhaseTranseive(sT_SPIMultiPhase_MasterTransfer_t *pstMultiPhaseTransfer);
 bool bSPI_Write(sT_SPIMasterTransfer_t *pstTSPITransfer);
 
 #endif//SPICONTROLLER_H

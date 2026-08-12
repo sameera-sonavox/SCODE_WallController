@@ -4,7 +4,8 @@
 #include <zephyr/devicetree.h>
 
 #define DATA_PARTITION_START_ADDRESS                DT_REG_ADDR(DT_NODELABEL(ext_storage_partition))
-#define DATA_PARTITION_END_ADDRESS                  DT_REG_SIZE(DT_NODELABEL(ext_storage_partition))
+#define DATA_PARTITION_SIZE_BYTES                   DT_REG_SIZE(DT_NODELABEL(ext_storage_partition))
+#define DATA_PARTITION_END_ADDRESS                  (DATA_PARTITION_START_ADDRESS + DATA_PARTITION_SIZE_BYTES)
 
 #define JEDEC_ID_0                                  0xC2
 #define JEDEC_ID_1                                  0x28
@@ -12,6 +13,10 @@
 
 //Read Buffer Lengths
 #define DEFAULT_READ_BUFF_LENGTH                    256U
+#define QUAD_READ_MAX_TRANSACTION_LENGTH            4096U// 256U
+
+/* Bring-up only: this erases the final 64 KiB of the data partition at boot. */
+#define EXT_FLASH_RUN_BULK_TEST                       1U
 
 //Commands
 #define JEDEC_ID_REQ_CMD                            0x9F
