@@ -9,7 +9,7 @@
 #include "ADC/NXP_ADC_ProjDef.h"
 #include "TrigSrcControl/TrigSrcControl.h"
 #include "GenericMacro.h"
-#include "../UART_CAN_Bridge/UART_CAN_Bridge.h"
+#include "../PC_UART_API/PC_UART_API.h"
 
 #define ADC0_TRIGGER_FREQUENCY_HZ               40000U
 #define ADC_PC_STARTUP_SILENT_TIME_MS           300U
@@ -144,7 +144,7 @@ void vInitialize_ADCModule( void )
         return;
     }
 
-    vUART_CAN_Bridge_RegisterADCDataRequestCallback(vSetup_ChannelInfo);
+    vPC_UART_API_RegisterADCDataRequestCallback(vSetup_ChannelInfo);
     vSetup_ChannelInfo();
 
     k_work_init_delayable(&k_ADCResult_RequestWorker, vAcquire_ADCMeasurements);    
@@ -175,7 +175,7 @@ void vSetup_ChannelInfo( void )
         uiaDescriptors[uiOffset + 3U] = (uint8_t)staADCChInfo[i].eValType;
     }
 
-    (void)bUART_CAN_Bridge_SendDataWithPostDelay(uiaDescriptors,
+    (void)bPC_UART_API_SendDataWithPostDelay(uiaDescriptors,
                                                  sizeof(uiaDescriptors),
                                                  ADC_PC_STARTUP_SILENT_TIME_MS);
     atomic_store_explicit(&bSendingChannelInfo, false, memory_order_release);
@@ -245,7 +245,7 @@ void vAcquire_ADCMeasurements( struct k_work *work )
             (uint8_t)(uiaValues[i] >> 8U),
             (uint8_t)uiaValues[i],
         };
-        (void)bUART_CAN_Bridge_SendData(uiaMeasurement, sizeof(uiaMeasurement));
+        (void)bPC_UART_API_SendData(uiaMeasurement, sizeof(uiaMeasurement));
     }
     k_work_reschedule(&k_ADCResult_RequestWorker, K_MSEC(100));
 }

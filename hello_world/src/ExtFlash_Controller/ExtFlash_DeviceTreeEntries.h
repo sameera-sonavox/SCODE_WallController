@@ -1,0 +1,16 @@
+#ifndef EXTFLASH_DEVICETREEENTRIES_H
+#define EXTFLASH_DEVICETREEENTRIES_H
+
+#include <zephyr/devicetree.h>
+#include <zephyr/fs/fs.h>
+
+#define EXT_LITTLEFS_NODE                   DT_NODELABEL(ext_littlefs)
+#define EXT_LITTLEFS_MOUNT_POINT            FSTAB_ENTRY_DT_MOUNT_POINT(EXT_LITTLEFS_NODE)
+
+//Paths
+#define EXT_LITTLEFS_IMAGE_DIRECTORY        EXT_LITTLEFS_MOUNT_POINT "/Images/"
+#define EXT_LITTLEFS_ICONS_DIRECTORY        EXT_LITTLEFS_MOUNT_POINT "/Icons/"
+#define EXT_LITTLEFS_DATA_DIRECTORY         EXT_LITTLEFS_MOUNT_POINT "/Data/"
+#define EXT_LITTLEFS_CONFIG_DIRECTORY       EXT_LITTLEFS_MOUNT_POINT "/Config/"
+
+#endif

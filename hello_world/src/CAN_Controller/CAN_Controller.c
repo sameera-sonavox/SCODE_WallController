@@ -4,7 +4,7 @@
 #include "GenericMacro.h"
 #include "../Bootloader_Controller/Bootloader_Ctrl.h"
 #include "../Bootloader_Controller/Bootloader_TypeDef.h"
-#include "../UART_CAN_Bridge/UART_CAN_Bridge.h"
+#include "../PC_UART_API/PC_UART_API.h"
 
 K_MSGQ_DEFINE(msgq_CANBootloaderRx, sizeof(struct can_frame), BOOTLOADER_MSG_QUEUE_MAX_MESSAGEs, 4);
 
@@ -261,7 +261,7 @@ void vCAN_RXCallback(const struct device *dev, struct can_frame *frame, void *us
     if(eCMD < eBootloader_CMD_FWUpReq || eCMD >= eNUMBER_OF_BOOTLOADER_COMMANDs)
         return;
 
-    vUART_CAN_Bridge_ForwardCANFrame(frame);
+    vPC_UART_API_ForwardCANFrame(frame);
 }
 
 void vCAN_BusError_Callback(eT_CAN_BUSState eBusState, struct can_bus_err_cnt stBusErrCount)

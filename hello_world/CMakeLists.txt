@@ -27,6 +27,14 @@ set(DTC_OVERLAY_FILE
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(hello_world)
 
+# Keep the generated external-IRQ vectors immediately after the Cortex-M
+# exception vectors. Zephyr 4.4 registers both snippets with the same legacy
+# linker sort key, which can omit irq-vector-table-section.ld from ROM_START.
+zephyr_linker_sources(
+    ROM_START
+    SORT_KEY 0x0vectors_irq
+    ${ZEPHYR_BASE}/include/zephyr/linker/irq-vector-table-section.ld)
+
 set(MCUX_SDK_NG_DIR "${WEST_TOPDIR}/modules/hal/nxp/mcux/mcux-sdk-ng")
 
 target_include_directories(app PRIVATE
@@ -58,17 +66,25 @@ target_sources(app PRIVATE
                 src/main.c 
                 src/CAN_Controller/CAN_Controller.c 
                 src/Bootloader_Controller/Bootloader_Ctrl.c
-                src/UART_CAN_Bridge/UART_CAN_Bridge.c 
+                src/PC_UART_API/PC_UART_API.c
+                src/PC_UART_API/PC_UART_FWBridgeService.c
+                src/PC_UART_API/PC_UART_BulkFileService.c
+                src/PC_UART_API/PC_UART_API_ValidateTest.c
                 src/ADC_Controller/ADC_Controller.c 
                 src/SPI_Controller/SPI_Controller_Master.c 
                 src/SPI_Controller/SPI_Controller_Slave.c 
                 src/LVGL_Controller/LVGL_Display_Controller.c 
                 src/LVGL_Controller/Screen_Parameters/LVGL_AudioSources_UIParam.c 
-                src/LVGL_Controller/Screen_Parameters/LVGL_AudioSource_UIScreen.c
+                src/LVGL_Controller/Screen_Parameters/LVGL_AudioSource_UIScreen.c 
+                src/LVGL_Controller/FileSystem_Adapter/LVGL_ZephyrFS_Adapter.c 
+                src/LVGL_Controller/Screens/Screen_Welcome/WelcomeScreen.c 
                 ${MCUX_SDK_NG_DIR}/drivers/lpadc/fsl_lpadc.c 
                 ${MCUX_SDK_NG_DIR}/drivers/lpspi/fsl_lpspi.c 
                 ${MCUX_SDK_NG_DIR}/drivers/eqdc/fsl_eqdc.c
                 src/ExtFlash_Controller/ExtFlash_Controller.c 
                 src/ExtFlash_Controller/SPIController/SPIController.c 
                 src/ExtFlash_Controller/ExtFlashInitialSetup/ExtFlash_InitialSetupCtrl.c 
-                src/ExtFlash_Controller/ExtFlashReadWrite/ExtFlash_ReadWriteControl.c)
+                src/ExtFlash_Controller/ExtFlashReadWrite/ExtFlash_ReadWriteControl.c
+                src/ExtFlash_Controller/Flash_Memory_ValidateTest/Flash_Memory_ValidateTest.c 
+                src/ExtFlash_Controller/ZephyrFlashMiddleWare/ZephyrFlashMiddleWare.c
+                src/ExtFlash_Controller/LittleFsController/LittleFs_Controller.c)

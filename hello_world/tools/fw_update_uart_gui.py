@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""
-GUI firmware update sender for the UART-to-CAN bootloader bridge.
+"""PC UART operations tool.
 
-The UI can send a full signed MCUboot image, intentionally omit selected
-firmware data packets, and later retransmit selected/requested packet IDs.
+The GUI provides separate operation views for the UART-to-CAN firmware bridge
+and for transferring files into the MCU's local LittleFS storage.
 """
 
 from __future__ import annotations
@@ -82,6 +81,27 @@ UART_VERSION = 1
 UART_ACK = 0x06
 UART_NACK = 0x15
 
+CMD_SELECT_OPERATION = 0x01
+CMD_RELEASE_OPERATION = 0x02
+CMD_BULK_START = 0x40
+CMD_BULK_DATA = 0x41
+CMD_BULK_END = 0x42
+
+OPERATION_FIRMWARE_BRIDGE = 1
+OPERATION_LOCAL_BULK_FILE = 2
+
+FILE_TYPE_DATA = 2
+FILE_TYPE_IMAGE = 3
+FILE_TYPE_ICON = 4
+FILE_TYPE_IDS = {
+    "Data": FILE_TYPE_DATA,
+    "Image": FILE_TYPE_IMAGE,
+    "Icon": FILE_TYPE_ICON,
+}
+
+BULK_DATA_LENGTH = 256
+MAX_BULK_FILE_NAME_BYTES = 29
+
 
 @dataclass(frozen=True)
 class FirmwarePacket:
@@ -158,16 +178,19 @@ class BridgeClient:
         self,
         port_name: str,
         baud_rate: int,
-        log_queue: queue.Queue[str],
+        log_queue: queue.Queue[object],
         start_delay_s: float,
         inter_frame_delay_s: float,
         byte_delay_s: float,
+        log_target: str = "firmware",
     ):
         if serial is None:
             raise RuntimeError("Missing dependency: pyserial. Install with: python -m pip install pyserial")
 
         self.log_queue = log_queue
+        self.log_target = log_target
         self.sequence = 0
+        self.selected_operation: int | None = None
         self.inter_frame_delay_s = inter_frame_delay_s
         self.byte_delay_s = byte_delay_s
         self.port = serial.Serial(
@@ -185,10 +208,18 @@ class BridgeClient:
 
     def close(self) -> None:
         if self.port and self.port.is_open:
+            if self.selected_operation is not None:
+                try:
+                    self.release_operation()
+                except Exception as exc:
+                    self._log(f"Could not release PC UART operation during close: {exc}", "bridge")
             self.port.close()
 
     def _log(self, text: str, category: str = "info") -> None:
-        self.log_queue.put((category, text))
+        if self.log_target == "file":
+            self.log_queue.put(("file_log", category, text))
+        else:
+            self.log_queue.put((category, text))
 
     def _read_exact(self, length: int, timeout_s: float) -> bytes:
         deadline = time.monotonic() + timeout_s
@@ -314,7 +345,7 @@ class BridgeClient:
 
         return None
 
-    def send_bootloader_frame(self, command: int, payload: bytes = b"") -> tuple[int, int]:
+    def send_pc_uart_command(self, command: int, payload: bytes = b"") -> tuple[int, int]:
         sequence = self.sequence
         self.sequence = (self.sequence + 1) & 0xFFFF
 
@@ -331,6 +362,61 @@ class BridgeClient:
             raise RuntimeError(f"Bridge NACK: cmd={command}, seq={sequence}, error={error_code}")
 
         raise RuntimeError(f"Unexpected bridge response 0x{status:02X}: cmd={command}, seq={sequence}")
+
+    def send_bootloader_frame(self, command: int, payload: bytes = b"") -> tuple[int, int]:
+        if self.selected_operation != OPERATION_FIRMWARE_BRIDGE:
+            raise RuntimeError("Firmware Bridge operation is not selected")
+        return self.send_pc_uart_command(command, payload)
+
+    def select_operation(self, operation: int) -> None:
+        self.send_pc_uart_command(CMD_SELECT_OPERATION, bytes([operation]))
+        self.selected_operation = operation
+        self._log(f"Selected PC UART operation {operation}", "bridge")
+
+    def release_operation(self) -> None:
+        self.send_pc_uart_command(CMD_RELEASE_OPERATION)
+        self.selected_operation = None
+        self._log("Released PC UART operation", "bridge")
+
+    def send_bulk_start(self, file_type: int, file_name: str, file_data: bytes) -> None:
+        encoded_name = file_name.encode("utf-8")
+        if not encoded_name or len(encoded_name) > MAX_BULK_FILE_NAME_BYTES:
+            raise ValueError(
+                f"File name must contain 1 to {MAX_BULK_FILE_NAME_BYTES} UTF-8 bytes"
+            )
+        if not file_data:
+            raise ValueError("Cannot transfer an empty file")
+        if len(file_data) > 0xFFFFFFFF:
+            raise ValueError("File is too large for the 32-bit bulk-transfer size field")
+        if file_type not in FILE_TYPE_IDS.values():
+            raise ValueError(f"Unsupported file type: {file_type}")
+        if self.selected_operation != OPERATION_LOCAL_BULK_FILE:
+            raise RuntimeError("Local Bulk File operation is not selected")
+
+        payload = struct.pack(
+            ">BIHB",
+            file_type,
+            len(file_data),
+            crc16_ccitt(file_data),
+            len(encoded_name),
+        ) + encoded_name
+        self.send_pc_uart_command(CMD_BULK_START, payload)
+
+    def send_bulk_data(self, frame_id: int, data: bytes) -> None:
+        if self.selected_operation != OPERATION_LOCAL_BULK_FILE:
+            raise RuntimeError("Local Bulk File operation is not selected")
+        if not data or len(data) > BULK_DATA_LENGTH:
+            raise ValueError(f"Bulk frame data length must be 1 to {BULK_DATA_LENGTH} bytes")
+
+        payload = struct.pack(">IHH", frame_id, len(data), crc16_ccitt(data)) + data
+        self.send_pc_uart_command(CMD_BULK_DATA, payload)
+
+    def send_bulk_end(self) -> None:
+        if self.selected_operation != OPERATION_LOCAL_BULK_FILE:
+            raise RuntimeError("Local Bulk File operation is not selected")
+        self.send_pc_uart_command(CMD_BULK_END)
+        # The MCU returns its hub to Idle after finalizing a bulk transfer.
+        self.selected_operation = None
 
     def write_raw(self, data: bytes) -> None:
         try:
@@ -407,61 +493,115 @@ class BridgeClient:
 class FirmwareUpdateGui:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("CAN Firmware Update over UART")
-        self.root.geometry("1120x760")
+        self.root.title("PC UART Operations")
+        self.root.geometry("1180x780")
+        self.root.minsize(980, 680)
 
         self.image_path = tk.StringVar(value=DEFAULT_IMAGE)
+        self.file_transfer_path = tk.StringVar()
+        self.file_transfer_type = tk.StringVar(value="Image")
         self.port_name = tk.StringVar(value=DEFAULT_COM_PORT)
         self.baud_rate = tk.StringVar(value=str(DEFAULT_BAUD_RATE))
         self.start_delay = tk.StringVar(value=str(START_DELAY_S))
         self.inter_frame_delay = tk.StringVar(value=str(INTER_FRAME_DELAY_S))
         self.byte_delay = tk.StringVar(value=str(TX_BYTE_DELAY_S))
         self.status_text = tk.StringVar(value="Select a signed firmware image.")
+        self.file_transfer_status = tk.StringVar(value="Select a file to transfer.")
+        self.file_transfer_progress = tk.DoubleVar(value=0.0)
+        self.file_transfer_percent = tk.StringVar(value="0%")
 
         self.image: bytes = b""
         self.packets: list[FirmwarePacket] = []
         self.selected_missing: set[int] = set()
-        self.log_queue: queue.Queue[str | tuple[str, str]] = queue.Queue()
+        self.file_transfer_data: bytes = b""
+        self.file_transfer_source: Path | None = None
+        self.log_queue: queue.Queue[object] = queue.Queue()
         self.worker: threading.Thread | None = None
+        self.operation_frames: dict[str, ttk.Frame] = {}
+        self.operation_buttons: dict[str, ttk.Button] = {}
 
         self._build_layout()
         self.root.after(100, self._drain_log_queue)
 
     def _build_layout(self) -> None:
-        top = ttk.Frame(self.root, padding=10)
+        connection = ttk.LabelFrame(self.root, text="UART Connection", padding=(10, 6))
+        connection.pack(fill=tk.X, padx=10, pady=(10, 6))
+
+        ttk.Label(connection, text="Port").grid(row=0, column=0, sticky=tk.W)
+        ttk.Entry(connection, textvariable=self.port_name, width=12).grid(row=0, column=1, padx=(5, 18))
+        ttk.Label(connection, text="Baud").grid(row=0, column=2, sticky=tk.W)
+        ttk.Entry(connection, textvariable=self.baud_rate, width=10).grid(row=0, column=3, padx=(5, 18))
+        ttk.Label(connection, text="Start delay (s)").grid(row=0, column=4, sticky=tk.W)
+        ttk.Entry(connection, textvariable=self.start_delay, width=8).grid(row=0, column=5, padx=(5, 18))
+        ttk.Label(connection, text="Frame delay (s)").grid(row=0, column=6, sticky=tk.W)
+        ttk.Entry(connection, textvariable=self.inter_frame_delay, width=8).grid(row=0, column=7, padx=(5, 18))
+        ttk.Label(connection, text="Byte delay (s)").grid(row=0, column=8, sticky=tk.W)
+        ttk.Entry(connection, textvariable=self.byte_delay, width=8).grid(row=0, column=9, padx=(5, 0))
+
+        body = ttk.Frame(self.root, padding=(10, 0, 10, 10))
+        body.pack(fill=tk.BOTH, expand=True)
+        body.columnconfigure(1, weight=1)
+        body.rowconfigure(0, weight=1)
+
+        navigation = ttk.LabelFrame(body, text="Operations", padding=8)
+        navigation.grid(row=0, column=0, sticky=tk.NS, padx=(0, 8))
+
+        firmware_button = ttk.Button(
+            navigation,
+            text="Firmware Update",
+            width=20,
+            command=lambda: self._show_operation_view("firmware"),
+        )
+        firmware_button.pack(fill=tk.X, pady=(0, 6))
+        file_button = ttk.Button(
+            navigation,
+            text="File Transfer",
+            width=20,
+            command=lambda: self._show_operation_view("file"),
+        )
+        file_button.pack(fill=tk.X)
+        self.operation_buttons = {"firmware": firmware_button, "file": file_button}
+
+        content = ttk.Frame(body)
+        content.grid(row=0, column=1, sticky=tk.NSEW)
+        content.columnconfigure(0, weight=1)
+        content.rowconfigure(0, weight=1)
+
+        firmware_view = ttk.Frame(content)
+        file_view = ttk.Frame(content)
+        for view in (firmware_view, file_view):
+            view.grid(row=0, column=0, sticky=tk.NSEW)
+        self.operation_frames = {"firmware": firmware_view, "file": file_view}
+
+        self._build_firmware_view(firmware_view)
+        self._build_file_transfer_view(file_view)
+        self._show_operation_view("firmware")
+
+    def _show_operation_view(self, operation: str) -> None:
+        self.operation_frames[operation].tkraise()
+        for name, button in self.operation_buttons.items():
+            button.state(["disabled"] if name == operation else ["!disabled"])
+
+    def _build_firmware_view(self, parent: ttk.Frame) -> None:
+        top = ttk.LabelFrame(parent, text="Firmware Image", padding=8)
         top.pack(fill=tk.X)
 
         ttk.Label(top, text="Image").grid(row=0, column=0, sticky=tk.W)
-        image_entry = ttk.Entry(top, textvariable=self.image_path)
-        image_entry.grid(row=0, column=1, sticky=tk.EW, padx=6)
+        ttk.Entry(top, textvariable=self.image_path).grid(row=0, column=1, sticky=tk.EW, padx=6)
         ttk.Button(top, text="Browse", command=self.browse_image).grid(row=0, column=2, padx=4)
         ttk.Button(top, text="Load", command=self.load_image).grid(row=0, column=3, padx=4)
-
-        ttk.Label(top, text="Port").grid(row=1, column=0, sticky=tk.W, pady=(8, 0))
-        ttk.Entry(top, textvariable=self.port_name, width=12).grid(row=1, column=1, sticky=tk.W, padx=6, pady=(8, 0))
-        ttk.Label(top, text="Baud").grid(row=1, column=1, sticky=tk.W, padx=(110, 0), pady=(8, 0))
-        ttk.Entry(top, textvariable=self.baud_rate, width=10).grid(row=1, column=1, sticky=tk.W, padx=(150, 0), pady=(8, 0))
-
-        ttk.Label(top, text="Start delay").grid(row=1, column=1, sticky=tk.W, padx=(245, 0), pady=(8, 0))
-        ttk.Entry(top, textvariable=self.start_delay, width=7).grid(row=1, column=1, sticky=tk.W, padx=(320, 0), pady=(8, 0))
-        ttk.Label(top, text="Frame delay").grid(row=1, column=1, sticky=tk.W, padx=(380, 0), pady=(8, 0))
-        ttk.Entry(top, textvariable=self.inter_frame_delay, width=7).grid(row=1, column=1, sticky=tk.W, padx=(455, 0), pady=(8, 0))
-        ttk.Label(top, text="Byte delay").grid(row=1, column=1, sticky=tk.W, padx=(515, 0), pady=(8, 0))
-        ttk.Entry(top, textvariable=self.byte_delay, width=7).grid(row=1, column=1, sticky=tk.W, padx=(585, 0), pady=(8, 0))
-
         top.columnconfigure(1, weight=1)
 
-        buttons = ttk.Frame(self.root, padding=(10, 0, 10, 8))
+        buttons = ttk.Frame(parent, padding=(0, 8, 0, 6))
         buttons.pack(fill=tk.X)
-
         ttk.Button(buttons, text="Send Update", command=self.send_update).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(buttons, text="Clear Messages", command=self.clear_messages).pack(side=tk.LEFT, padx=6)
         ttk.Button(buttons, text="Clear Selection", command=self.clear_selection).pack(side=tk.LEFT, padx=6)
 
-        ttk.Label(self.root, textvariable=self.status_text, padding=(10, 0, 10, 4)).pack(fill=tk.X)
+        ttk.Label(parent, textvariable=self.status_text, padding=(0, 0, 0, 4)).pack(fill=tk.X)
 
-        main = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
-        main.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        main = ttk.PanedWindow(parent, orient=tk.HORIZONTAL)
+        main.pack(fill=tk.BOTH, expand=True)
 
         left = ttk.Frame(main)
         right = ttk.Frame(main)
@@ -496,6 +636,57 @@ class FirmwareUpdateGui:
         self.log.tag_configure("recovery", foreground="#16803C")
         self.log.tag_configure("error", foreground="#B42318")
         self.log.pack(fill=tk.BOTH, expand=True)
+
+    def _build_file_transfer_view(self, parent: ttk.Frame) -> None:
+        selection = ttk.LabelFrame(parent, text="Local File Transfer", padding=10)
+        selection.pack(fill=tk.X)
+        selection.columnconfigure(1, weight=1)
+
+        ttk.Label(selection, text="File type").grid(row=0, column=0, sticky=tk.W, pady=(0, 8))
+        type_box = ttk.Combobox(
+            selection,
+            textvariable=self.file_transfer_type,
+            values=tuple(FILE_TYPE_IDS),
+            state="readonly",
+            width=16,
+        )
+        type_box.grid(row=0, column=1, sticky=tk.W, padx=8, pady=(0, 8))
+
+        ttk.Label(selection, text="File").grid(row=1, column=0, sticky=tk.W)
+        ttk.Entry(selection, textvariable=self.file_transfer_path).grid(
+            row=1, column=1, sticky=tk.EW, padx=8
+        )
+        ttk.Button(selection, text="Browse", command=self.browse_transfer_file).grid(row=1, column=2, padx=4)
+        ttk.Button(selection, text="Load", command=self.load_transfer_file).grid(row=1, column=3, padx=4)
+
+        actions = ttk.Frame(parent, padding=(0, 10, 0, 8))
+        actions.pack(fill=tk.X)
+        ttk.Button(actions, text="Send File", command=self.send_transfer_file).pack(side=tk.LEFT)
+        ttk.Button(actions, text="Clear Messages", command=self.clear_file_messages).pack(side=tk.LEFT, padx=8)
+
+        ttk.Label(parent, textvariable=self.file_transfer_status).pack(fill=tk.X, pady=(0, 6))
+
+        progress_row = ttk.Frame(parent)
+        progress_row.pack(fill=tk.X, pady=(0, 10))
+        progress_row.columnconfigure(0, weight=1)
+        ttk.Progressbar(
+            progress_row,
+            variable=self.file_transfer_progress,
+            maximum=100.0,
+            mode="determinate",
+        ).grid(row=0, column=0, sticky=tk.EW)
+        ttk.Label(progress_row, textvariable=self.file_transfer_percent, width=8, anchor=tk.E).grid(
+            row=0, column=1, padx=(8, 0)
+        )
+
+        ttk.Label(parent, text="File Transfer Messages").pack(anchor=tk.W)
+        self.file_log = tk.Text(parent, height=20, wrap=tk.WORD, state=tk.DISABLED)
+        self.file_log.tag_configure("info", foreground="#222222")
+        self.file_log.tag_configure("bridge", foreground="#7A4D00")
+        self.file_log.tag_configure("slave", foreground="#155EEF")
+        self.file_log.tag_configure("recovery", foreground="#16803C")
+        self.file_log.tag_configure("error", foreground="#B42318")
+        self.file_log.pack(fill=tk.BOTH, expand=True)
 
     def browse_image(self) -> None:
         path = filedialog.askopenfilename(
@@ -584,6 +775,91 @@ class FirmwareUpdateGui:
         self.log.delete("1.0", tk.END)
         self.log.configure(state=tk.DISABLED)
 
+    def browse_transfer_file(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Select file to transfer",
+            filetypes=[
+                ("Binary and image files", "*.bin *.raw *.png *.jpg *.jpeg *.bmp"),
+                ("All files", "*.*"),
+            ],
+        )
+        if path:
+            self.file_transfer_path.set(path)
+            self.load_transfer_file()
+
+    def load_transfer_file(self) -> None:
+        try:
+            source = Path(self.file_transfer_path.get()).expanduser().resolve()
+            data = source.read_bytes()
+            encoded_name = source.name.encode("utf-8")
+            if not data:
+                raise ValueError("Selected file is empty")
+            if len(encoded_name) > MAX_BULK_FILE_NAME_BYTES:
+                raise ValueError(
+                    f"File name is {len(encoded_name)} UTF-8 bytes; the MCU accepts at most "
+                    f"{MAX_BULK_FILE_NAME_BYTES}"
+                )
+
+            self.file_transfer_source = source
+            self.file_transfer_data = data
+            self.file_transfer_path.set(str(source))
+            self.file_transfer_progress.set(0.0)
+            self.file_transfer_percent.set("0%")
+            self.file_transfer_status.set(
+                f"Loaded {source.name} | {len(data)} bytes | CRC16 0x{crc16_ccitt(data):04X}"
+            )
+            self.append_file_log(f"Loaded file: {source}")
+            self.append_file_log(
+                f"File size: {len(data)} bytes, CRC16: 0x{crc16_ccitt(data):04X}"
+            )
+        except Exception as exc:
+            self.file_transfer_source = None
+            self.file_transfer_data = b""
+            messagebox.showerror("Load failed", str(exc))
+
+    def ensure_transfer_file_loaded(self) -> bool:
+        requested_path = self.file_transfer_path.get().strip()
+        if (
+            self.file_transfer_source is not None
+            and self.file_transfer_data
+            and requested_path == str(self.file_transfer_source)
+        ):
+            return True
+        self.load_transfer_file()
+        return self.file_transfer_source is not None and bool(self.file_transfer_data)
+
+    def send_transfer_file(self) -> None:
+        if not self.ensure_transfer_file_loaded():
+            return
+
+        file_type_name = self.file_transfer_type.get()
+        file_type = FILE_TYPE_IDS.get(file_type_name)
+        if file_type is None:
+            messagebox.showerror("Invalid file type", "Select Data, Image, or Icon.")
+            return
+
+        source = self.file_transfer_source
+        if source is None:
+            return
+
+        # Freeze the selected inputs before the worker starts so later UI edits
+        # cannot alter a transfer that is already in progress.
+        file_data = self.file_transfer_data
+        file_name = source.name
+        self.start_worker(
+            lambda: self._send_transfer_file_worker(
+                file_type_name,
+                file_type,
+                file_name,
+                file_data,
+            )
+        )
+
+    def clear_file_messages(self) -> None:
+        self.file_log.configure(state=tk.NORMAL)
+        self.file_log.delete("1.0", tk.END)
+        self.file_log.configure(state=tk.DISABLED)
+
     def send_update(self) -> None:
         if not self.ensure_image_loaded():
             return
@@ -628,15 +904,83 @@ class FirmwareUpdateGui:
         self.worker = threading.Thread(target=target, daemon=True)
         self.worker.start()
 
-    def _open_client(self) -> BridgeClient:
-        return BridgeClient(
+    def _open_client(self, operation: int = OPERATION_FIRMWARE_BRIDGE) -> BridgeClient:
+        client = BridgeClient(
             self.port_name.get(),
             int(self.baud_rate.get()),
             self.log_queue,
             float(self.start_delay.get()),
             float(self.inter_frame_delay.get()),
             float(self.byte_delay.get()),
+            "file" if operation == OPERATION_LOCAL_BULK_FILE else "firmware",
         )
+        try:
+            client.select_operation(operation)
+        except Exception:
+            client.close()
+            raise
+        return client
+
+    def _send_transfer_file_worker(
+        self,
+        file_type_name: str,
+        file_type: int,
+        file_name: str,
+        file_data: bytes,
+    ) -> None:
+        client: BridgeClient | None = None
+        total_size = len(file_data)
+        total_frames = (total_size + BULK_DATA_LENGTH - 1) // BULK_DATA_LENGTH
+        started_at = time.monotonic()
+
+        self.log_queue.put(("file_progress", 0, total_size))
+        self.log_queue.put(("file_status", f"Opening UART for {file_type_name} transfer..."))
+        self.log_queue.put(("file_log", "info", f"Starting {file_type_name} transfer: {file_name}"))
+
+        try:
+            client = self._open_client(OPERATION_LOCAL_BULK_FILE)
+            client.send_bulk_start(file_type, file_name, file_data)
+            self.log_queue.put(
+                ("file_log", "bridge", f"Bulk START accepted: {total_size} bytes, {total_frames} frames")
+            )
+
+            transferred = 0
+            for frame_id, offset in enumerate(range(0, total_size, BULK_DATA_LENGTH)):
+                chunk = file_data[offset : offset + BULK_DATA_LENGTH]
+                client.send_bulk_data(frame_id, chunk)
+                transferred += len(chunk)
+                self.log_queue.put(("file_progress", transferred, total_size))
+
+                completed_frames = frame_id + 1
+                if completed_frames == 1 or completed_frames % 64 == 0 or completed_frames == total_frames:
+                    self.log_queue.put(
+                        (
+                            "file_log",
+                            "info",
+                            f"Transferred {completed_frames}/{total_frames} frames "
+                            f"({transferred}/{total_size} bytes)",
+                        )
+                    )
+
+            self.log_queue.put(("file_status", "Finalizing file on the MCU..."))
+            client.send_bulk_end()
+
+            elapsed_s = time.monotonic() - started_at
+            rate_kib_s = (total_size / 1024.0) / elapsed_s if elapsed_s > 0 else 0.0
+            self.log_queue.put(
+                (
+                    "file_log",
+                    "recovery",
+                    f"Transfer completed in {elapsed_s:.2f} s ({rate_kib_s:.1f} KiB/s)",
+                )
+            )
+            self.log_queue.put(("file_status", f"Transfer complete: {file_name}"))
+        except Exception as exc:
+            self.log_queue.put(("file_log", "error", f"ERROR: {exc}"))
+            self.log_queue.put(("file_status", f"Transfer failed: {exc}"))
+        finally:
+            if client is not None:
+                client.close()
 
     def _send_update_worker(self, omit_ids: set[int]) -> None:
         try:
@@ -839,6 +1183,19 @@ class FirmwareUpdateGui:
         self.log.see(tk.END)
         self.log.configure(state=tk.DISABLED)
 
+    def append_file_log(self, text: str, category: str = "info") -> None:
+        self.file_log.configure(state=tk.NORMAL)
+        self.file_log.insert(tk.END, f"{time.strftime('%H:%M:%S')}  {text}\n", category)
+        self.file_log.see(tk.END)
+        self.file_log.configure(state=tk.DISABLED)
+
+    def _update_file_progress(self, transferred: int, total: int) -> None:
+        percent = (100.0 * transferred / total) if total > 0 else 0.0
+        self.file_transfer_progress.set(percent)
+        self.file_transfer_percent.set(f"{percent:.1f}%")
+        if transferred < total:
+            self.file_transfer_status.set(f"Transferring: {transferred}/{total} bytes")
+
     def _drain_log_queue(self) -> None:
         while True:
             try:
@@ -846,11 +1203,22 @@ class FirmwareUpdateGui:
             except queue.Empty:
                 break
             if isinstance(item, tuple):
-                category, text = item
-                self.append_log(text, category)
+                if len(item) == 3 and item[0] == "file_progress":
+                    _event, transferred, total = item
+                    self._update_file_progress(int(transferred), int(total))
+                elif len(item) == 3 and item[0] == "file_log":
+                    _event, category, text = item
+                    self.append_file_log(str(text), str(category))
+                elif len(item) == 2 and item[0] == "file_status":
+                    _event, text = item
+                    self.file_transfer_status.set(str(text))
+                elif len(item) == 2:
+                    category, text = item
+                    self.append_log(str(text), str(category))
             else:
-                category = "error" if item.startswith("ERROR:") else "info"
-                self.append_log(item, category)
+                text = str(item)
+                category = "error" if text.startswith("ERROR:") else "info"
+                self.append_log(text, category)
         self.root.after(100, self._drain_log_queue)
 
 

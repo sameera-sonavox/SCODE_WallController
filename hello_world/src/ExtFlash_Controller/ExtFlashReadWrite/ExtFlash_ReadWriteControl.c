@@ -69,7 +69,7 @@ int iWrite_DataToFlash(uint32_t uiAddr, const uint8_t *puiData, size_t uiDataLen
         uiCMD[2] = (uint8_t)(uiMemAddr >> 8U);
         uiCMD[3] = (uint8_t)uiMemAddr;
 
-        uint32_t uiAvailableBytes = 256U - (uiMemAddr & 0xFF);
+        uint32_t uiAvailableBytes = EXT_FLASH_PAGE_SIZE_BYTEs - (uiMemAddr & 0xFF);
 
         if(uiAvailableBytes > uiWriteLen)
         {
@@ -309,8 +309,13 @@ int iRead_DataFromFlash_Quad(uint32_t uiAddr, uint8_t *puiRecvData, size_t uiDat
                                   uiaDummyData,
                                   &puiRecvData[uiTotalReadLength]);
         staConfigArray[0].uiDataLen = sizeof(uiaCMD_FirstPhase);
+        staConfigArray[0].uiBytesPerFrame = 4U;
+
         staConfigArray[1].uiDataLen = sizeof(uiaDummyData);
+        staConfigArray[1].uiBytesPerFrame = 1U;
+
         staConfigArray[2].uiDataLen = uiCurrentReadLength;
+        staConfigArray[2].uiBytesPerFrame = 4U;
 
         if(!bSPI_MultiPhaseTranseive(&stTMultiPhaseCtrl))
         {

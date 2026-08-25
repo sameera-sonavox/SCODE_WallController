@@ -13,6 +13,8 @@
 #include "GenericMacro.h"
 #include "Screen_Parameters/LVGL_AudioSources_UIParam.h"
 #include "Screen_Parameters/LVGL_AudioSource_UIScreen.h"
+#include "Screens/Screen_Welcome/WelcomeScreen.h"
+#include "FileSystem_Adapter/LVGL_ZephyrFS_Adapter.h"
 #include "QDC/NXP_eQDC_API.h"
 
 PINCTRL_DT_DEFINE(EQDC0_PHASE_PIN_NODE);
@@ -98,17 +100,20 @@ sT_UIScreen_t staUIScreens[eNUMBER_OF_SCREENs] = {
 
 void vInit_LVGLDisplay( void )
 {
+    if(!bInit_LVGL_ZephyrFSAdapter())
+    {
+        FHALT("LVGL: LVGL FileSystem Adapter initialization failed.");
+        return;
+    }
+    
     vInitialize_eQDC();
     vInit_Screens();
 
     vUpdate_HostSystemType();
 
-    //The rest of the initialization has to be done based on host system type
-    vSetup_AudioSourceList( &staUIScreens[eScreen_SourceSelect] );
-
     bEn_Display_Backlight();
 
-    vLoad_Screen(eScreen_SourceSelect);
+    vLoad_Screen(eScreen_Welcome);
 
 }
 
@@ -447,6 +452,7 @@ static void vInit_Screens(void)
         switch(i)
         {
             case eScreen_Welcome:
+                vInit_WelcomeScreen(&staUIScreens[i]);
                 break;
             case eScreen_SourceSelect:
                 vInit_SourceSelectScreen_Controls(&staUIScreens[i]);

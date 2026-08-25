@@ -5,7 +5,6 @@
 #include "../Lib/QDC/NXP_eQDC_Types.h"
 #include "../LVGL_ProjDef.h"
 
-extern void vSetup_AudioSourceList( sT_UIScreen_t *pstUIScreen );
 extern void vInit_SourceSelectScreen_Controls(sT_UIScreen_t *pstAudioSrcSelect);
 extern void vRun_AudioSourceScreen( sT_UIScreen_t *pstUIScreen, sT_QEncData_t *pstQEncData );
 extern void vSetup_AudioSrc_ScreenStartup( void );

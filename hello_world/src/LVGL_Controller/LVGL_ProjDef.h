@@ -2,6 +2,7 @@
 #define LVGL_PROJDEF_H
 
 #define NUMBER_OF_UI_CONTROLS_PER_AUDIO_SOURCE          2U
+#define NUMBER_OF_UI_CONTROLS_FOR_WELCOME_SCREEN        2U
 
 #define MAX_TIME_BETWEEN_SCREEN_EVENTs_ms               2000U
 #define VOLUME_EDIT_TIMEOUT_ms                          5000U

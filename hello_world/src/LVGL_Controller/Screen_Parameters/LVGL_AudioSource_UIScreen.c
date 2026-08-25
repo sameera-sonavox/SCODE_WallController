@@ -77,7 +77,7 @@ static lv_point_precise_t screenVertical_SeparatorPoints[] = {
 
 static sT_UIScreen_t *pstAudioSrcScreen = NULL;
 
-static void vCreate_SourceList( sT_UIScreen_t *pstSoucreScreen );
+static bool bCreate_SourceList( void );
 static lv_obj_t *pstCreate_UILabel(lv_obj_t *pstParent, sT_UIObj_Label *pstTObj_Label, sT_AudioSource_t *pstAudioSrc);
 static lv_obj_t *pstCreate_UIIndicator(lv_obj_t *pstParent, sT_UIObj_Indicator *pstObj_Indicator, sT_AudioSource_t *pstAudioSrc);
 static lv_obj_t *pstCreate_UIVolControl(lv_obj_t *pstParent, sT_UIObj_VolControl *pstObj_VolCtrl);
@@ -891,12 +891,6 @@ void vSetup_AudioSrc_ScreenStartup( void )
 //*********************************************************************************** */
 #pragma region UI Creation
 
-void vSetup_AudioSourceList( sT_UIScreen_t *pstUIScreen )
-{
-    pstUIScreen->pfCreate(pstUIScreen);
-    vSet_ScreenActive(eScreen_SourceSelect);
-}
-
 void vInit_SourceSelectScreen_Controls(sT_UIScreen_t *pstAudioSrcSelect)
 {
     if(pstAudioSrcSelect == NULL)
@@ -906,7 +900,7 @@ void vInit_SourceSelectScreen_Controls(sT_UIScreen_t *pstAudioSrcSelect)
     }
 
     pstAudioSrcScreen = pstAudioSrcSelect;
-    pstAudioSrcSelect->pfCreate = vCreate_SourceList;
+    pstAudioSrcSelect->pfCreate = bCreate_SourceList;
     pstAudioSrcSelect->stTDisplayInfo.eScreenId = eScreen_SourceSelect;
 
     for(uint8_t uiSrc = eAudio_Src_0; uiSrc < eNUMBER_OF_AUDIO_SOURCES; uiSrc++)
@@ -931,23 +925,25 @@ void vInit_SourceSelectScreen_Controls(sT_UIScreen_t *pstAudioSrcSelect)
     
     sT_UIObj_VolControl *pstVolCtrl = &pstAudioSrcSelect->stTDisplayInfo.screenType.stTAudioSrcDisplay.stTVolCtrl;
     memcpy(pstVolCtrl, &stTAdSrc_DefaultVolCtrlSettings, sizeof(sT_UIObj_VolControl));
+
+    pstAudioSrcScreen->pfCreate();
 }
 
-static void vCreate_SourceList( sT_UIScreen_t *pstSoucreScreen )
+static bool bCreate_SourceList( void )
 {
     lv_obj_t *pstAudioSrcList;
 
     lvgl_lock();
-    pstSoucreScreen->pstScreenObj = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(pstSoucreScreen->pstScreenObj, lv_color_hex(SCREEN_BACKGROUND_COLOR_HEX), LV_PART_MAIN);
+    pstAudioSrcScreen->pstScreenObj = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(pstAudioSrcScreen->pstScreenObj, lv_color_hex(SCREEN_BACKGROUND_COLOR_HEX), LV_PART_MAIN);
 
-    lv_obj_t *pstSeparator = lv_line_create(pstSoucreScreen->pstScreenObj);
+    lv_obj_t *pstSeparator = lv_line_create(pstAudioSrcScreen->pstScreenObj);
     lv_line_set_points(pstSeparator, screenVertical_SeparatorPoints, 2);
     lv_obj_set_style_line_width(pstSeparator, SEPARATOR_WIDTH, LV_PART_MAIN);
     lv_obj_set_style_line_color(pstSeparator, lv_color_hex(SEPARATOR_COLOR), LV_PART_MAIN);
     lv_obj_set_style_line_rounded(pstSeparator, false, LV_PART_MAIN);
 
-    pstAudioSrcList = lv_list_create(pstSoucreScreen->pstScreenObj);
+    pstAudioSrcList = lv_list_create(pstAudioSrcScreen->pstScreenObj);
 
     lv_obj_set_size(pstAudioSrcList, AUDIO_SOURCE_LIST_DISPLAY_WIDTH, AUDIO_SOURCE_LIST_DISPLAY_HEIGHT);
     lv_obj_set_style_radius(pstAudioSrcList, 0U, LV_PART_MAIN);
@@ -961,7 +957,7 @@ static void vCreate_SourceList( sT_UIScreen_t *pstSoucreScreen )
     lv_obj_align(pstAudioSrcList, LV_ALIGN_LEFT_MID, 0, 0);
 
     sT_AudioSrc_Display_t *pstAudioSrcDisplay =
-        &pstSoucreScreen->stTDisplayInfo.screenType.stTAudioSrcDisplay;
+        &pstAudioSrcScreen->stTDisplayInfo.screenType.stTAudioSrcDisplay;
     sT_AudioSource_t *pstAudioSrc = pstAudioSrcDisplay->staAudioSources;
     for(uint8_t i = 0; i < eNUMBER_OF_AUDIO_SOURCES; i++)
     {
@@ -1011,13 +1007,14 @@ static void vCreate_SourceList( sT_UIScreen_t *pstSoucreScreen )
         pstAudioSrc[i].pstAudSrcObj = pstSrcContainer;
     }
 
-    sT_UIObj_VolControl *pstVolCtrl = &pstSoucreScreen->stTDisplayInfo.screenType.stTAudioSrcDisplay.stTVolCtrl;
+    sT_UIObj_VolControl *pstVolCtrl = &pstAudioSrcScreen->stTDisplayInfo.screenType.stTAudioSrcDisplay.stTVolCtrl;
     pstAudioSrcDisplay->pstSrcVolObj =
-        pstCreate_UIVolControl(pstSoucreScreen->pstScreenObj,
+        pstCreate_UIVolControl(pstAudioSrcScreen->pstScreenObj,
                                pstVolCtrl);
     vUpdate_IndicatorLocation_AtScrollVisible(pstAudioSrcList);
 
     lvgl_unlock();
+    return true;
 }
 
 static lv_obj_t *pstCreate_UIVolControl(lv_obj_t *pstParent, sT_UIObj_VolControl *pstObj_VolCtrl)

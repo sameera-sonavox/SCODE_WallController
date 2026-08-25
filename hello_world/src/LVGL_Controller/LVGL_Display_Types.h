@@ -8,9 +8,11 @@
 #include <stdatomic.h>
 #include <lvgl.h>
 #include <zephyr/kernel.h>
+#include <zephyr/fs/fs.h>
 
 #include "../Lib/QDC/NXP_eQDC_Types.h"
 #include "LVGL_ProjDef.h"
+#include "../ExtFlash_Controller/ExtFlash_ProjDef.h"
 
 typedef enum
 {
@@ -24,6 +26,7 @@ typedef enum
     eUIObj_Label,
     eUIObj_Indicator,
     eUIObj_VolControl,
+    eUIObj_Img,
     eNUMBER_OF_UI_OBJECTs
 } eUI_Obj_Type_t;
 
@@ -131,12 +134,18 @@ typedef struct
 
 typedef struct
 {
+    char *pcaFilePath;    
+} sT_UIObj_Image;
+
+typedef struct
+{
     eUI_Obj_Type_t eObjType;
     lv_obj_t *pstUIObj;
     union{
         sT_UIObj_Label stTObj_Label;
         sT_UIObj_Indicator stTObj_Indicator;
         sT_UIObj_VolControl stTObj_VolCtrl;
+        sT_UIObj_Image stObj_ImgCtrl;
     } uiObject;
 
 } sT_UIControl;
@@ -173,13 +182,23 @@ typedef struct
 
 typedef struct
 {
+    lv_obj_t *pstWelSrcObj;
+    uint32_t uiDisplayTime_ms;
+    sT_UIControl staUIControls[NUMBER_OF_UI_CONTROLS_FOR_WELCOME_SCREEN];
+} sT_WelComeScreen_Display_t;
+
+typedef struct
+{
     eScreenId_t eScreenId;
     union
     {
         sT_AudioSrc_Display_t stTAudioSrcDisplay;
+        sT_WelComeScreen_Display_t stTWelcomScrDisplay;
     } screenType;
 
 } sT_UIScreenDisplay;
+
+typedef bool (*bScreenCreate_t)( void );
 
 typedef struct sT_UIScreen_t
 {
@@ -187,7 +206,7 @@ typedef struct sT_UIScreen_t
     _Atomic bool bIsActive;
     lv_obj_t *pstScreenObj;
 
-    void (*pfCreate)(struct sT_UIScreen_t *pstUIScreen);
+    bScreenCreate_t pfCreate;
     void (*pfShow)(void);
     void (*pfDestroy)(void);
 
