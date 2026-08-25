@@ -1,0 +1,21 @@
+description: Custom MX25R6435F flash using the Sonavox LPSPI driver
+
+compatible: "merryelectronics,mx25r64-custom"
+
+include: base.yaml
+
+properties:
+  size-in-bytes:
+    type: int
+    required: true
+    description: Complete flash capacity in bytes
+
+  erase-block-size:
+    type: int
+    required: true
+    description: Minimum erase size in bytes
+
+  write-block-size:
+    type: int
+    required: true
+    description: Minimum supported write size and alignment
