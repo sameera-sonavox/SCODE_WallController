@@ -1,3 +1,7 @@
 syntax: glob
 hello_world/__repo__
 hello_world/debug
+hello_world/temp
+tmp/
+hello_world/mcuboot_build
+hello_world/format-prompt
