@@ -8,6 +8,7 @@
 #include <zephyr/device.h>
 #include <zephyr/dfu/mcuboot.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/sys/reboot.h>
 #include "fsl_clock.h"
 #include "fsl_port.h"
 #include "CPULoad/NXP_CPU_LoadMon.h"
@@ -27,7 +28,7 @@
 #include "ExtFlash_Controller/Flash_Memory_ValidateTest/Flash_Memory_ValidateTest_ProjDef.h"
 #include "ExtFlash_Controller/LittleFsController/LittleFs_Controller.h"
 
-void vInit_System( void );
+bool bInit_System( void );
 void vCheck_For_FileSystem( void );
 
 int main(void)
@@ -37,7 +38,14 @@ int main(void)
 #endif
 
 	vConfirm_MCUbootImage();
-	vInit_System();
+	if(!bInit_System())
+	{
+		FHALT("SYstem Initialization Failed.");
+		printf("System Restarting...\n\r");
+		sys_reboot(SYS_REBOOT_COLD);
+
+		CODE_UNREACHABLE;
+	}
 
 	while (1)
 	{
@@ -47,16 +55,22 @@ int main(void)
 	
 }
 
-void vInit_System( void )
+bool bInit_System( void )
 {
 	vInit_BootloaderController();
 	vInit_CANController();
 	vInit_PC_UART_API();
 
 	if(!bInit_ExtFlash_FsController())
-		return;
+		return false;
 	vCheck_For_FileSystem();
-	vInit_LVGLDisplay();
+	
+	if(!bInit_LVGLDisplay())
+	{
+		return false;
+	}
+
+	return true;
 }
 
 void vCheck_For_FileSystem( void )

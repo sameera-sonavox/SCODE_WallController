@@ -108,6 +108,7 @@ typedef struct
     int32_t iheight;
     lv_color_t lcolor_Text;
     lv_color_t lcolor_BackGround;
+    char pcaText[DEFAULT_LABEL_TEXT_LENGTH];
 } sT_UIObj_Label;
 
 typedef struct
@@ -185,6 +186,7 @@ typedef struct
     lv_obj_t *pstWelSrcObj;
     uint32_t uiDisplayTime_ms;
     sT_UIControl staUIControls[NUMBER_OF_UI_CONTROLS_FOR_WELCOME_SCREEN];
+    struct k_mutex mutex_DisplayText;
 } sT_WelComeScreen_Display_t;
 
 typedef struct

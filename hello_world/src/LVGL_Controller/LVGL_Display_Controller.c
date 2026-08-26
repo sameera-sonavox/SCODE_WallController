@@ -30,7 +30,7 @@ static void vUpdate_HostSystemType( void );
 static void vNotify_DMA_LMA_SrcVolumeChange( eAudioSrc_Id_t eSrcId, uint8_t uiVol );
 static void vNotify_DCM_SrcVolumeChange( eAudioSrc_Id_t eSrcId, uint8_t uiVol );
 
-static void vInit_Screens(void);
+static bool bInit_Screens(void);
 static void vInitialize_eQDC( void );
 static bool bConfigure_eQDC_PhasePins( void );
 static void vEncoder_Callback(sT_eQDC_PosChangeNotify_t stTeQDCData);
@@ -98,16 +98,21 @@ sT_UIScreen_t staUIScreens[eNUMBER_OF_SCREENs] = {
     }
 };
 
-void vInit_LVGLDisplay( void )
+bool bInit_LVGLDisplay( void )
 {
     if(!bInit_LVGL_ZephyrFSAdapter())
     {
         FHALT("LVGL: LVGL FileSystem Adapter initialization failed.");
-        return;
+        return false;
     }
     
     vInitialize_eQDC();
-    vInit_Screens();
+
+    if(!bInit_Screens())
+    {
+        FHALT("LVGL: LVGL Screen initialization failed.");
+        return false;        
+    }
 
     vUpdate_HostSystemType();
 
@@ -115,6 +120,7 @@ void vInit_LVGLDisplay( void )
 
     vLoad_Screen(eScreen_Welcome);
 
+    return true;
 }
 
 static void vUpdate_HostSystemType( void )
@@ -432,6 +438,7 @@ void vLoad_Screen( eScreenId_t eID )
     switch(eID)
     {
         case eScreen_Welcome:
+            vStart_WelcomeImageFadeIn();
             break;
         case eScreen_SourceSelect:
             vSetup_AudioSrc_ScreenStartup();
@@ -442,26 +449,44 @@ void vLoad_Screen( eScreenId_t eID )
     }
 }
 
-static void vInit_Screens(void)
+static bool bInit_Screens(void)
 {    
     if(!bConfigure_LVGL_BKCtrlPin())
-        return;
+        return false;
+    
+    bool bResult = false;
 
     for(uint8_t i = eScreen_Welcome; i < eNUMBER_OF_SCREENs; i++)
     {
         switch(i)
         {
             case eScreen_Welcome:
-                vInit_WelcomeScreen(&staUIScreens[i]);
+                bResult = bInit_WelcomeScreen(&staUIScreens[i]);
                 break;
             case eScreen_SourceSelect:
-                vInit_SourceSelectScreen_Controls(&staUIScreens[i]);
+                bResult = bInit_SourceSelectScreen_Controls(&staUIScreens[i]);
                 break;
             default:
                 FHALT("Invalid UI Screen : %d", i);
-                break;
+                return false;
         }
+
+        if(!bResult)
+            return bResult;
     }
+
+    return bResult;
+}
+
+void vDelete_LVGLObject(lv_obj_t **ppstObj)
+{
+    if(ppstObj == NULL || *ppstObj == NULL)
+    {
+        return;
+    }
+
+    lv_obj_delete(*ppstObj);
+    *ppstObj = NULL;
 }
 
 bool bSet_AudioSource_MuteState( eAudioSrc_Id_t eSrcId, bool bIsMute )

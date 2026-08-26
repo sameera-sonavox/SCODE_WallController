@@ -891,12 +891,12 @@ void vSetup_AudioSrc_ScreenStartup( void )
 //*********************************************************************************** */
 #pragma region UI Creation
 
-void vInit_SourceSelectScreen_Controls(sT_UIScreen_t *pstAudioSrcSelect)
+bool bInit_SourceSelectScreen_Controls(sT_UIScreen_t *pstAudioSrcSelect)
 {
     if(pstAudioSrcSelect == NULL)
     {
         FHALT("Audio source screen is NULL");
-        return;
+        return false;
     }
 
     pstAudioSrcScreen = pstAudioSrcSelect;
@@ -926,7 +926,7 @@ void vInit_SourceSelectScreen_Controls(sT_UIScreen_t *pstAudioSrcSelect)
     sT_UIObj_VolControl *pstVolCtrl = &pstAudioSrcSelect->stTDisplayInfo.screenType.stTAudioSrcDisplay.stTVolCtrl;
     memcpy(pstVolCtrl, &stTAdSrc_DefaultVolCtrlSettings, sizeof(sT_UIObj_VolControl));
 
-    pstAudioSrcScreen->pfCreate();
+    return pstAudioSrcScreen->pfCreate();
 }
 
 static bool bCreate_SourceList( void )

@@ -4,7 +4,7 @@
 #include "API_Usage_Definition.h"
 #include "LVGL_Display_Types.h"
 
-extern void vInit_LVGLDisplay( void );
+extern bool bInit_LVGLDisplay( void );
 extern void vLoad_Screen( eScreenId_t eID );
 extern bool bRemove_AudioSource( eAudioSrc_Id_t eSrcId );
 extern bool bSet_AudioSource_ActiveState( eAudioSrc_Id_t eSrcId, bool bIsActive );
@@ -23,5 +23,6 @@ extern void vClear_eQDCMessageQueue( void );
 extern eHostSystemType_t eGet_HostSystemType( void );
 extern void vSet_HostSystemType( eHostSystemType_t eType );
 extern void vNotify_SrcVolumeChange( eAudioSrc_Id_t eSrcId, uint8_t uiVol );
+extern void vDelete_LVGLObject(lv_obj_t **ppstObj);
 
 #endif

@@ -48,7 +48,7 @@ static bool bSetup_LPSPI_Configurations( void )
 
     stTSPISlaveConfig.stTHWReadyCtrl.bHWReady_Used = false;
 
-    stTSPISlaveConfig.uiSPI_Freq_Hz = 4000000;
+    stTSPISlaveConfig.uiSPI_Freq_Hz = 10000000;
     stTSPISlaveConfig.uiDelay_Between_BlockTx_ns = 100U;
     stTSPISlaveConfig.uiDelay_CS_Assert_To_SCK_ns = 100;
     stTSPISlaveConfig.uiDelay_LastSCK_To_CS_Deassert_ns = 100;

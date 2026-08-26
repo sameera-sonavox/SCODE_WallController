@@ -108,7 +108,8 @@ static int iZephyrFlash_Init(const struct device *pstDevice)
     sT_ZephyrFlashData_t *pstDeviceData = (sT_ZephyrFlashData_t *)pstDevice->data;
 
     k_mutex_init(&pstDeviceData->stFlashMutex);
-
+    k_msleep(300U);
+    
     if(!bInit_ExtFlash())
     {
         return -EIO;
@@ -145,8 +146,7 @@ static int iZephyrFlash_Read(const struct device *pstDevice,
     if(iResult < 0)
         return iResult;
     
-    //iResult = iRead_DataFromFlash_Quad((uint32_t)tOffset, pData, uiLength);
-    iResult = iRead_DataFromFlash_Normal((uint32_t)tOffset, pData, uiLength);
+    iResult = iRead_DataFromFlash_Quad((uint32_t)tOffset, pData, uiLength);
 
     int iMuteUnlockResult = k_mutex_unlock(&pstData->stFlashMutex);
     if(iResult == 0 && iMuteUnlockResult < 0)

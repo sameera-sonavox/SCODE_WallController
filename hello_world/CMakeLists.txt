@@ -78,6 +78,7 @@ target_sources(app PRIVATE
                 src/LVGL_Controller/Screen_Parameters/LVGL_AudioSource_UIScreen.c 
                 src/LVGL_Controller/FileSystem_Adapter/LVGL_ZephyrFS_Adapter.c 
                 src/LVGL_Controller/Screens/Screen_Welcome/WelcomeScreen.c 
+                src/LVGL_Controller/LVGL_TextAnimator/LVGL_TextAnimate.c 
                 ${MCUX_SDK_NG_DIR}/drivers/lpadc/fsl_lpadc.c 
                 ${MCUX_SDK_NG_DIR}/drivers/lpspi/fsl_lpspi.c 
                 ${MCUX_SDK_NG_DIR}/drivers/eqdc/fsl_eqdc.c

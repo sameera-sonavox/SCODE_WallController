@@ -31,5 +31,8 @@
 
 #define MAX_VOLUME_CHANGE_PER_UPDATE                    15
 
+//Default Sizes
+#define DEFAULT_LABEL_TEXT_LENGTH                       20U
+
 
 #endif
