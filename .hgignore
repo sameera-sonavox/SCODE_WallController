@@ -5,3 +5,5 @@ hello_world/temp
 tmp/
 hello_world/mcuboot_build
 hello_world/format-prompt
+hello_world/keys/*_signingkey.pem
+hello_world/keys/*.private.pem
