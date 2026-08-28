@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "platform": {
+    "os": "windows",
+    "architecture": "x86_64"
+  },
+  "python": {
+    "version": "3.12.10",
+    "provider": "Python Software Foundation",
+    "artifact": {
+      "filename": "python-3.12.10-amd64.exe",
+      "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe",
+      "sha256": "67B5635E80EA51072B87941312D00EC8927C4DB9BA18938F7AD2D27B328B95FB"
+    },
+    "pip_version": "25.0.1",
+    "requirements_lock": {
+      "path": "ci/requirements-build.lock",
+      "sha256": "8F5507F6FC5046AAB050F446CAAF50AC0832CD2BB947773AF5BE52E3F290B8EB"
+    }
+  },
+  "cmake": {
+    "version": "3.30.0",
+    "provider": "Kitware",
+    "artifact": {
+      "filename": "cmake-3.30.0-windows-x86_64.zip",
+      "url": "https://github.com/Kitware/CMake/releases/download/v3.30.0/cmake-3.30.0-windows-x86_64.zip",
+      "sha256": "F8D2DA0EAF3BAB9CF065E97BD6D8E1819886F8671D3D4C7BB93CB774123FA448",
+      "checksum_type": "publisher"
+    }
+  },
+  "ninja": {
+    "version": "1.12.1",
+    "provider": "Ninja project",
+    "artifact": {
+      "filename": "ninja-win.zip",
+      "url": "https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-win.zip",
+      "sha256": "F550FEC705B6D6FF58F2DB3C374C2277A37691678D6ABA463ADCBB129108467A",
+      "checksum_type": "project-pinned",
+      "checksum_note": "Upstream did not provide a separate checksum manifest for the validated asset."
+    }
+  },
+  "dtc": {
+    "version": "1.6.1",
+    "package": {
+      "name": "dtc-msys2",
+      "version": "1.6.1",
+      "url": "https://community.chocolatey.org/api/v2/package/dtc-msys2/1.6.1",
+      "sha256": "5987E4129288C1662773FF21F2FDA783D50D8944B309A4A86B1DFDF4C545E5B1"
+    },
+    "runtime_payloads": [
+      {
+        "filename": "dtc-1.6.1-3-x86_64.pkg.tar.zst",
+        "url": "https://repo.msys2.org/msys/x86_64/dtc-1.6.1-3-x86_64.pkg.tar.zst",
+        "sha256": "7815185E2C1579DA62FD70D6511E0C2DFF212FF43EEF4E24AFBEAADA776F149F"
+      },
+      {
+        "filename": "msys2-runtime-3.4.5-1-x86_64.pkg.tar.zst",
+        "url": "https://repo.msys2.org/msys/x86_64/msys2-runtime-3.4.5-1-x86_64.pkg.tar.zst",
+        "sha256": "C9F05EF31B227A4C037F670FD2218AF18B92E57A10FFC7E334CC323F9454DF09"
+      },
+      {
+        "filename": "gcc-libs-11.3.0-4-x86_64.pkg.tar.zst",
+        "url": "https://repo.msys2.org/msys/x86_64/gcc-libs-11.3.0-4-x86_64.pkg.tar.zst",
+        "sha256": "77FC9612C4AC2A4683806B24D057103A8CC1FC4EF6ADE23D13C6925192EF3F8D"
+      },
+      {
+        "filename": "libyaml-0.2.5-2-x86_64.pkg.tar.zst",
+        "url": "https://repo.msys2.org/msys/x86_64/libyaml-0.2.5-2-x86_64.pkg.tar.zst",
+        "sha256": "11509C6E3133B3FC63F99CC04E89A1CC5685AA746E96BD5F481E3424FBD4F6C1"
+      }
+    ]
+  },
+  "zephyr_sdk": {
+    "version": "1.0.1",
+    "provider": "Zephyr Project / sdk-ng",
+    "release_url": "https://github.com/zephyrproject-rtos/sdk-ng/releases/tag/v1.0.1",
+    "minimal_bundle": {
+      "filename": "zephyr-sdk-1.0.1_windows-x86_64_minimal.7z",
+      "url": "https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v1.0.1/zephyr-sdk-1.0.1_windows-x86_64_minimal.7z",
+      "sha256": "17A557E7C6CEA5E5C589508FE45A3F26ACA4FA2C6153FE3E7B03AEB4B93FEA4B"
+    },
+    "target_toolchain": {
+      "filename": "toolchain_gnu_windows-x86_64_arm-zephyr-eabi.7z",
+      "url": "https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v1.0.1/toolchain_gnu_windows-x86_64_arm-zephyr-eabi.7z",
+      "sha256": "D08DF2E83378DC8D28D0C67AB72D021CA633344B7A2BC053ABABF9B8E677AA8D",
+      "target": "arm-zephyr-eabi",
+      "gcc_version": "14.3.0",
+      "binutils_version": "2.43.1"
+    }
+  },
+  "zephyr": {
+    "repository": "https://github.com/zephyrproject-rtos/zephyr",
+    "release": "v4.4.0",
+    "commit": "684c9e8f32e4373a21098559f748f06915f950c9",
+    "west_version": "1.5.0"
+  },
+  "git": {
+    "required": true,
+    "tested_version": "2.53.0.windows.2",
+    "exact_pin_required": false,
+    "purpose": "Zephyr uses Git metadata to generate BUILD_VERSION during configuration and build."
+  },
+  "validation": {
+    "board": "frdm_mcxa156/mcxa156",
+    "build_type": "debug",
+    "flash_used_bytes": 315112,
+    "flash_capacity_bytes": 466944,
+    "ram_used_bytes": 80912,
+    "ram_capacity_bytes": 122880,
+    "unsigned_bin_sha256": "1B37754EA6FC211EB50A75A02348940CBA7C8DE2F38E17DB82FC68C0E8CDAB5F",
+    "unsigned_hex_sha256": "F8FAA1C832E89933030D52BEE4FB2BE559A4D0AA0266BA4A7BA5C7D840413F55"
+  }
+}
