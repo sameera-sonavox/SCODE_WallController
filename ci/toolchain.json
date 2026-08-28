@@ -8,9 +8,13 @@
     "version": "3.12.10",
     "provider": "Python Software Foundation",
     "artifact": {
-      "filename": "python-3.12.10-amd64.exe",
-      "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe",
-      "sha256": "67B5635E80EA51072B87941312D00EC8927C4DB9BA18938F7AD2D27B328B95FB"
+      "filename": "python.3.12.10.nupkg",
+      "url": "https://www.nuget.org/api/v2/package/python/3.12.10",
+      "sha256": "0EB85C2DFCCCCF1B17352DE4C397F69194035B7D37149EACC16F1147D93DE3B8",
+      "checksum_type": "project-pinned",
+      "package_type": "nuget",
+      "architecture": "x64",
+      "note": "Official CPython NuGet distribution intended for build/CI scenarios."
     },
     "pip_version": "25.0.1",
     "requirements_lock": {
@@ -50,22 +54,22 @@
     "runtime_payloads": [
       {
         "filename": "dtc-1.6.1-3-x86_64.pkg.tar.zst",
-        "url": "https://repo.msys2.org/msys/x86_64/dtc-1.6.1-3-x86_64.pkg.tar.zst",
+        "source": "embedded_in_package",
         "sha256": "7815185E2C1579DA62FD70D6511E0C2DFF212FF43EEF4E24AFBEAADA776F149F"
       },
       {
         "filename": "msys2-runtime-3.4.5-1-x86_64.pkg.tar.zst",
-        "url": "https://repo.msys2.org/msys/x86_64/msys2-runtime-3.4.5-1-x86_64.pkg.tar.zst",
+        "source": "embedded_in_package",
         "sha256": "C9F05EF31B227A4C037F670FD2218AF18B92E57A10FFC7E334CC323F9454DF09"
       },
       {
         "filename": "gcc-libs-11.3.0-4-x86_64.pkg.tar.zst",
-        "url": "https://repo.msys2.org/msys/x86_64/gcc-libs-11.3.0-4-x86_64.pkg.tar.zst",
+        "source": "embedded_in_package",
         "sha256": "77FC9612C4AC2A4683806B24D057103A8CC1FC4EF6ADE23D13C6925192EF3F8D"
       },
       {
         "filename": "libyaml-0.2.5-2-x86_64.pkg.tar.zst",
-        "url": "https://repo.msys2.org/msys/x86_64/libyaml-0.2.5-2-x86_64.pkg.tar.zst",
+        "source": "embedded_in_package",
         "sha256": "11509C6E3133B3FC63F99CC04E89A1CC5685AA746E96BD5F481E3424FBD4F6C1"
       }
     ]
