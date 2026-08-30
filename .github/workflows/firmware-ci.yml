@@ -40,7 +40,7 @@ jobs:
       - name: Bootstrap CI environment
         shell: pwsh
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.MCXA_LIB_TOKEN }}
         run: |
           .\scripts\ci\bootstrap.ps1 `
             -Root "${{ runner.temp }}\wallcontroller-ci"
