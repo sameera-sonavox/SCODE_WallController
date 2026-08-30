@@ -107,11 +107,11 @@
   "validation": {
     "board": "frdm_mcxa156/mcxa156",
     "build_type": "debug",
-    "flash_used_bytes": 315112,
+    "flash_used_bytes": 314964,
     "flash_capacity_bytes": 466944,
     "ram_used_bytes": 80912,
     "ram_capacity_bytes": 122880,
-    "unsigned_bin_sha256": "1B37754EA6FC211EB50A75A02348940CBA7C8DE2F38E17DB82FC68C0E8CDAB5F",
-    "unsigned_hex_sha256": "F8FAA1C832E89933030D52BEE4FB2BE559A4D0AA0266BA4A7BA5C7D840413F55"
+    "unsigned_bin_sha256": "78CDB7FD7D40A98FA3EF5372E511A5E0EAEFAC71EC2E2E7DA7CF2CED3226CC2C",
+    "unsigned_hex_sha256": "98D100E27390F5A599E842CCEB01D9B2D7398CE27C94EAAEE3AD0909B8702E07"
   }
 }

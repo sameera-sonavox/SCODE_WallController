@@ -27,6 +27,8 @@ set(DTC_OVERLAY_FILE
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(hello_world)
 
+zephyr_compile_options("-ffile-prefix-map=${MCXA_LIB_DIR}=MCXA_LIB")
+
 # Keep the generated external-IRQ vectors immediately after the Cortex-M
 # exception vectors. Zephyr 4.4 registers both snippets with the same legacy
 # linker sort key, which can omit irq-vector-table-section.ld from ROM_START.
