@@ -1,0 +1,4 @@
+ci/*.json text eol=lf
+ci/*.lock text eol=lf
+scripts/ci/*.ps1 text eol=lf
+.github/workflows/*.yml text eol=lf
