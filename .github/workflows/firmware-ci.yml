@@ -1,0 +1,87 @@
+name: Firmware CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firmware-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-firmware:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Verify Git
+        shell: pwsh
+        run: git --version
+
+      - name: Verify 7-Zip
+        shell: pwsh
+        run: |
+          $sevenZip = Get-Command 7z -ErrorAction Stop
+          & $sevenZip.Source
+
+      - name: Bootstrap CI environment
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          .\scripts\ci\bootstrap.ps1 `
+            -Root "${{ runner.temp }}\wallcontroller-ci"
+
+      - name: Verify bootstrap environment
+        shell: pwsh
+        run: |
+          $environmentFile = Join-Path "${{ runner.temp }}" "wallcontroller-ci\bootstrap-environment.json"
+          if (-not (Test-Path -LiteralPath $environmentFile -PathType Leaf)) {
+            throw "Bootstrap environment file was not generated: $environmentFile"
+          }
+
+      - name: Build firmware
+        shell: pwsh
+        run: |
+          .\scripts\ci\build.ps1 `
+            -EnvironmentFile "${{ runner.temp }}\wallcontroller-ci\bootstrap-environment.json" `
+            -GenerateEphemeralSigningKey `
+            -RequireBaseline `
+            -Clean
+
+      - name: Verify build result
+        shell: pwsh
+        run: |
+          $resultFile = Join-Path "${{ runner.temp }}" "wallcontroller-ci\build\wallcontroller\build-result.json"
+          if (-not (Test-Path -LiteralPath $resultFile -PathType Leaf)) {
+            throw "Build result file was not generated: $resultFile"
+          }
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wallcontroller-firmware
+          path: |
+            ${{ runner.temp }}/wallcontroller-ci/build/wallcontroller/zephyr/zephyr.elf
+            ${{ runner.temp }}/wallcontroller-ci/build/wallcontroller/zephyr/zephyr.bin
+            ${{ runner.temp }}/wallcontroller-ci/build/wallcontroller/zephyr/zephyr.hex
+            ${{ runner.temp }}/wallcontroller-ci/build/wallcontroller/zephyr/zephyr.signed.bin
+            ${{ runner.temp }}/wallcontroller-ci/build/wallcontroller/zephyr/zephyr.signed.hex
+            ${{ runner.temp }}/wallcontroller-ci/build/wallcontroller/build-result.json
+            !${{ runner.temp }}/wallcontroller-ci/**/*.pem
+            !${{ runner.temp }}/wallcontroller-ci/**/keys/**
+          if-no-files-found: error
+          retention-days: 7
