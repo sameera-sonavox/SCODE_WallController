@@ -13,6 +13,7 @@ typedef enum{
     eBootloader_State_FWImgWrite_Completed,
     eBootloader_State_Reboot,
     eBootloader_State_Error,
+    eBootloader_State_WaitForAuth_Response,
     eNUMBER_OF_BOOTLOADER_STATEs
 } eT_Bootloader_State;
 
@@ -24,6 +25,8 @@ typedef enum{
     eBootloader_CMD_FWUpStop,
     eBootloader_CMD_GetLostPacketInfo,
     eBootloader_CMD_RetLostPacketInfo,
+    eBootloader_CMD_AuthStart,
+    eBootloader_CMD_UpdateAuthResponse,
     eNUMBER_OF_BOOTLOADER_COMMANDs
 } eT_Bootloader_Command;
 

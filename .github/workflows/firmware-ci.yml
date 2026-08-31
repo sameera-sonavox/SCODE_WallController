@@ -149,6 +149,36 @@ jobs:
 
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summary -Encoding utf8
 
+      - name: Enforce compiler warning gate
+        shell: pwsh
+        run: |
+          $resultFile = Join-Path "${{ runner.temp }}" "wallcontroller-ci\build\wallcontroller\build-result.json"
+          $result = Get-Content -LiteralPath $resultFile -Raw | ConvertFrom-Json
+
+          $warningProperty = $result.PSObject.Properties['warning_count']
+          if ($null -eq $warningProperty -or $null -eq $warningProperty.Value) {
+            throw 'Compiler warning gate infrastructure error: warning_count is missing or null in build-result.json.'
+          }
+
+          $warningCount = 0
+          $isInteger = [int]::TryParse(
+            [string]$warningProperty.Value,
+            [Globalization.NumberStyles]::Integer,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [ref]$warningCount
+          )
+          if (-not $isInteger) {
+            throw 'Compiler warning gate infrastructure error: warning_count could not be converted to an integer.'
+          }
+          if ($warningCount -lt 0) {
+            throw 'Compiler warning gate infrastructure error: warning_count cannot be negative.'
+          }
+          if ($warningCount -gt 0) {
+            throw "Compiler warning gate FAILED: $warningCount compiler warning(s) detected.`nSee the Firmware CI Summary for warning details."
+          }
+
+          Write-Host 'Compiler warning gate: PASS (0 warnings)'
+
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

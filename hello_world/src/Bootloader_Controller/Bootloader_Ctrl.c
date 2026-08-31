@@ -924,13 +924,19 @@ static void vExecute_Bootloader_IdleState( sT_Bootloader_CtrlMsg_t * pstTBootMsg
         vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_UpdateInProgress);
         return;
     }
-    if(pstTBootMsg->eCMD != eBootloader_CMD_FWUpReq)
+    if(pstTBootMsg->eCMD != eBootloader_CMD_AuthStart)
     {
         FHALT("Invalid Command for '%s' @CMD: %d", __func__, pstTBootMsg->eCMD);
         vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_InvalidCommand);
         return;
     }
-    if(pstTBootMsg->uiLen != 10)
+
+    //Generate the Nonce and send here
+    
+    vSet_BootloaderState(eBootloader_State_WaitForAuth_Response);
+
+    //Follwing code is for the FW Update State
+/*     if(pstTBootMsg->uiLen != 10)
     {
         FHALT("Invalid Payload Length for CMD = %d", pstTBootMsg->eCMD);
         vSet_BootloaderMsgStatus(pstTBootMsg, false, eBootloader_Error_InvalidPayloadLength);
@@ -980,7 +986,7 @@ static void vExecute_Bootloader_IdleState( sT_Bootloader_CtrlMsg_t * pstTBootMsg
     vErase_FlashArea(pstTBootMsg);
     if(!pstTBootMsg->bIsMsgOk)
         return;
-    vSet_BootloaderState(eBootloader_State_FWImgWrite_InProg);
+    vSet_BootloaderState(eBootloader_State_FWImgWrite_InProg); */
 }
 
 static void vErase_FlashArea( sT_Bootloader_CtrlMsg_t * pstTBootMsg )

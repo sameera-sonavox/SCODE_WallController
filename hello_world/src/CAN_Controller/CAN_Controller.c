@@ -108,6 +108,8 @@ static void vProcess_Bootloader_Messages( sT_Bootloader_CtrlMsg_t * pstBtlMsg )
         case eBootloader_CMD_FWUpEnd:
         case eBootloader_CMD_FWUpPause:
         case eBootloader_CMD_FWUpStop:
+        case eBootloader_CMD_AuthStart:
+        case eBootloader_CMD_UpdateAuthResponse:
             vUpdateBootloader( pstBtlMsg );
             break;
         case eBootloader_CMD_RetLostPacketInfo:
