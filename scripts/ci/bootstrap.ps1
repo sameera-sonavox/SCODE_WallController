@@ -648,21 +648,59 @@ function Invoke-WithGitHubToken {
         return & $Operation
     }
 
-    $names = @('GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0')
+    $names = @(
+        'GIT_ASKPASS',
+        'GIT_TERMINAL_PROMPT',
+        'GIT_CONFIG_COUNT',
+        'GIT_CONFIG_KEY_0',
+        'GIT_CONFIG_VALUE_0',
+        'MCXA_LIB_GIT_ASKPASS_TOKEN'
+    )
     $oldValues = @{}
     foreach ($name in $names) {
         $oldValues[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
     }
-    $credential = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$Token"))
+
+    $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+    $askPassDirectory = Join-Path $temporaryRoot ("wallcontroller-git-askpass-{0}" -f [guid]::NewGuid().ToString('N'))
+    $askPassPath = Join-Path $askPassDirectory 'git-askpass.cmd'
+    $askPassContents = @'
+@echo off
+setlocal
+set "git_prompt=%~1"
+if /I "%git_prompt:~0,8%"=="Username" (
+    echo x-access-token
+    exit /b 0
+)
+if /I "%git_prompt:~0,8%"=="Password" (
+    echo(%MCXA_LIB_GIT_ASKPASS_TOKEN%
+    exit /b 0
+)
+exit /b 1
+'@
+
     try {
+        New-Item -ItemType Directory -Path $askPassDirectory | Out-Null
+        Set-Content -LiteralPath $askPassPath -Value $askPassContents -Encoding ascii -NoNewline
+
+        [Environment]::SetEnvironmentVariable('GIT_ASKPASS', $askPassPath, 'Process')
+        [Environment]::SetEnvironmentVariable('GIT_TERMINAL_PROMPT', '0', 'Process')
         [Environment]::SetEnvironmentVariable('GIT_CONFIG_COUNT', '1', 'Process')
-        [Environment]::SetEnvironmentVariable('GIT_CONFIG_KEY_0', 'http.https://github.com/.extraheader', 'Process')
-        [Environment]::SetEnvironmentVariable('GIT_CONFIG_VALUE_0', "AUTHORIZATION: basic $credential", 'Process')
+        [Environment]::SetEnvironmentVariable('GIT_CONFIG_KEY_0', 'credential.helper', 'Process')
+        [Environment]::SetEnvironmentVariable('GIT_CONFIG_VALUE_0', '', 'Process')
+        [Environment]::SetEnvironmentVariable('MCXA_LIB_GIT_ASKPASS_TOKEN', $Token, 'Process')
         return & $Operation
     }
     finally {
         foreach ($name in $names) {
             [Environment]::SetEnvironmentVariable($name, $oldValues[$name], 'Process')
+        }
+        if (Test-Path -LiteralPath $askPassDirectory) {
+            $resolvedAskPassDirectory = [IO.Path]::GetFullPath($askPassDirectory)
+            if (-not $resolvedAskPassDirectory.StartsWith($temporaryRoot, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Refusing to remove unsafe askpass directory: $resolvedAskPassDirectory"
+            }
+            Remove-Item -LiteralPath $resolvedAskPassDirectory -Recurse -Force
         }
     }
 }
