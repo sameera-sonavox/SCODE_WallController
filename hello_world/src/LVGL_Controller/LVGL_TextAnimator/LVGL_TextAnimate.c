@@ -15,7 +15,7 @@ static lv_timer_t *pstLoadingTextTimer = NULL;
 static uint8_t uiLoadingTextIndex = 0U;
 static uint8_t uiMaxAnimationCount = 0U;
 static TextAnimator_Callback_t TextAnimatorCallback_Fn = NULL;
-_Atomic bool bIsAnimatorRunning = false;
+static _Atomic bool bIsAnimatorRunning = false;
 
 static void vAnimator_TimerCallback(lv_timer_t *plv_Timer);
 static inline void vSet_AnimatorStartFlag( void );

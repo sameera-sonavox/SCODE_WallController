@@ -187,6 +187,7 @@ typedef struct
     uint32_t uiDisplayTime_ms;
     sT_UIControl staUIControls[NUMBER_OF_UI_CONTROLS_FOR_WELCOME_SCREEN];
     struct k_mutex mutex_DisplayText;
+    char caDisplayText[DEFAULT_LABEL_TEXT_LENGTH];
 } sT_WelComeScreen_Display_t;
 
 typedef struct

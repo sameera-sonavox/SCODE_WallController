@@ -12,12 +12,18 @@
 
 static sT_UIScreen_t *pstUIWelcomeScreen = NULL;
 static sT_WelComeScreen_Display_t *pstWelcomeDisplay = NULL;
+static _Atomic bool bTextUpdateByAnimator = false;
 
 static bool bCreate_WelComeScreen( void );
 static void *pGetWelcomeScreen_UIObject(eUI_Obj_Type_t eType);
 static sT_UIControl *pstGetWelcomeScreen_UIControl(eUI_Obj_Type_t eType);
 static void vSet_WelComeImage_Opacity( void *pvImage, int32_t iOpacity);
 static void vWelcomeScreen_ImageFadingCompleted(lv_anim_t *pstImgAnimation);
+
+static void vUpdate_AnimatingText(const char *pcaText);
+static inline void vSet_AnimatorTextUpdate_Flag( void );
+static inline void vClear_AnimatorTextUpdate_Flag( void );
+static inline bool bIsTextUpdatedByAnimator( void );
 
 static const char *const pcaAnimateString[] = {" .", " ..", " ...", ""};
 
@@ -99,18 +105,29 @@ void vUpdate_DisplayText(const char *pcaText)
         return;
     }
 
-    //Dynamic Label Size Update
-    char caLongestText[DEFAULT_LABEL_TEXT_LENGTH];
-    snprintf(caLongestText, sizeof(caLongestText), "%s...", pcaText);
+    if(!bIsTextUpdatedByAnimator())
+    {
+        memset(pstWelcomeDisplay->caDisplayText, '\0', strlen(pstWelcomeDisplay->caDisplayText));
+        memcpy(pstWelcomeDisplay->caDisplayText, pcaText, strlen(pcaText));
 
-    lv_label_set_text(plv_Label, caLongestText);
-    lv_obj_set_size(plv_Label, LV_SIZE_CONTENT, WELCOMESCRN_LABEL_HEIGHT);
-    lv_obj_update_layout(plv_Label);
+        //Dynamic Label Size Update
+        char caLongestText[DEFAULT_LABEL_TEXT_LENGTH];
+        snprintf(caLongestText, sizeof(caLongestText), "%s...", pstWelcomeDisplay->caDisplayText);
 
-    lv_coord_t lMaxTtextWidth = lv_obj_get_width(plv_Label);
-    lv_obj_set_width(plv_Label, lMaxTtextWidth);
-    lv_obj_align(plv_Label, LV_ALIGN_CENTER, 0, 0);
-    lv_label_set_text(plv_Label, pcaText);
+        lv_label_set_text(plv_Label, caLongestText);
+        lv_obj_set_size(plv_Label, LV_SIZE_CONTENT, WELCOMESCRN_LABEL_HEIGHT);
+        lv_obj_update_layout(plv_Label);
+
+        lv_coord_t lMaxTtextWidth = lv_obj_get_width(plv_Label);
+        lv_obj_set_width(plv_Label, lMaxTtextWidth);
+        lv_obj_align(plv_Label, LV_ALIGN_CENTER, 0, 0);
+        lv_label_set_text(plv_Label, pstWelcomeDisplay->caDisplayText);
+    }
+    else
+    {
+        lv_label_set_text(plv_Label, pcaText);
+        vClear_AnimatorTextUpdate_Flag();             
+    }
 
     k_mutex_unlock(&pstWelcomeDisplay->mutex_DisplayText);
 }
@@ -232,8 +249,35 @@ static void vWelcomeScreen_ImageFadingCompleted(lv_anim_t *pstImgAnimation)
         return;
     }
 
-    vStart_TextAnimator(pcaAnimateString, WELCOMESCRN_LABEL_DEFAULT_TEXT, 4U, vUpdate_DisplayText, 1000U);
+    vStart_TextAnimator(pcaAnimateString, WELCOMESCRN_LABEL_DEFAULT_TEXT, 4U, vUpdate_AnimatingText, 1000U);
     lv_obj_set_flag(plv_Label, LV_OBJ_FLAG_HIDDEN, false);
+}
+
+static void vUpdate_AnimatingText(const char *pcaText)
+{
+    if(pcaText == NULL)
+    {
+        return;
+    }
+
+    vSet_AnimatorTextUpdate_Flag();
+    vUpdate_DisplayText(pcaText);
+}
+
+static inline void vSet_AnimatorTextUpdate_Flag( void )
+{
+    atomic_store_explicit(&bTextUpdateByAnimator, true, memory_order_release);
+}
+
+static inline void vClear_AnimatorTextUpdate_Flag( void )
+{
+    atomic_store_explicit(&bTextUpdateByAnimator, false, memory_order_release);
+}
+
+static inline bool bIsTextUpdatedByAnimator( void )
+{
+    bool bRes = atomic_load_explicit(&bTextUpdateByAnimator, memory_order_acquire);
+    return bRes;
 }
 
 static void vSet_WelComeImage_Opacity( void *pvImage, int32_t iOpacity)

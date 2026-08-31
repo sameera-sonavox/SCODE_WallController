@@ -69,6 +69,57 @@ jobs:
             throw "Build result file was not generated: $resultFile"
           }
 
+      - name: Write firmware summary
+        shell: pwsh
+        run: |
+          $resultFile = Join-Path "${{ runner.temp }}" "wallcontroller-ci\build\wallcontroller\build-result.json"
+          $result = Get-Content -LiteralPath $resultFile -Raw | ConvertFrom-Json
+
+          $flashPercentage = if ($result.flash_capacity_bytes -gt 0) {
+            [string]::Format(
+              [Globalization.CultureInfo]::InvariantCulture,
+              '{0:F2}%',
+              (100.0 * $result.flash_used_bytes / $result.flash_capacity_bytes)
+            )
+          } else {
+            'N/A'
+          }
+          $ramPercentage = if ($result.ram_capacity_bytes -gt 0) {
+            [string]::Format(
+              [Globalization.CultureInfo]::InvariantCulture,
+              '{0:F2}%',
+              (100.0 * $result.ram_used_bytes / $result.ram_capacity_bytes)
+            )
+          } else {
+            'N/A'
+          }
+          $warningCount = if ($null -ne $result.warning_count) {
+            $result.warning_count
+          } else {
+            'N/A'
+          }
+
+          $summary = @(
+            '# Firmware CI Summary'
+            ''
+            "- CI result: **$($result.status)**"
+            "- Board: ``$($result.board)``"
+            ''
+            '| Metric | Value |'
+            '|---|---:|'
+            "| FLASH used | $($result.flash_used_bytes) bytes |"
+            "| FLASH total | $($result.flash_capacity_bytes) bytes |"
+            "| FLASH usage | $flashPercentage |"
+            "| RAM used | $($result.ram_used_bytes) bytes |"
+            "| RAM total | $($result.ram_capacity_bytes) bytes |"
+            "| RAM usage | $ramPercentage |"
+            "| zephyr.bin | $($result.artifact_sizes.bin) bytes |"
+            "| zephyr.hex | $($result.artifact_sizes.hex) bytes |"
+            "| Compiler warnings | $warningCount |"
+          ) -join [Environment]::NewLine
+
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summary -Encoding utf8
+
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
