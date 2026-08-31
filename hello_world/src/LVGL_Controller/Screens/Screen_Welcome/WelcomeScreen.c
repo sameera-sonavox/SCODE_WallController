@@ -144,9 +144,10 @@ static bool bCreate_WelComeScreen( void )
     lv_obj_remove_flag(pstTextContainer, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *pstLabel = lv_label_create(pstTextContainer);
-    lv_obj_set_size(pstLabel, WELCOMESCRN_LOADING_TEXT_WIDTH, WELCOMESCRN_LABEL_HEIGHT);
+    lv_obj_set_size(pstLabel, WELCOMESCRN_LABELCONTAINER_WIDTH, WELCOMESCRN_LABEL_HEIGHT);
+    lv_label_set_long_mode(pstLabel, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
     lv_obj_set_style_radius(pstLabel, 0U, LV_PART_MAIN);
-    lv_obj_set_style_text_align(pstLabel, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+    lv_obj_set_style_text_align(pstLabel, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_align(pstLabel, LV_ALIGN_CENTER, 0U, 0U);
     lv_obj_add_flag(pstLabel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_flag(pstLabel, LV_OBJ_FLAG_HIDDEN, true);

@@ -22,7 +22,6 @@
 #define WELCOMESCRN_LABELCONTAINER_WIDTH            DISPLAY_WIDTH
 #define WELCOMESCRN_LABEL_TEXT_COLOR                0xF8F9FB
 #define WELCOMESCRN_LABEL_HEIGHT                    20U
-#define WELCOMESCRN_LOADING_TEXT_WIDTH              90U
 #define WELCOMESCRN_LABEL_DEFAULT_TEXT              "Loading"
 
 #endif

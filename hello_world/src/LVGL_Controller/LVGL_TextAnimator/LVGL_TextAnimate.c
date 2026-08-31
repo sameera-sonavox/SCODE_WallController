@@ -20,6 +20,7 @@ _Atomic bool bIsAnimatorRunning = false;
 static void vAnimator_TimerCallback(lv_timer_t *plv_Timer);
 static inline void vSet_AnimatorStartFlag( void );
 static inline void vClear_AnimatorStartFlag( void );
+static inline bool bIsAnimatorActive( void );
 
 void vStart_TextAnimator(const char *const pcaStringAnimate[],
                         const char *pcaBaseString,
@@ -104,7 +105,13 @@ static void vAnimator_TimerCallback(lv_timer_t *plv_Timer)
 
 void vStop_TextAnimator( void )
 {
+    if(!bIsAnimatorActive())
+    {
+        FHALT("Text Animator is not running to be stopped");
+        return;
+    }
 
+    //lv_timer_delete()
 }
 
 static inline void vSet_AnimatorStartFlag( void )
@@ -115,5 +122,11 @@ static inline void vSet_AnimatorStartFlag( void )
 static inline void vClear_AnimatorStartFlag( void )
 {
     atomic_store_explicit(&bIsAnimatorRunning, false, memory_order_release);
+}
+
+static inline bool bIsAnimatorActive( void )
+{
+    bool bRes = atomic_load_explicit(&bIsAnimatorRunning, memory_order_acquire);
+    return bRes;
 }
 
