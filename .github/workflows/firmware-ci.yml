@@ -56,10 +56,15 @@ jobs:
       - name: Build firmware
         shell: pwsh
         run: |
+          $buildLog = Join-Path "${{ runner.temp }}" "wallcontroller-ci\firmware-build.log"
           .\scripts\ci\build.ps1 `
             -EnvironmentFile "${{ runner.temp }}\wallcontroller-ci\bootstrap-environment.json" `
             -GenerateEphemeralSigningKey `
-            -Clean
+            -Clean *>&1 | Tee-Object -FilePath $buildLog
+          $buildExitCode = $LASTEXITCODE
+          if ($buildExitCode -ne 0) {
+            exit $buildExitCode
+          }
 
       - name: Verify build result
         shell: pwsh
@@ -98,6 +103,18 @@ jobs:
           } else {
             'N/A'
           }
+          $buildLog = Join-Path "${{ runner.temp }}" "wallcontroller-ci\firmware-build.log"
+          $compilerWarnings = @()
+          if (Test-Path -LiteralPath $buildLog -PathType Leaf) {
+            $compilerWarnings = @(
+              foreach ($line in Get-Content -LiteralPath $buildLog) {
+                $plainLine = $line -replace "`e\[[0-9;]*[A-Za-z]", ''
+                if ($plainLine -match '(?<warning>[^\\/]+:\d+:\d+:\s+warning:\s+.+)$') {
+                  $Matches.warning
+                }
+              }
+            ) | Select-Object -Unique
+          }
 
           $summary = @(
             '# Firmware CI Summary'
@@ -116,6 +133,18 @@ jobs:
             "| zephyr.bin | $($result.artifact_sizes.bin) bytes |"
             "| zephyr.hex | $($result.artifact_sizes.hex) bytes |"
             "| Compiler warnings | $warningCount |"
+            ''
+            '## Compiler Warnings'
+            ''
+            if ($compilerWarnings.Count -gt 0) {
+              '```text'
+              $compilerWarnings
+              '```'
+            } elseif ($warningCount -eq 0) {
+              'No compiler warnings were reported.'
+            } else {
+              'Compiler warning details were not available in the captured build log.'
+            }
           ) -join [Environment]::NewLine
 
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summary -Encoding utf8
