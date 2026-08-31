@@ -12,7 +12,6 @@
 
 static sT_UIScreen_t *pstUIWelcomeScreen = NULL;
 static sT_WelComeScreen_Display_t *pstWelcomeDisplay = NULL;
-static _Atomic bool bTextUpdateByAnimator = false;
 
 static bool bCreate_WelComeScreen( void );
 static void *pGetWelcomeScreen_UIObject(eUI_Obj_Type_t eType);
@@ -21,11 +20,13 @@ static void vSet_WelComeImage_Opacity( void *pvImage, int32_t iOpacity);
 static void vWelcomeScreen_ImageFadingCompleted(lv_anim_t *pstImgAnimation);
 
 static void vUpdate_AnimatingText(const char *pcaText);
-static inline void vSet_AnimatorTextUpdate_Flag( void );
-static inline void vClear_AnimatorTextUpdate_Flag( void );
-static inline bool bIsTextUpdatedByAnimator( void );
 
 static const char *const pcaAnimateString[] = {" .", " ..", " ...", ""};
+
+//temporary
+struct k_work_delayable kWork_TempTextUpdater;
+void vUpdate_kWorkHandler( struct k_work *work );
+volatile bool bIsWorkerScheduled = false;
 
 bool bInit_WelcomeScreen(sT_UIScreen_t *pstWelComeScreen)
 {
@@ -46,6 +47,7 @@ bool bInit_WelcomeScreen(sT_UIScreen_t *pstWelComeScreen)
     (void)k_mutex_init(&pstWelcomeDisplay->mutex_DisplayText);
 
     pstWelcomeDisplay->pstWelSrcObj = NULL;
+    pstWelcomeDisplay->pstAnimationSuffixObj = NULL;
     pstWelcomeDisplay->uiDisplayTime_ms = 0U;
 
     sT_UIControl *pstImgCtrl = &pstWelcomeDisplay->staUIControls[0];
@@ -59,9 +61,23 @@ bool bInit_WelcomeScreen(sT_UIScreen_t *pstWelComeScreen)
     pstLabel->iwidth = WELCOMESCRN_LABELCONTAINER_WIDTH;
     pstLabel->lcolor_Text = lv_color_hex(WELCOMESCRN_LABEL_TEXT_COLOR);
 
-    vUpdate_DisplayText(WELCOMESCRN_LABEL_DEFAULT_TEXT);
-    
+    (void)snprintf(pstLabel->pcaText,
+                   sizeof(pstLabel->pcaText),
+                   "%s",
+                   WELCOMESCRN_LABEL_DEFAULT_TEXT);
+    (void)snprintf(pstWelcomeDisplay->caDisplayText,
+                   sizeof(pstWelcomeDisplay->caDisplayText),
+                   "%s",
+                   WELCOMESCRN_LABEL_DEFAULT_TEXT);
+    k_work_init_delayable(&kWork_TempTextUpdater, vUpdate_kWorkHandler);
     return pstUIWelcomeScreen->pfCreate();
+}
+
+void vUpdate_kWorkHandler( struct k_work *work )
+{
+    ARG_UNUSED(work);
+    vUpdate_DisplayText("Connecting");
+    vStart_TextAnimator(pcaAnimateString, "", 4U, vUpdate_AnimatingText, 1000U);
 }
 
 void vUpdate_DisplayText(const char *pcaText)
@@ -78,6 +94,8 @@ void vUpdate_DisplayText(const char *pcaText)
         FHALT("Welcome Screen Display Text Mutex Locked Time Out");
         return;
     }
+
+    vStop_TextAnimator();
 
     sT_UIControl *pstLabelCtrl = pstGetWelcomeScreen_UIControl(eUIObj_Label);
     if(pstLabelCtrl == NULL)
@@ -96,6 +114,7 @@ void vUpdate_DisplayText(const char *pcaText)
     }
 
     memcpy(pstLabel->pcaText, pcaText, uiTextLength + 1U); 
+    memcpy(pstWelcomeDisplay->caDisplayText, pcaText, uiTextLength + 1U);
 
     lv_obj_t *plv_Label = pstLabelCtrl->pstUIObj;
     if((plv_Label == NULL) || !lv_obj_is_valid(plv_Label))
@@ -105,28 +124,18 @@ void vUpdate_DisplayText(const char *pcaText)
         return;
     }
 
-    if(!bIsTextUpdatedByAnimator())
+    lv_label_set_text(plv_Label, pstWelcomeDisplay->caDisplayText);
+    lv_obj_update_layout(plv_Label);
+    lv_obj_align(plv_Label, LV_ALIGN_CENTER, 0, 0);
+
+    lv_obj_t *plv_SuffixLabel = pstWelcomeDisplay->pstAnimationSuffixObj;
+    if((plv_SuffixLabel != NULL) && lv_obj_is_valid(plv_SuffixLabel))
     {
-        memset(pstWelcomeDisplay->caDisplayText, '\0', strlen(pstWelcomeDisplay->caDisplayText));
-        memcpy(pstWelcomeDisplay->caDisplayText, pcaText, strlen(pcaText));
-
-        //Dynamic Label Size Update
-        char caLongestText[DEFAULT_LABEL_TEXT_LENGTH];
-        snprintf(caLongestText, sizeof(caLongestText), "%s...", pstWelcomeDisplay->caDisplayText);
-
-        lv_label_set_text(plv_Label, caLongestText);
-        lv_obj_set_size(plv_Label, LV_SIZE_CONTENT, WELCOMESCRN_LABEL_HEIGHT);
-        lv_obj_update_layout(plv_Label);
-
-        lv_coord_t lMaxTtextWidth = lv_obj_get_width(plv_Label);
-        lv_obj_set_width(plv_Label, lMaxTtextWidth);
-        lv_obj_align(plv_Label, LV_ALIGN_CENTER, 0, 0);
-        lv_label_set_text(plv_Label, pstWelcomeDisplay->caDisplayText);
-    }
-    else
-    {
-        lv_label_set_text(plv_Label, pcaText);
-        vClear_AnimatorTextUpdate_Flag();             
+        lv_obj_align_to(plv_SuffixLabel,
+                        plv_Label,
+                        LV_ALIGN_OUT_RIGHT_MID,
+                        0,
+                        0);
     }
 
     k_mutex_unlock(&pstWelcomeDisplay->mutex_DisplayText);
@@ -174,15 +183,14 @@ static bool bCreate_WelComeScreen( void )
     lv_obj_set_style_pad_all(pstTextContainer, 0U, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(pstTextContainer, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_remove_flag(pstTextContainer, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(pstTextContainer, LV_OBJ_FLAG_HIDDEN);
+    pstWelcomeDisplay->pstWelSrcObj = pstTextContainer;
 
     lv_obj_t *pstLabel = lv_label_create(pstTextContainer);
-    lv_obj_set_size(pstLabel, WELCOMESCRN_LABELCONTAINER_WIDTH, WELCOMESCRN_LABEL_HEIGHT);
-    lv_label_set_long_mode(pstLabel, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+    lv_obj_set_size(pstLabel, LV_SIZE_CONTENT, WELCOMESCRN_LABEL_HEIGHT);
+    lv_label_set_long_mode(pstLabel, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_style_radius(pstLabel, 0U, LV_PART_MAIN);
     lv_obj_set_style_text_align(pstLabel, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_align(pstLabel, LV_ALIGN_CENTER, 0U, 0U);
-    lv_obj_add_flag(pstLabel, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_flag(pstLabel, LV_OBJ_FLAG_HIDDEN, true);
 
     pstUIControl = pstGetWelcomeScreen_UIControl(eUIObj_Label);
     if(pstUIControl == NULL)
@@ -197,6 +205,18 @@ static bool bCreate_WelComeScreen( void )
     sT_UIObj_Label *pstLabelCtrl = (sT_UIObj_Label *)&pstUIControl->uiObject.stTObj_Label;
     lv_label_set_text(pstLabel, pstLabelCtrl->pcaText);
     lv_obj_set_style_text_color(pstLabel, pstLabelCtrl->lcolor_Text, LV_PART_MAIN);
+    lv_obj_update_layout(pstLabel);
+    lv_obj_align(pstLabel, LV_ALIGN_CENTER, 0U, 0U);
+
+    lv_obj_t *pstSuffixLabel = lv_label_create(pstTextContainer);
+    lv_obj_set_size(pstSuffixLabel, LV_SIZE_CONTENT, WELCOMESCRN_LABEL_HEIGHT);
+    lv_label_set_long_mode(pstSuffixLabel, LV_LABEL_LONG_MODE_CLIP);
+    lv_obj_set_style_radius(pstSuffixLabel, 0U, LV_PART_MAIN);
+    lv_obj_set_style_text_align(pstSuffixLabel, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+    lv_obj_set_style_text_color(pstSuffixLabel, pstLabelCtrl->lcolor_Text, LV_PART_MAIN);
+    lv_label_set_text(pstSuffixLabel, "");
+    lv_obj_align_to(pstSuffixLabel, pstLabel, LV_ALIGN_OUT_RIGHT_MID, 0, 0);
+    pstWelcomeDisplay->pstAnimationSuffixObj = pstSuffixLabel;
 
     lvgl_unlock();
     
@@ -206,8 +226,9 @@ static bool bCreate_WelComeScreen( void )
 void vStart_WelcomeImageFadeIn( void )
 {
     sT_UIControl *pstUIImgControl = pstGetWelcomeScreen_UIControl(eUIObj_Img);
-    sT_UIControl *pstUILabelControl = pstGetWelcomeScreen_UIControl(eUIObj_Label);
-    if(pstUIImgControl == NULL || pstUILabelControl == NULL)
+    if((pstUIImgControl == NULL) ||
+       (pstWelcomeDisplay == NULL) ||
+       (pstWelcomeDisplay->pstWelSrcObj == NULL))
     {
         return;
     }
@@ -215,7 +236,7 @@ void vStart_WelcomeImageFadeIn( void )
     lvgl_lock();
 
     lv_obj_t *plv_Image = pstUIImgControl->pstUIObj;
-    lv_obj_t *plv_Label = pstUILabelControl->pstUIObj;
+    lv_obj_t *plv_TextContainer = pstWelcomeDisplay->pstWelSrcObj;
 
     (void)lv_anim_delete(plv_Image, vSet_WelComeImage_Opacity);
 
@@ -228,7 +249,7 @@ void vStart_WelcomeImageFadeIn( void )
     lv_anim_set_values(&stImgAnimation, LV_OPA_TRANSP, LV_OPA_COVER);
     lv_anim_set_duration(&stImgAnimation, WELCOME_IMAGE_FADE_DURATION_ms);
     lv_anim_set_path_cb(&stImgAnimation, lv_anim_path_ease_in_out);
-    lv_anim_set_user_data(&stImgAnimation, plv_Label);
+    lv_anim_set_user_data(&stImgAnimation, plv_TextContainer);
     lv_anim_set_completed_cb(&stImgAnimation, vWelcomeScreen_ImageFadingCompleted);
 
     (void)lv_anim_start(&stImgAnimation);
@@ -243,14 +264,14 @@ static void vWelcomeScreen_ImageFadingCompleted(lv_anim_t *pstImgAnimation)
         return;
     }
 
-    lv_obj_t *plv_Label = (lv_obj_t *)lv_anim_get_user_data(pstImgAnimation);
-    if(plv_Label == NULL || !lv_obj_is_valid(plv_Label))
+    lv_obj_t *plv_TextContainer = (lv_obj_t *)lv_anim_get_user_data(pstImgAnimation);
+    if(plv_TextContainer == NULL || !lv_obj_is_valid(plv_TextContainer))
     {
         return;
     }
 
-    vStart_TextAnimator(pcaAnimateString, WELCOMESCRN_LABEL_DEFAULT_TEXT, 4U, vUpdate_AnimatingText, 1000U);
-    lv_obj_set_flag(plv_Label, LV_OBJ_FLAG_HIDDEN, false);
+    vStart_TextAnimator(pcaAnimateString, "", 4U, vUpdate_AnimatingText, 1000U);
+    lv_obj_set_flag(plv_TextContainer, LV_OBJ_FLAG_HIDDEN, false);
 }
 
 static void vUpdate_AnimatingText(const char *pcaText)
@@ -260,24 +281,20 @@ static void vUpdate_AnimatingText(const char *pcaText)
         return;
     }
 
-    vSet_AnimatorTextUpdate_Flag();
-    vUpdate_DisplayText(pcaText);
-}
+    if((pstWelcomeDisplay == NULL) ||
+       (pstWelcomeDisplay->pstAnimationSuffixObj == NULL) ||
+       !lv_obj_is_valid(pstWelcomeDisplay->pstAnimationSuffixObj))
+    {
+        return;
+    }
 
-static inline void vSet_AnimatorTextUpdate_Flag( void )
-{
-    atomic_store_explicit(&bTextUpdateByAnimator, true, memory_order_release);
-}
+    lv_label_set_text(pstWelcomeDisplay->pstAnimationSuffixObj, pcaText);
 
-static inline void vClear_AnimatorTextUpdate_Flag( void )
-{
-    atomic_store_explicit(&bTextUpdateByAnimator, false, memory_order_release);
-}
-
-static inline bool bIsTextUpdatedByAnimator( void )
-{
-    bool bRes = atomic_load_explicit(&bTextUpdateByAnimator, memory_order_acquire);
-    return bRes;
+    if(!bIsWorkerScheduled)
+    {
+        k_work_schedule(&kWork_TempTextUpdater, K_MSEC(6000));
+        bIsWorkerScheduled = true;
+    }
 }
 
 static void vSet_WelComeImage_Opacity( void *pvImage, int32_t iOpacity)

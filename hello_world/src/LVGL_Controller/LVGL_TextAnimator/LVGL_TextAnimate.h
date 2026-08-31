@@ -2,6 +2,7 @@
 #define LVGL_TEXTANIMATE_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 typedef void (*TextAnimator_Callback_t)(const char *pcaUpdateText);
 

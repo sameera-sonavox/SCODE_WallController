@@ -1,5 +1,6 @@
 #include "LVGL_TextAnimate.h"
 #include "GenericMacro.h"
+#include <lvgl_zephyr.h>
 
 #include <lvgl.h>
 #include <stdio.h>
@@ -39,6 +40,7 @@ void vStart_TextAnimator(const char *const pcaStringAnimate[],
         return;
     }
 
+    vStop_TextAnimator();
     memset(caAnimatorStrings, 0, sizeof(caAnimatorStrings));
 
     for(uint8_t i = 0U; i < uiCount; i++)
@@ -78,7 +80,9 @@ void vStart_TextAnimator(const char *const pcaStringAnimate[],
     {
         TextAnimatorCallback_Fn = NULL;
         uiMaxAnimationCount = 0U;
+        vClear_AnimatorStartFlag();
         FHALT("Failed to create text animator timer");
+        return;
     }
     vSet_AnimatorStartFlag();
 }
@@ -107,11 +111,29 @@ void vStop_TextAnimator( void )
 {
     if(!bIsAnimatorActive())
     {
-        FHALT("Text Animator is not running to be stopped");
         return;
     }
 
-    //lv_timer_delete()
+    lv_timer_t *pstTimer = pstLoadingTextTimer;
+    TextAnimator_Callback_t pfCallback = TextAnimatorCallback_Fn;
+
+    pstLoadingTextTimer = NULL;
+    TextAnimatorCallback_Fn = NULL;
+    uiLoadingTextIndex = 0U;
+    uiMaxAnimationCount = 0U;
+    vClear_AnimatorStartFlag();
+
+    if(pstTimer != NULL)
+    {
+        lvgl_lock();
+        lv_timer_delete(pstTimer);
+        lvgl_unlock();
+    }
+
+    if(pfCallback != NULL)
+    {
+        pfCallback("");
+    }
 }
 
 static inline void vSet_AnimatorStartFlag( void )

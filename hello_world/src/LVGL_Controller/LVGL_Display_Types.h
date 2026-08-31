@@ -184,6 +184,7 @@ typedef struct
 typedef struct
 {
     lv_obj_t *pstWelSrcObj;
+    lv_obj_t *pstAnimationSuffixObj;
     uint32_t uiDisplayTime_ms;
     sT_UIControl staUIControls[NUMBER_OF_UI_CONTROLS_FOR_WELCOME_SCREEN];
     struct k_mutex mutex_DisplayText;
