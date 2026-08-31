@@ -14,7 +14,7 @@ static sT_UIScreen_t *pstUIWelcomeScreen = NULL;
 static sT_WelComeScreen_Display_t *pstWelcomeDisplay = NULL;
 
 static bool bCreate_WelComeScreen( void );
-static __attribute__((unused)) void *pGetWelcomeScreen_UIObject(eUI_Obj_Type_t eType);
+static void *pGetWelcomeScreen_UIObject(eUI_Obj_Type_t eType);
 static sT_UIControl *pstGetWelcomeScreen_UIControl(eUI_Obj_Type_t eType);
 static void vSet_WelComeImage_Opacity( void *pvImage, int32_t iOpacity);
 static void vWelcomeScreen_ImageFadingCompleted(lv_anim_t *pstImgAnimation);
