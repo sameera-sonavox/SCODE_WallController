@@ -89,13 +89,28 @@ void vUpdate_DisplayText(const char *pcaText)
         return;
     }
 
-    memcpy(pstLabel->pcaText, pcaText, uiTextLength + 1U);
+    memcpy(pstLabel->pcaText, pcaText, uiTextLength + 1U); 
 
     lv_obj_t *plv_Label = pstLabelCtrl->pstUIObj;
-    if((plv_Label != NULL) && lv_obj_is_valid(plv_Label))
+    if((plv_Label == NULL) || !lv_obj_is_valid(plv_Label))
     {
-        lv_label_set_text(plv_Label, pstLabel->pcaText);
+        k_mutex_unlock(&pstWelcomeDisplay->mutex_DisplayText);
+        FHALT("Invalid LVGL Object returned");
+        return;
     }
+
+    //Dynamic Label Size Update
+    char caLongestText[DEFAULT_LABEL_TEXT_LENGTH];
+    snprintf(caLongestText, sizeof(caLongestText), "%s...", pcaText);
+
+    lv_label_set_text(plv_Label, caLongestText);
+    lv_obj_set_size(plv_Label, LV_SIZE_CONTENT, WELCOMESCRN_LABEL_HEIGHT);
+    lv_obj_update_layout(plv_Label);
+
+    lv_coord_t lMaxTtextWidth = lv_obj_get_width(plv_Label);
+    lv_obj_set_width(plv_Label, lMaxTtextWidth);
+    lv_obj_align(plv_Label, LV_ALIGN_CENTER, 0, 0);
+    lv_label_set_text(plv_Label, pcaText);
 
     k_mutex_unlock(&pstWelcomeDisplay->mutex_DisplayText);
 }
