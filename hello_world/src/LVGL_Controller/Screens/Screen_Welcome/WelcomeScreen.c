@@ -14,7 +14,7 @@ static sT_UIScreen_t *pstUIWelcomeScreen = NULL;
 static sT_WelComeScreen_Display_t *pstWelcomeDisplay = NULL;
 
 static bool bCreate_WelComeScreen( void );
-static void *pGetWelcomeScreen_UIObject(eUI_Obj_Type_t eType);
+static __attribute__((unused)) void *pGetWelcomeScreen_UIObject(eUI_Obj_Type_t eType);
 static sT_UIControl *pstGetWelcomeScreen_UIControl(eUI_Obj_Type_t eType);
 static void vSet_WelComeImage_Opacity( void *pvImage, int32_t iOpacity);
 static void vWelcomeScreen_ImageFadingCompleted(lv_anim_t *pstImgAnimation);
@@ -22,11 +22,6 @@ static void vWelcomeScreen_ImageFadingCompleted(lv_anim_t *pstImgAnimation);
 static void vUpdate_AnimatingText(const char *pcaText);
 
 static const char *const pcaAnimateString[] = {" .", " ..", " ...", ""};
-
-//temporary
-struct k_work_delayable kWork_TempTextUpdater;
-void vUpdate_kWorkHandler( struct k_work *work );
-volatile bool bIsWorkerScheduled = false;
 
 bool bInit_WelcomeScreen(sT_UIScreen_t *pstWelComeScreen)
 {
@@ -69,15 +64,8 @@ bool bInit_WelcomeScreen(sT_UIScreen_t *pstWelComeScreen)
                    sizeof(pstWelcomeDisplay->caDisplayText),
                    "%s",
                    WELCOMESCRN_LABEL_DEFAULT_TEXT);
-    k_work_init_delayable(&kWork_TempTextUpdater, vUpdate_kWorkHandler);
-    return pstUIWelcomeScreen->pfCreate();
-}
 
-void vUpdate_kWorkHandler( struct k_work *work )
-{
-    ARG_UNUSED(work);
-    vUpdate_DisplayText("Connecting");
-    vStart_TextAnimator(pcaAnimateString, "", 4U, vUpdate_AnimatingText, 1000U);
+    return pstUIWelcomeScreen->pfCreate();
 }
 
 void vUpdate_DisplayText(const char *pcaText)
@@ -289,12 +277,6 @@ static void vUpdate_AnimatingText(const char *pcaText)
     }
 
     lv_label_set_text(pstWelcomeDisplay->pstAnimationSuffixObj, pcaText);
-
-    if(!bIsWorkerScheduled)
-    {
-        k_work_schedule(&kWork_TempTextUpdater, K_MSEC(6000));
-        bIsWorkerScheduled = true;
-    }
 }
 
 static void vSet_WelComeImage_Opacity( void *pvImage, int32_t iOpacity)

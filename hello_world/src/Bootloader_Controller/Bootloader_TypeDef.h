@@ -111,6 +111,14 @@ typedef struct{
     uint8_t uiRecoveredPacketCount;
 } sT_FWImg_Ctrl_t;
 
+typedef struct
+{
+    _Atomic bool bIsBootFWUpdate_Authorized;
+    uint8_t uiaNonce[16];
+    uint32_t uiSessionStartTime_ms;
+} sT_BootLoader_AuthControl_t;
+
+
 typedef struct{
     eT_Bootloader_State eBtlState;
     bool bIsInitialized;
@@ -121,6 +129,7 @@ typedef struct{
     uint16_t uiCRC;
     uint8_t uiHWRev;
     sT_FWImg_Ctrl_t stTFWImgCtrl_t;
+    sT_BootLoader_AuthControl_t stTBTLAuthCtrl;
 } sT_Bootloader_Mgmt_t;
 
 #endif

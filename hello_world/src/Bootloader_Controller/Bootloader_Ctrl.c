@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <zephyr/dfu/mcuboot.h>
 #include <zephyr/sys/reboot.h>
 
@@ -35,6 +36,11 @@ static struct k_spinlock stBtlTxStateLock;
 #define bIsLostPacketsStateTriggered()          sTFWImg.bLostPacketStateTriggered
 
 #define vSet_FirstLostPacketId(uiPacketId)      sTFWImg.uiFirstLostPacketId = uiPacketId
+
+static void vInit_Bootloader_SecurityLayer( void );
+static inline void vSet_BootloaderAuth_Flag( void );
+static inline void vClear_BootloaderAuth_Flag( void );
+static inline bool bIsBootloader_Authenticated( void );
 
 static void vSet_BootloaderState( eT_Bootloader_State eState );
 static eT_Bootloader_State eGet_BootloaderState( void );
@@ -1053,11 +1059,41 @@ void vInit_BootloaderController( void )
     flash_area_close(flashArea);
     flashArea = NULL;
 
+    vInit_Bootloader_SecurityLayer();
+
     k_work_init_delayable(&stBtlStateTimeOut_Work_t, vBtlState_TimeOutHandler);
     k_work_init_delayable(&stBtlTxTimeOut_Work_t, vBtlTxTimeOutHandler);
     stTBtlMgmt_t.eBtlState = eBootloader_State_Idle;
     stTBtlMgmt_t.bIsInitialized = true;
     printk("Bootloader is initialized and in Idle State, waiting for FW Update Request...\n\r");
+}
+
+static void vInit_Bootloader_SecurityLayer( void )
+{
+    sT_BootLoader_AuthControl_t *pstBtlSecrity_Ctrl = &stTBtlMgmt_t.stTBTLAuthCtrl;
+
+    vClear_BootloaderAuth_Flag();
+    pstBtlSecrity_Ctrl->uiSessionStartTime_ms = 0U;
+    memset(pstBtlSecrity_Ctrl->uiaNonce, 0, sizeof(pstBtlSecrity_Ctrl->uiaNonce));
+}
+
+static inline void vSet_BootloaderAuth_Flag( void )
+{
+    sT_BootLoader_AuthControl_t *pstBtlSecrity_Ctrl = &stTBtlMgmt_t.stTBTLAuthCtrl;
+    atomic_store_explicit(&pstBtlSecrity_Ctrl->bIsBootFWUpdate_Authorized, true, memory_order_release);
+}
+
+static inline void vClear_BootloaderAuth_Flag( void )
+{
+    sT_BootLoader_AuthControl_t *pstBtlSecrity_Ctrl = &stTBtlMgmt_t.stTBTLAuthCtrl;
+    atomic_store_explicit(&pstBtlSecrity_Ctrl->bIsBootFWUpdate_Authorized, false, memory_order_release);
+}
+
+static inline bool bIsBootloader_Authenticated( void )
+{
+    sT_BootLoader_AuthControl_t *pstBtlSecrity_Ctrl = &stTBtlMgmt_t.stTBTLAuthCtrl;
+    bool bRes = atomic_load_explicit(&pstBtlSecrity_Ctrl->bIsBootFWUpdate_Authorized, memory_order_acquire);
+    return bRes;
 }
 
 bool bIsBootloader_Initialized( void )
