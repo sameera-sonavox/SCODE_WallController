@@ -903,7 +903,7 @@ function Invoke-Bootstrap {
         [void](Get-RequiredProperty -Object $artifact -Name 'sha256' -Context 'artifact')
         Assert-Sha256Value -Value $artifact.sha256 -Context "Artifact $($artifact.url)"
     }
-    foreach ($property in @('filename', 'checksum_type', 'checksum_source', 'package_type', 'architecture')) {
+    foreach ($property in @('filename', 'checksum_type', 'package_type', 'architecture')) {
         [void](Get-RequiredProperty -Object $toolchain.python.artifact -Name $property -Context 'python.artifact')
     }
     if ($toolchain.python.artifact.package_type -ne 'nuget') {
@@ -915,7 +915,7 @@ function Invoke-Bootstrap {
     foreach ($property in @('version', 'artifact', 'clang_tidy_executable')) {
         [void](Get-RequiredProperty -Object $toolchain.llvm -Name $property -Context 'llvm')
     }
-    foreach ($property in @('filename', 'checksum_type', 'package_type', 'architecture')) {
+    foreach ($property in @('filename', 'checksum_type', 'checksum_source', 'package_type', 'architecture')) {
         [void](Get-RequiredProperty -Object $toolchain.llvm.artifact -Name $property -Context 'llvm.artifact')
     }
     foreach ($payload in $toolchain.dtc.runtime_payloads) {
