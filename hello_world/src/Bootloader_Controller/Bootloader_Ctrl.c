@@ -46,7 +46,7 @@ static void vSet_BootloaderState( eT_Bootloader_State eState );
 static eT_Bootloader_State eGet_BootloaderState( void );
 static void vBtlState_TimeOutHandler( struct k_work *work );
 static bool bIsValidFWImgWrite_Command( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
-static void vErase_FlashArea( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
+static __attribute__((unused))void vErase_FlashArea( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
 
 static void vExecute_Bootloader_IdleState( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
 static void vExecute_Bootloader_FWImgWrite_State( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
