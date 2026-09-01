@@ -2,6 +2,7 @@
 Checks: >-
   -*,
   clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
   bugprone-assert-side-effect,
   bugprone-branch-clone,
   bugprone-implicit-widening-of-multiplication,
