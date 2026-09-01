@@ -115,6 +115,7 @@ function ConvertTo-ClangCompatibleEntry {
         '^--param=.+$',
         '^-fno-reorder-functions$',
         '^-fno-defer-pop$',
+        '^-mfp16-format=ieee$',
         '^-specs=.+$'
     )
     $converted = [ordered]@{}
@@ -144,6 +145,7 @@ function ConvertTo-ClangCompatibleEntry {
             '(?<!\S)--param=\S+(?=\s|$)',
             '(?<!\S)-fno-reorder-functions(?=\s|$)',
             '(?<!\S)-fno-defer-pop(?=\s|$)',
+            '(?<!\S)-mfp16-format=ieee(?=\s|$)',
             '(?<!\S)-specs=(?:"[^"]*"|\S+)(?=\s|$)'
         )
         foreach ($pattern in $commandPatterns) {
