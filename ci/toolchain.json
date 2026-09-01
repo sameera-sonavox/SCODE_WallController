@@ -74,6 +74,20 @@
       }
     ]
   },
+  "llvm": {
+    "version": "22.1.8",
+    "provider": "LLVM Project",
+    "artifact": {
+      "filename": "LLVM-22.1.8-win64.exe",
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-win64.exe",
+      "sha256": "16E5709785FEF73C854646241C4A92C5CD574318D1B33C63330DD7721903E55C",
+      "checksum_type": "publisher",
+      "checksum_source": "https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8",
+      "package_type": "nsis-7zip-extractable",
+      "architecture": "x86_64"
+    },
+    "clang_tidy_executable": "bin/clang-tidy.exe"
+  },
   "zephyr_sdk": {
     "version": "1.0.1",
     "provider": "Zephyr Project / sdk-ng",

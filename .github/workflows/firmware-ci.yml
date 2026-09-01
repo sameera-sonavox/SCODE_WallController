@@ -179,6 +179,49 @@ jobs:
 
           Write-Host 'Compiler warning gate: PASS (0 warnings)'
 
+      - name: Run clang-tidy
+        shell: pwsh
+        run: |
+          .\scripts\ci\clang-tidy.ps1 `
+            -EnvironmentFile "${{ runner.temp }}\wallcontroller-ci\bootstrap-environment.json"
+
+      - name: Write clang-tidy summary
+        shell: pwsh
+        run: |
+          $resultFile = Join-Path "${{ runner.temp }}" "wallcontroller-ci\build\wallcontroller\clang-tidy-result.json"
+          if (-not (Test-Path -LiteralPath $resultFile -PathType Leaf)) {
+            throw "clang-tidy result file was not generated: $resultFile"
+          }
+          $result = Get-Content -LiteralPath $resultFile -Raw | ConvertFrom-Json
+          if ($result.status -ne 'PASS') {
+            throw "clang-tidy did not report a successful analysis status: $($result.status)"
+          }
+
+          $diagnostics = @($result.diagnostics)
+          $summary = @(
+            ''
+            '## clang-tidy Static Analysis'
+            ''
+            '| Metric | Value |'
+            '|---|---:|'
+            "| clang-tidy version | $($result.clang_tidy_version) |"
+            "| Files analyzed | $($result.files_analyzed) |"
+            "| Findings | $($result.finding_count) |"
+            '| Enforcement | Reporting only |'
+            ''
+            '### Findings'
+            ''
+            if ($diagnostics.Count -gt 0) {
+              '```text'
+              $diagnostics
+              '```'
+            } else {
+              'No clang-tidy findings were reported.'
+            }
+          ) -join [Environment]::NewLine
+
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summary -Encoding utf8
+
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

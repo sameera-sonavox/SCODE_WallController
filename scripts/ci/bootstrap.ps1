@@ -426,6 +426,50 @@ function Install-Ninja {
     return $exe
 }
 
+function Install-ClangTidy {
+    param(
+        [Parameter(Mandatory)][object] $Manifest,
+        [Parameter(Mandatory)][string] $Package,
+        [Parameter(Mandatory)][string] $ToolsRoot,
+        [Parameter(Mandatory)][string] $StagingRoot,
+        [Parameter(Mandatory)][string] $SevenZip
+    )
+
+    if ($Manifest.artifact.package_type -ne 'nsis-7zip-extractable') {
+        throw "Unsupported LLVM package type: $($Manifest.artifact.package_type)"
+    }
+    if ($Manifest.artifact.architecture -ne 'x86_64') {
+        throw "Unsupported LLVM package architecture: $($Manifest.artifact.architecture)"
+    }
+
+    $root = Join-Path $ToolsRoot "llvm\$($Manifest.version)"
+    $executableRelative = $Manifest.clang_tidy_executable.Replace('/', '\')
+    $exe = Join-Path $root $executableRelative
+    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+        Assert-InstallDestinationAvailable -Destination $root
+        New-Item -ItemType Directory -Path (Split-Path -Parent $root) -Force | Out-Null
+        $stage = New-StagingDirectory -StagingRoot $StagingRoot -Name 'llvm'
+        try {
+            Invoke-Checked -FilePath $SevenZip -Arguments @('x', '-y', "-o$stage", $Package)
+            $stagedExe = Join-Path $stage $executableRelative
+            if (-not (Test-Path -LiteralPath $stagedExe -PathType Leaf)) {
+                throw "Official LLVM package does not contain the expected clang-tidy executable: $executableRelative"
+            }
+            Move-Item -LiteralPath $stage -Destination $root
+            $stage = $null
+        }
+        finally {
+            if ($null -ne $stage -and (Test-Path -LiteralPath $stage)) {
+                Remove-Item -LiteralPath $stage -Recurse -Force
+            }
+        }
+    }
+
+    $output = Get-CheckedOutput -FilePath $exe -Arguments @('--version')
+    Assert-VersionOutput -Output $output -ExpectedVersion $Manifest.version -Component 'clang-tidy'
+    return $exe
+}
+
 function Install-DtcRuntime {
     param(
         [Parameter(Mandatory)][object] $Manifest,
@@ -850,6 +894,7 @@ function Invoke-Bootstrap {
         $toolchain.cmake.artifact,
         $toolchain.ninja.artifact,
         $toolchain.dtc.package,
+        $toolchain.llvm.artifact,
         $toolchain.zephyr_sdk.minimal_bundle,
         $toolchain.zephyr_sdk.target_toolchain
     )
@@ -858,7 +903,7 @@ function Invoke-Bootstrap {
         [void](Get-RequiredProperty -Object $artifact -Name 'sha256' -Context 'artifact')
         Assert-Sha256Value -Value $artifact.sha256 -Context "Artifact $($artifact.url)"
     }
-    foreach ($property in @('filename', 'checksum_type', 'package_type', 'architecture')) {
+    foreach ($property in @('filename', 'checksum_type', 'checksum_source', 'package_type', 'architecture')) {
         [void](Get-RequiredProperty -Object $toolchain.python.artifact -Name $property -Context 'python.artifact')
     }
     if ($toolchain.python.artifact.package_type -ne 'nuget') {
@@ -866,6 +911,12 @@ function Invoke-Bootstrap {
     }
     if ($toolchain.python.artifact.architecture -ne 'x64') {
         throw "Unsupported Python package architecture: $($toolchain.python.artifact.architecture)"
+    }
+    foreach ($property in @('version', 'artifact', 'clang_tidy_executable')) {
+        [void](Get-RequiredProperty -Object $toolchain.llvm -Name $property -Context 'llvm')
+    }
+    foreach ($property in @('filename', 'checksum_type', 'package_type', 'architecture')) {
+        [void](Get-RequiredProperty -Object $toolchain.llvm.artifact -Name $property -Context 'llvm.artifact')
     }
     foreach ($payload in $toolchain.dtc.runtime_payloads) {
         foreach ($property in @('filename', 'source', 'sha256')) {
@@ -894,6 +945,7 @@ function Invoke-Bootstrap {
     $ninjaArchive = Get-VerifiedDownload -Url $toolchain.ninja.artifact.url -DestinationPath (Join-Path $downloadsRoot "ninja\$($toolchain.ninja.artifact.filename)") -ExpectedSha256 $toolchain.ninja.artifact.sha256
     $dtcPackageName = "$($toolchain.dtc.package.name).$($toolchain.dtc.package.version).nupkg"
     $dtcPackageArchive = Get-VerifiedDownload -Url $toolchain.dtc.package.url -DestinationPath (Join-Path $downloadsRoot "dtc\$dtcPackageName") -ExpectedSha256 $toolchain.dtc.package.sha256
+    $llvmPackage = Get-VerifiedDownload -Url $toolchain.llvm.artifact.url -DestinationPath (Join-Path $downloadsRoot "llvm\$($toolchain.llvm.artifact.filename)") -ExpectedSha256 $toolchain.llvm.artifact.sha256
     $sdkMinimalArchive = Get-VerifiedDownload -Url $toolchain.zephyr_sdk.minimal_bundle.url -DestinationPath (Join-Path $downloadsRoot "zephyr-sdk\$($toolchain.zephyr_sdk.minimal_bundle.filename)") -ExpectedSha256 $toolchain.zephyr_sdk.minimal_bundle.sha256
     $sdkToolchainArchive = Get-VerifiedDownload -Url $toolchain.zephyr_sdk.target_toolchain.url -DestinationPath (Join-Path $downloadsRoot "zephyr-sdk\$($toolchain.zephyr_sdk.target_toolchain.filename)") -ExpectedSha256 $toolchain.zephyr_sdk.target_toolchain.sha256
 
@@ -904,6 +956,7 @@ function Invoke-Bootstrap {
     $cmakeExe = Install-CMake -Manifest $toolchain.cmake -Archive $cmakeArchive -ToolsRoot $toolsRoot -StagingRoot $stagingRoot
     $ninjaExe = Install-Ninja -Manifest $toolchain.ninja -Archive $ninjaArchive -ToolsRoot $toolsRoot -StagingRoot $stagingRoot
     $dtcExe = Install-DtcRuntime -Manifest $toolchain.dtc -PackageArchive $dtcPackageArchive -ToolsRoot $toolsRoot -StagingRoot $stagingRoot -SevenZip $sevenZip
+    $clangTidyExe = Install-ClangTidy -Manifest $toolchain.llvm -Package $llvmPackage -ToolsRoot $toolsRoot -StagingRoot $stagingRoot -SevenZip $sevenZip
     $sdk = Install-ZephyrSdk -Manifest $toolchain.zephyr_sdk -MinimalArchive $sdkMinimalArchive -ToolchainArchive $sdkToolchainArchive -ToolsRoot $toolsRoot -StagingRoot $stagingRoot -SevenZip $sevenZip
 
     Write-Stage 'Validating scalar tool paths for process-local PATH'
@@ -912,6 +965,7 @@ function Invoke-Bootstrap {
     $cmakeExe = Assert-SinglePath -Value $cmakeExe -Name 'CMake' -PathType Leaf
     $ninjaExe = Assert-SinglePath -Value $ninjaExe -Name 'Ninja' -PathType Leaf
     $dtcExe = Assert-SinglePath -Value $dtcExe -Name 'DTC' -PathType Leaf
+    $clangTidyExe = Assert-SinglePath -Value $clangTidyExe -Name 'clang-tidy' -PathType Leaf
     $gitExe = Assert-SinglePath -Value $gitExe -Name 'Git' -PathType Leaf
 
     $sdkValues = @($sdk)
@@ -932,6 +986,7 @@ function Invoke-Bootstrap {
             (Split-Path -Parent $cmakeExe),
             (Split-Path -Parent $ninjaExe),
             (Split-Path -Parent $dtcExe),
+            (Split-Path -Parent $clangTidyExe),
             (Split-Path -Parent $sdk.Gcc),
             (Split-Path -Parent $gitExe),
             "$env:SystemRoot\System32",
@@ -956,6 +1011,7 @@ function Invoke-Bootstrap {
         Assert-VersionOutput -Output (Get-CheckedOutput -FilePath $cmakeExe -Arguments @('--version')) -ExpectedVersion $toolchain.cmake.version -Component 'CMake'
         Assert-VersionOutput -Output (Get-CheckedOutput -FilePath $ninjaExe -Arguments @('--version')) -ExpectedVersion $toolchain.ninja.version -Component 'Ninja'
         Assert-VersionOutput -Output (Get-CheckedOutput -FilePath $dtcExe -Arguments @('--version')) -ExpectedVersion $toolchain.dtc.version -Component 'DTC'
+        Assert-VersionOutput -Output (Get-CheckedOutput -FilePath $clangTidyExe -Arguments @('--version')) -ExpectedVersion $toolchain.llvm.version -Component 'clang-tidy'
         Assert-VersionOutput -Output (Get-CheckedOutput -FilePath $sdk.Gcc -Arguments @('--version')) -ExpectedVersion $toolchain.zephyr_sdk.target_toolchain.gcc_version -Component 'GCC'
         if ((Get-Content -Raw -LiteralPath (Join-Path $sdk.Root 'sdk_version')).Trim() -ne $toolchain.zephyr_sdk.version) {
             throw 'Zephyr SDK final version validation failed.'
@@ -967,7 +1023,7 @@ function Invoke-Bootstrap {
             throw 'MCXA_Lib final commit validation failed.'
         }
 
-        $generatedPaths = @($ciRoot, $basePython, $venvRoot, $venvPython, $cmakeExe, $ninjaExe, $dtcExe, $sdk.Root, $workspaceRoot, $zephyrBase, $mcxaLib.Root, $mcxaLib.Lib, $cacheRoot, $buildRoot)
+        $generatedPaths = @($ciRoot, $basePython, $venvRoot, $venvPython, $cmakeExe, $ninjaExe, $dtcExe, $clangTidyExe, $sdk.Root, $workspaceRoot, $zephyrBase, $mcxaLib.Root, $mcxaLib.Lib, $cacheRoot, $buildRoot)
         $rootPrefix = "$($ciRoot.TrimEnd('\'))\"
         foreach ($path in $generatedPaths) {
             $fullPath = [IO.Path]::GetFullPath($path)
@@ -990,6 +1046,7 @@ function Invoke-Bootstrap {
             cmake              = $cmakeExe
             ninja              = $ninjaExe
             dtc                = $dtcExe
+            clang_tidy         = $clangTidyExe
             zephyr_sdk_root    = $sdk.Root
             zephyr_workspace   = $workspaceRoot
             zephyr_base        = $zephyrBase
@@ -1005,6 +1062,7 @@ function Invoke-Bootstrap {
                 cmake          = $toolchain.cmake.version
                 ninja          = $toolchain.ninja.version
                 dtc            = $toolchain.dtc.version
+                clang_tidy     = $toolchain.llvm.version
                 zephyr_sdk     = $toolchain.zephyr_sdk.version
                 gcc            = $toolchain.zephyr_sdk.target_toolchain.gcc_version
                 binutils       = $toolchain.zephyr_sdk.target_toolchain.binutils_version
@@ -1026,6 +1084,7 @@ function Invoke-Bootstrap {
         Write-Host "CMake           : $cmakeExe"
         Write-Host "Ninja           : $ninjaExe"
         Write-Host "DTC             : $dtcExe"
+        Write-Host "clang-tidy      : $clangTidyExe"
         Write-Host "Zephyr SDK      : $($sdk.Root)"
         Write-Host "Zephyr workspace: $workspaceRoot"
         Write-Host "Zephyr base     : $zephyrBase"
