@@ -18,6 +18,7 @@ typedef enum{
 } eT_Bootloader_State;
 
 typedef enum{
+    eBootloader_CMD_Invalid = 0,
     eBootloader_CMD_FWUpReq = 20,
     eBootloader_CMD_FWUpMsg,
     eBootloader_CMD_FWUpEnd,

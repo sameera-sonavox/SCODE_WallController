@@ -20,8 +20,6 @@
 #include "PC_UART_API/PC_UART_API_ValidateTest.h"
 #include "DAC/NXP_DAC_API.h"
 #include "ADC_Controller/ADC_Controller.h"
-#include "SPI_Controller/SPI_Controller_Master.h"
-#include "SPI_Controller/SPI_Controller_Slave.h"
 #include "SPI/NXP_SPI_API.h"
 #include "LVGL_Controller/LVGL_Display_Controller.h"
 #include "ExtFlash_Controller/ExtFlash_Controller.h"

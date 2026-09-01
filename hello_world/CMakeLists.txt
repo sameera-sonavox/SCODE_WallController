@@ -73,8 +73,6 @@ target_sources(app PRIVATE
                 src/PC_UART_API/PC_UART_BulkFileService.c
                 src/PC_UART_API/PC_UART_API_ValidateTest.c
                 src/ADC_Controller/ADC_Controller.c 
-                src/SPI_Controller/SPI_Controller_Master.c 
-                src/SPI_Controller/SPI_Controller_Slave.c 
                 src/LVGL_Controller/LVGL_Display_Controller.c 
                 src/LVGL_Controller/Screen_Parameters/LVGL_AudioSources_UIParam.c 
                 src/LVGL_Controller/Screen_Parameters/LVGL_AudioSource_UIScreen.c 
