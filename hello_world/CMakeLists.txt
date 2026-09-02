@@ -53,7 +53,6 @@ target_sources(app PRIVATE
                 ${MCXA_LIB_DIR}/PWM/NXP_PWM_ProjDef.c
                 ${MCXA_LIB_DIR}/CAN/NXP_CAN_API.c 
                 ${MCXA_LIB_DIR}/CAN/NXP_CAN_ProjDef.c 
-                ${MCXA_LIB_DIR}/DAC/NXP_DAC_API.c 
                 ${MCXA_LIB_DIR}/DAC/NXP_DAC_DMAConfig.c 
                 ${MCXA_LIB_DIR}/CPULoad/NXP_CPU_LoadMon.c 
                 ${MCXA_LIB_DIR}/ADC/NXP_ADC_API.c 
@@ -64,7 +63,8 @@ target_sources(app PRIVATE
                 ${MCXA_LIB_DIR}/SPI/NXP_SPI_API.c 
                 ${MCXA_LIB_DIR}/SPI/NXP_SPI_ConfigValidation.c 
                 ${MCXA_LIB_DIR}/SPI/NXP_SPI_LinkedList.c 
-                ${MCXA_LIB_DIR}/QDC/NXP_eQDC_API.c 
+                ${MCXA_LIB_DIR}/QDC/NXP_eQDC_API.c
+                ${MCXA_LIB_DIR}/Utility/AudioTransceivers/AK4148/AK4148_API.c  
                 src/main.c 
                 src/CAN_Controller/CAN_Controller.c 
                 src/Bootloader_Controller/Bootloader_Ctrl.c
