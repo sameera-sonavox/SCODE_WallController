@@ -2,7 +2,7 @@
   "schema_version": 1,
   "mcxa_lib": {
     "repository": "sonavox/NXP_MCXA_LIB",
-    "commit": "fe2dc430499bebefe3008695491996098c221775",
+    "commit": "80f03f7638a85a5430c04bf9576e8b7745bab3f8",
     "subdirectory": "Lib"
   }
 }
