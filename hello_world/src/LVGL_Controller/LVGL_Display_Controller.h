@@ -1,7 +1,6 @@
 #ifndef LVGL_DISPLAY_CONTROLLER_H
 #define LVGL_DISPLAY_CONTROLLER_H
 
-#include "API_Usage_Definition.h"
 #include "LVGL_Display_Types.h"
 
 extern bool bInit_LVGLDisplay( void );

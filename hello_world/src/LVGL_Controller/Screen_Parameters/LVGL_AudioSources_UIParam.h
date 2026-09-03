@@ -1,8 +1,6 @@
 #ifndef LVGL_AUDIOSOURCES_UIPARAM_H
 #define LVGL_AUDIOSOURCES_UIPARAM_H
 
-#include "API_Usage_Definition.h"
-
 #include "../LVGL_Display_Types.h"
 
 //Diplay Dimensions

@@ -1,8 +1,6 @@
 #ifndef LVGL_DISPLAY_TYPES_H
 #define LVGL_DISPLAY_TYPES_H
 
-#include "API_Usage_Definition.h"
-
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdatomic.h>

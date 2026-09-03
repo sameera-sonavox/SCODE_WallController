@@ -6,6 +6,12 @@
 		{
 			"name": "hello_world",
 			"path": "hello_world"
+		},
+		{
+			"path": "ci"
+		},
+		{
+			"path": "scripts"
 		}
 	],
 	"settings": {

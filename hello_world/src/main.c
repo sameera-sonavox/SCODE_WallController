@@ -18,7 +18,6 @@
 #include "PC_UART_API/PC_UART_API.h"
 #include "PC_UART_API/PC_UART_API_ProjDef.h"
 #include "PC_UART_API/PC_UART_API_ValidateTest.h"
-#include "DAC/NXP_DAC_API.h"
 #include "ADC_Controller/ADC_Controller.h"
 #include "SPI/NXP_SPI_API.h"
 #include "LVGL_Controller/LVGL_Display_Controller.h"

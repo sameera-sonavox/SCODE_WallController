@@ -1,5 +1,3 @@
-#include "API_Usage_Definition.h"
-
 #include "LVGL_AudioSources_UIParam.h"
 
 sT_UIObj_Label stTAdSrc_DefaultLabelSettings = {

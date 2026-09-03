@@ -48,40 +48,40 @@ target_include_directories(app PRIVATE
 target_include_directories(app PRIVATE
                 ${MCXA_LIB_DIR})
 
-target_sources(app PRIVATE 
-                ${MCXA_LIB_DIR}/PWM/NXP_PWM_API.c 
-                ${MCXA_LIB_DIR}/PWM/NXP_PWM_ProjDef.c
-                ${MCXA_LIB_DIR}/CAN/NXP_CAN_API.c 
-                ${MCXA_LIB_DIR}/CAN/NXP_CAN_ProjDef.c 
-                ${MCXA_LIB_DIR}/DAC/NXP_DAC_DMAConfig.c 
-                ${MCXA_LIB_DIR}/CPULoad/NXP_CPU_LoadMon.c 
-                ${MCXA_LIB_DIR}/ADC/NXP_ADC_API.c 
-                ${MCXA_LIB_DIR}/ADC/NXP_ADC_DMAConfig.c 
-                ${MCXA_LIB_DIR}/ADC/NXP_ADC_LinkedList.c 
-                ${MCXA_LIB_DIR}/ADC/NXP_ADC_CHMap.c 
-                ${MCXA_LIB_DIR}/TrigSrcControl/TrigSrcControl.c 
-                ${MCXA_LIB_DIR}/SPI/NXP_SPI_API.c 
-                ${MCXA_LIB_DIR}/SPI/NXP_SPI_ConfigValidation.c 
-                ${MCXA_LIB_DIR}/SPI/NXP_SPI_LinkedList.c 
-                ${MCXA_LIB_DIR}/QDC/NXP_eQDC_API.c
-                ${MCXA_LIB_DIR}/Utility/AudioTransceivers/AK4148/AK4148_API.c  
+include("${MCXA_LIB_DIR}/cmake/MCXAComponents.cmake")
+
+#This is required to add specific library classes. Refer to 'APIList.h' in library for all the keywords
+#required to enable specific library classes. For example, to enable CAN, SPI, QDC and AK4148, the following is required.
+mcxa_target_components(
+    TARGET app
+    CONFIG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/config/mcxa"
+    COMPONENTS
+        CAN
+        SPI
+        QDC
+        AK4148
+)
+
+target_sources(app PRIVATE  
                 src/main.c 
+
                 src/CAN_Controller/CAN_Controller.c 
-                src/Bootloader_Controller/Bootloader_Ctrl.c
+                src/Bootloader_Controller/Bootloader_Ctrl.c 
+
                 src/PC_UART_API/PC_UART_API.c
                 src/PC_UART_API/PC_UART_FWBridgeService.c
                 src/PC_UART_API/PC_UART_BulkFileService.c
-                src/PC_UART_API/PC_UART_API_ValidateTest.c
+                src/PC_UART_API/PC_UART_API_ValidateTest.c 
+
                 src/ADC_Controller/ADC_Controller.c 
+
                 src/LVGL_Controller/LVGL_Display_Controller.c 
                 src/LVGL_Controller/Screen_Parameters/LVGL_AudioSources_UIParam.c 
                 src/LVGL_Controller/Screen_Parameters/LVGL_AudioSource_UIScreen.c 
                 src/LVGL_Controller/FileSystem_Adapter/LVGL_ZephyrFS_Adapter.c 
                 src/LVGL_Controller/Screens/Screen_Welcome/WelcomeScreen.c 
                 src/LVGL_Controller/LVGL_TextAnimator/LVGL_TextAnimate.c 
-                ${MCUX_SDK_NG_DIR}/drivers/lpadc/fsl_lpadc.c 
-                ${MCUX_SDK_NG_DIR}/drivers/lpspi/fsl_lpspi.c 
-                ${MCUX_SDK_NG_DIR}/drivers/eqdc/fsl_eqdc.c
+
                 src/ExtFlash_Controller/ExtFlash_Controller.c 
                 src/ExtFlash_Controller/SPIController/SPIController.c 
                 src/ExtFlash_Controller/ExtFlashInitialSetup/ExtFlash_InitialSetupCtrl.c 
