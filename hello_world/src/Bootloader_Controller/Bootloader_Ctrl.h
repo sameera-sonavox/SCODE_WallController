@@ -8,7 +8,7 @@
 
 //************************ */
 
-extern void vInit_BootloaderController( void );
+extern bool bInit_BootloaderController( void );
 extern void vUpdateBootloader( sT_Bootloader_CtrlMsg_t * pstTBootMsg );
 extern bool bIsBootloader_Initialized( void );
 extern bool bIsFW_ImageWrite_InProgress( void );

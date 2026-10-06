@@ -44,9 +44,9 @@ TX_BYTE_DELAY_S = 0.0
 # Bootloader protocol values
 # ---------------------------------------------------------------------------
 
-CMD_FW_UP_REQ = 20
-CMD_FW_UP_MSG = 21
-CMD_FW_UP_END = 22
+CMD_FW_UP_REQ = 21
+CMD_FW_UP_MSG = 22
+CMD_FW_UP_END = 23
 
 FW_UP_REQ_PAYLOAD_LEN = 10
 FW_UP_MSG_PAYLOAD_LEN = 50

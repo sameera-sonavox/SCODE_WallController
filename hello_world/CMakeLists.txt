@@ -6,8 +6,10 @@ set(DTS_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/dts)
 set(MCXA_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../MCXA_Lib/Lib" CACHE PATH "Path to the reusable MCXA library sources")
 get_filename_component(MCXA_LIB_DIR "${MCXA_LIB_DIR}" ABSOLUTE)
 
-if(NOT EXISTS "${MCXA_LIB_DIR}/PWM/NXP_PWM_API.c")
-    message(FATAL_ERROR "MCXA_LIB_DIR is invalid: ${MCXA_LIB_DIR}")
+if(NOT EXISTS "${MCXA_LIB_DIR}/cmake/MCXAComponents.cmake")
+    message(FATAL_ERROR
+        "MCXA_LIB_DIR is invalid: ${MCXA_LIB_DIR}"
+    )
 endif()
 
 set(DTC_OVERLAY_FILE
@@ -22,7 +24,6 @@ set(DTC_OVERLAY_FILE
     "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/FlashPartitions.overlay"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/ExtFlash_Ctrl.overlay"
     CACHE STRING "Application devicetree overlays" FORCE)
-#list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/ExtFlash_Ctrl.overlay")
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(hello_world)
@@ -36,17 +37,6 @@ zephyr_linker_sources(
     ROM_START
     SORT_KEY 0x0vectors_irq
     ${ZEPHYR_BASE}/include/zephyr/linker/irq-vector-table-section.ld)
-
-set(MCUX_SDK_NG_DIR "${WEST_TOPDIR}/modules/hal/nxp/mcux/mcux-sdk-ng")
-
-target_include_directories(app PRIVATE
-                ${MCUX_SDK_NG_DIR}/drivers/lpadc)
-target_include_directories(app PRIVATE
-                ${MCUX_SDK_NG_DIR}/drivers/lpspi)
-target_include_directories(app PRIVATE
-                ${MCUX_SDK_NG_DIR}/drivers/eqdc)
-target_include_directories(app PRIVATE
-                ${MCXA_LIB_DIR})
 
 include("${MCXA_LIB_DIR}/cmake/MCXAComponents.cmake")
 
@@ -67,13 +57,14 @@ target_sources(app PRIVATE
 
                 src/CAN_Controller/CAN_Controller.c 
                 src/Bootloader_Controller/Bootloader_Ctrl.c 
+                
+                src/WallController/WallController_StateMachine/WallController_StateMachine.c
+                src/WallController/WallController_Comm_Manager/WallController_Comm_Manager.c
 
                 src/PC_UART_API/PC_UART_API.c
                 src/PC_UART_API/PC_UART_FWBridgeService.c
                 src/PC_UART_API/PC_UART_BulkFileService.c
                 src/PC_UART_API/PC_UART_API_ValidateTest.c 
-
-                src/ADC_Controller/ADC_Controller.c 
 
                 src/LVGL_Controller/LVGL_Display_Controller.c 
                 src/LVGL_Controller/Screen_Parameters/LVGL_AudioSources_UIParam.c 

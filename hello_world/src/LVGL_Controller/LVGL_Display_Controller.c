@@ -33,6 +33,7 @@ static void vInitialize_eQDC( void );
 static bool bConfigure_eQDC_PhasePins( void );
 static void vEncoder_Callback(sT_eQDC_PosChangeNotify_t stTeQDCData);
 static inline void vMark_EncDataInvalid(sT_eQDC_PosChangeNotify_t *pstNotifyCtrl);
+static void vRelease_PreviousScreenResources(eScreenId_t eId);
 
 static bool bConfigure_EncSWPin( void );
 static void vEnc_SWPressed_InterruptHandler(struct input_event *pstEvent, void *puserData);
@@ -648,7 +649,13 @@ bool bRemove_AudioSource( eAudioSrc_Id_t eSrcId )
 }
 
 void vSet_ScreenActive(eScreenId_t eId)
-{
+{    
+    eScreenId_t ePrevId = eGetActiveScreen();
+    if(ePrevId < eNUMBER_OF_SCREENs)
+    {
+        vRelease_PreviousScreenResources(ePrevId);
+    }
+
     for(uint8_t i = 0; i < eNUMBER_OF_SCREENs; i++)
     {
         if((eScreenId_t)i == eId)
@@ -661,6 +668,27 @@ void vSet_ScreenActive(eScreenId_t eId)
         }
     }
     
+}
+
+static void vRelease_PreviousScreenResources(eScreenId_t eId)
+{
+    if(eId >= eNUMBER_OF_SCREENs)
+    {
+        FHALT("Invalid Screen Id: %d", eId);
+        return;
+    }
+
+    switch(eId)
+    {
+        case eScreen_Welcome:
+            vWelcomeScreen_ReleaseResources();
+            break;
+        case eScreen_SourceSelect:
+            break;
+        default:
+            FHALT("Screen Not Implemented Screen: %d", eId);
+            break;
+    }
 }
 
 void vSet_ScreenInactive(eScreenId_t eId)

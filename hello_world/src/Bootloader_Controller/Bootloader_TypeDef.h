@@ -19,15 +19,21 @@ typedef enum{
 
 typedef enum{
     eBootloader_CMD_Invalid = 0,
-    eBootloader_CMD_FWUpReq = 20,
+    eBootloader_CMD_None = 20,
+    eBootloader_CMD_FWUpReq,
     eBootloader_CMD_FWUpMsg,
     eBootloader_CMD_FWUpEnd,
     eBootloader_CMD_FWUpPause,
     eBootloader_CMD_FWUpStop,
     eBootloader_CMD_GetLostPacketInfo,
     eBootloader_CMD_RetLostPacketInfo,
+    eBootloader_CMD_RetSystemPrepare_ForFWImgSwap,
+    eBootloader_CMD_RetSystemOk_ForFWImgSwap,
     eBootloader_CMD_AuthStart,
     eBootloader_CMD_UpdateAuthResponse,
+    eBootloader_CMD_ErrorStateEntry,
+    eBootloader_CMD_RecoverFromError,
+    eBootloader_CMD_ReInitStateMachine,
     eNUMBER_OF_BOOTLOADER_COMMANDs
 } eT_Bootloader_Command;
 
@@ -52,12 +58,6 @@ typedef enum{
     eBootloader_Error_MissingPacketsPending,
     eBootloader_Error_UndefinedBehavior,
 } eT_Bootloader_ErrorCode;
-
-typedef enum{
-    eBootloader_ACK = 10,
-    eBootloader_NACK,
-    eNUMBER_OF_BOOTLOADER_ACKTYPEs
-} eT_Bootloader_ACK;
 
 typedef enum{
     eBootloader_Tx_Idle = 0,
@@ -94,6 +94,7 @@ typedef struct{
 
 typedef struct{
     eT_Bootloader_TxState eTxState;
+    struct k_mutex mutex_LockLostPacket;
     uint8_t uiFrameSeq;
     uint8_t uiRetryCount;
     uint8_t uiaTxData[CAN_MSG_MAX_SIZE];
@@ -126,6 +127,7 @@ typedef struct
 typedef struct{
     eT_Bootloader_State eBtlState;
     bool bIsInitialized;
+    bool bIsFirstEntry;
     size_t uiFlashAreaSize;   
     uint32_t uiFWImgSize;
     uint16_t uiLibRev;

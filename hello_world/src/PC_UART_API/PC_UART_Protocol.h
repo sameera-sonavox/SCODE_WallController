@@ -31,8 +31,8 @@ typedef enum
     ePC_UART_Command_SelectOperation = 0x01,
     ePC_UART_Command_ReleaseOperation = 0x02,
 
-    /* Values 20 through 26 remain the existing bootloader commands and are
-     * valid only while FirmwareBridge is selected.
+    /* Host-facing bootloader commands use eT_Bootloader_Command values and
+     * are valid only while FirmwareBridge is selected.
      */
 
     ePC_UART_Command_BulkStart = 0x40,

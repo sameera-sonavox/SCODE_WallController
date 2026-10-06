@@ -30,7 +30,8 @@ ACK/NACK | PC-UART error code
 
 ## Firmware bridge
 
-When firmware bridge mode is selected, existing bootloader commands `20..26`
+When firmware bridge mode is selected, host-facing bootloader commands
+`21..27`, `30..31`, and `33`
 are forwarded to CAN unchanged. CAN replies are framed with the same `BLUP`
 envelope and returned to the PC. The bridge remains limited to one CAN-FD
 payload: command byte plus at most 63 payload bytes.

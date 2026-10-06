@@ -3,6 +3,7 @@
 #include "../../LVGL_Display_Controller.h"
 #include "GenericMacro.h"
 #include "../../LVGL_TextAnimator/LVGL_TextAnimate.h"
+#include "../../../WallController/WallController_StateMachine/Wallcontroller_StateMachine.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
@@ -259,7 +260,14 @@ static void vWelcomeScreen_ImageFadingCompleted(lv_anim_t *pstImgAnimation)
     }
 
     vStart_TextAnimator(pcaAnimateString, "", 4U, vUpdate_AnimatingText, 1000U);
+    vWallCtrl_Set_Command(eWallCtrlCmd_Startup);
+
     lv_obj_set_flag(plv_TextContainer, LV_OBJ_FLAG_HIDDEN, false);
+}
+
+void vWelcomeScreen_ReleaseResources( void )
+{
+    vStop_TextAnimator();
 }
 
 static void vUpdate_AnimatingText(const char *pcaText)

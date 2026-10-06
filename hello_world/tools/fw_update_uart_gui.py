@@ -35,6 +35,7 @@ LIB_REV = 0x0001
 FW_REV = 0x0001
 
 ACK_TIMEOUT_S = 2.0
+TARGET_READY_TIMEOUT_S = 30.0
 WRITE_TIMEOUT_S = 2.0
 START_DELAY_S = 3.0
 INTER_FRAME_DELAY_S = 0.05
@@ -50,11 +51,11 @@ MAX_LOST_PACKET_INFO_PAGES = 64
 # Bootloader protocol values
 # ---------------------------------------------------------------------------
 
-CMD_FW_UP_REQ = 20
-CMD_FW_UP_MSG = 21
-CMD_FW_UP_END = 22
-CMD_GET_LOST_PACKET_INFO = 25
-CMD_RET_LOST_PACKET_INFO = 26
+CMD_FW_UP_REQ = 21
+CMD_FW_UP_MSG = 22
+CMD_FW_UP_END = 23
+CMD_GET_LOST_PACKET_INFO = 26
+CMD_RET_LOST_PACKET_INFO = 27
 VALID_BOOTLOADER_REPLY_COMMANDS = {
     CMD_FW_UP_REQ,
     CMD_FW_UP_MSG,
@@ -191,6 +192,7 @@ class BridgeClient:
         self.log_target = log_target
         self.sequence = 0
         self.selected_operation: int | None = None
+        self.pending_slave_frames: list[tuple[int, int, bytes]] = []
         self.inter_frame_delay_s = inter_frame_delay_s
         self.byte_delay_s = byte_delay_s
         self.port = serial.Serial(
@@ -306,7 +308,9 @@ class BridgeClient:
                 return status, error[0]
 
             if first == b"B":
-                self._read_uart_frame_after_sof_first_byte(ACK_TIMEOUT_S)
+                frame = self._read_uart_frame_after_sof_first_byte(ACK_TIMEOUT_S)
+                if frame is not None:
+                    self.pending_slave_frames.append(frame)
                 continue
 
             if 32 <= status <= 126:
@@ -317,6 +321,10 @@ class BridgeClient:
         raise TimeoutError(f"Timeout waiting for bridge ACK: cmd={command}, seq={sequence}")
 
     def wait_for_slave_frame(self, expected_command: int, timeout_s: float = 3.0) -> tuple[int, int, bytes] | None:
+        for index, frame in enumerate(self.pending_slave_frames):
+            if frame[0] == expected_command:
+                return self.pending_slave_frames.pop(index)
+
         deadline = time.monotonic() + timeout_s
 
         while time.monotonic() < deadline:
@@ -328,6 +336,8 @@ class BridgeClient:
                 frame = self._read_uart_frame_after_sof_first_byte(timeout_s)
                 if frame is not None and frame[0] == expected_command:
                     return frame
+                if frame is not None:
+                    self.pending_slave_frames.append(frame)
                 continue
 
             byte = first[0]
@@ -344,6 +354,26 @@ class BridgeClient:
                 self._log(f"UART byte/noise: 0x{byte:02X}", "bridge")
 
         return None
+
+    def wait_for_slave_ack(self, expected_command: int, timeout_s: float) -> None:
+        response = self.wait_for_slave_frame(expected_command, timeout_s)
+        if response is None:
+            raise TimeoutError(f"Timeout waiting for target ACK: cmd={expected_command}")
+
+        _command, _sequence, payload = response
+        if len(payload) < 2:
+            raise RuntimeError(
+                f"Malformed target response: cmd={expected_command}, payload_len={len(payload)}"
+            )
+        if payload[0] == BOOTLOADER_ACK:
+            return
+        if payload[0] == BOOTLOADER_NACK:
+            raise RuntimeError(
+                f"Target NACK: cmd={expected_command}, error={payload[1]}"
+            )
+        raise RuntimeError(
+            f"Invalid target response status {payload[0]}: cmd={expected_command}"
+        )
 
     def send_pc_uart_command(self, command: int, payload: bytes = b"") -> tuple[int, int]:
         sequence = self.sequence
@@ -988,6 +1018,8 @@ class FirmwareUpdateGui:
             try:
                 self.log_queue.put(("info", "Starting firmware update request"))
                 with_bridge.send_bootloader_frame(CMD_FW_UP_REQ, build_fw_update_request(self.image))
+                with_bridge.wait_for_slave_ack(CMD_FW_UP_REQ, TARGET_READY_TIMEOUT_S)
+                self.log_queue.put(("info", "Target is ready to receive firmware data"))
 
                 sent_count = 0
                 for packet in self.packets:

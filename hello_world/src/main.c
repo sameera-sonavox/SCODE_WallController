@@ -12,13 +12,13 @@
 #include "fsl_clock.h"
 #include "fsl_port.h"
 #include "CPULoad/NXP_CPU_LoadMon.h"
-#include "PWM/NXP_PWM_API.h"
 #include "CAN_Controller/CAN_Controller.h"
+#include "WallController/WallController_Comm_Manager/WallController_Comm_Manager.h"
+#include "WallController/WallController_StateMachine/Wallcontroller_StateMachine.h"
 #include "Bootloader_Controller/Bootloader_Ctrl.h"
 #include "PC_UART_API/PC_UART_API.h"
 #include "PC_UART_API/PC_UART_API_ProjDef.h"
 #include "PC_UART_API/PC_UART_API_ValidateTest.h"
-#include "ADC_Controller/ADC_Controller.h"
 #include "SPI/NXP_SPI_API.h"
 #include "LVGL_Controller/LVGL_Display_Controller.h"
 #include "ExtFlash_Controller/ExtFlash_Controller.h"
@@ -27,6 +27,7 @@
 
 bool bInit_System( void );
 void vCheck_For_FileSystem( void );
+static void vRun_System( void );
 
 int main(void)
 {
@@ -46,16 +47,26 @@ int main(void)
 
 	while (1)
 	{
-		vRun_UI();
+		vRun_System();
 		k_msleep(1);
 	}
 	
 }
 
+static void vRun_System( void )
+{
+	vRun_UI();
+	vRun_WallCtrl_StateMachine();
+}
+
 bool bInit_System( void )
 {
-	vInit_BootloaderController();
-	vInit_CANController();
+	if(!bInit_BootloaderController())
+		return false;
+	if(!bInit_WallController_Comm_Manager(NULL))
+		return false;
+	if(!bInit_CANController())
+		return false;
 	vInit_PC_UART_API();
 
 	if(!bInit_ExtFlash_FsController())
