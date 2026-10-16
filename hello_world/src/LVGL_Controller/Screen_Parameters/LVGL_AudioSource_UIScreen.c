@@ -5,6 +5,7 @@
 #include "../LVGL_ProjDef.h"
 #include "../Lib/QDC/NXP_eQDC_API.h"
 #include "GenericMacro.h"
+#include "../UI_InputController/UI_InputController.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
@@ -63,7 +64,7 @@ sT_EncPosition_Update_t stTEncPosition = {
     .bIsSWPressed = false
 };
 
-uint32_t uiNAV_COUNTS_PER_DETENT = 0U;
+/* uint32_t uiNAV_COUNTS_PER_DETENT = 0U; */
 
 static lv_point_precise_t screenVertical_SeparatorPoints[] = {
     {AUDIO_SOURCE_LIST_DISPLAY_WIDTH + 1U, 0U},
@@ -75,7 +76,7 @@ static lv_point_precise_t screenVertical_SeparatorPoints[] = {
     {AUDIO_SOURCE_LIST_DISPLAY_WIDTH, DEFAULT_AUDIOSRC_SEPARATOR_COORD_Y}
 }; */
 
-static sT_UIScreen_t *pstAudioSrcScreen = NULL;
+static sT_UIScreenRuntime_t *pstAudioSrcScreen = NULL;
 
 static bool bCreate_SourceList( void );
 static lv_obj_t *pstCreate_UILabel(lv_obj_t *pstParent, sT_UIObj_Label *pstTObj_Label, sT_AudioSource_t *pstAudioSrc);
@@ -133,7 +134,7 @@ static void vClear_EncData(sT_QEncData_t *pstQEncData);
 #define bIsENCRotationValid()                   (stTEncPosition.bIsRotationValid)
 #define bIsENCSWPressed()                       (stTEncPosition.bIsSWPressed)
 
-void vRun_AudioSourceScreen( sT_UIScreen_t *pstUIScreen, sT_QEncData_t *pstQEncData)
+void vRun_AudioSourceScreen( sT_UIScreenRuntime_t *pstUIScreen, sT_QEncData_t *pstQEncData)
 {
     if(pstUIScreen == NULL || pstQEncData == NULL)
     {
@@ -488,8 +489,7 @@ static void vClear_EncoderTransientState( sT_QEncData_t *pstQEncData )
         vClear_EncoderRotationData(pstQEncData);
     }
 
-    vClear_eQDCMessageQueue();
-    vClear_EncSWPressed();    
+    vClear_UIEvents();   
     vReset_VolumeEditState();
 }
 
@@ -808,7 +808,7 @@ static void vClear_EncData(sT_QEncData_t *pstQEncData)
 {
     if(pstQEncData == NULL)
         return;
-    vClear_EncSWPressed();
+    //vClear_EncSWPressed();
 }
 
 static inline eAudioSrc_Id_t eGetFirstActiveSource( void )
@@ -891,7 +891,7 @@ void vSetup_AudioSrc_ScreenStartup( void )
 //*********************************************************************************** */
 #pragma region UI Creation
 
-bool bInit_SourceSelectScreen_Controls(sT_UIScreen_t *pstAudioSrcSelect)
+bool bInit_SourceSelectScreen_Controls(sT_UIScreenRuntime_t *pstAudioSrcSelect)
 {
     if(pstAudioSrcSelect == NULL)
     {

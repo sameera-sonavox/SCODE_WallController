@@ -3,15 +3,14 @@
 
 #include "LVGL_Display_Types.h"
 
+extern uint32_t uiNAV_COUNTS_PER_DETENT;
+
 extern bool bInit_LVGLDisplay( void );
-extern void vLoad_Screen( eScreenId_t eID );
+//extern void vLoad_Screen( eScreenId_t eID );
 extern bool bRemove_AudioSource( eAudioSrc_Id_t eSrcId );
 extern bool bSet_AudioSource_ActiveState( eAudioSrc_Id_t eSrcId, bool bIsActive );
 extern bool bSet_AudioSource_MuteState( eAudioSrc_Id_t eSrcId, bool bIsMute );
 extern void vRun_UI( void );
-
-extern void vClear_EncSWPressed( void );
-extern bool bIsEncSWPressed( void );
 
 extern void vSet_ScreenActive(eScreenId_t eId);
 extern void vSet_ScreenInactive(eScreenId_t eId);

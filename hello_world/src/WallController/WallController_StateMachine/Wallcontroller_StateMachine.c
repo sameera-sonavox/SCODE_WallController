@@ -1,6 +1,7 @@
 #include "Wallcontroller_StateMachine.h"
 #include "GenericMacro.h"
 #include "../../LVGL_Controller/LVGL_Display_Controller.h"
+#include "../../LVGL_Controller/UI_ScreenManager/UI_ScreenManager.h"
 
 #ifdef DEBUG_WALLCONTROLLER_STATEMACHINE
     #define print_WallCtrl                      printf
@@ -104,8 +105,13 @@ static void vHandle_ActiveState( void )
 {
     if(IsStateFirstEntry())
     {
-        vLoad_Screen(eScreen_SourceSelect);
         print_WallCtrl("Wall Controller State: Active\n");
+        if(!bRequest_UIScreen(eScreen_AudioSrcInfo))
+        {
+            FHALT("Screen Load Request for Screen[%d] failed", eScreen_AudioSrcInfo);
+            stTWallCtrlStateMachine.bIsFirstEntry = true;
+            return;
+        }
     }
 
     eWallCtrlCmd_t eCmd = eGet_WallCtrl_Command();

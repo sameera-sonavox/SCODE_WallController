@@ -97,7 +97,7 @@ static ePC_UART_Error_t eProcess_BulkData(
     stMessage.uiFrameCRC = u16Read_BigEndian(&puiPayload[6]);
     memcpy(stMessage.uiMsg, &puiPayload[8], uiDataLen);
 
-    int iResult = iSend_BulkTransferData(stMessage);
+    int iResult = iSend_BulkTransferData(&stMessage);
     if(iResult == -ENOMSG || iResult == -EAGAIN)
     {
         return ePC_UART_Error_QueueFull;

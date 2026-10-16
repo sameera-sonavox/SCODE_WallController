@@ -29,6 +29,15 @@ typedef struct
     sT_MsgData_t stData;
 } sT_BulkQueueMessage_t;
 
+/*
+ * Queue items are intentionally kept out of the producer and worker stacks.
+ * The producer staging item is protected by kMutex_BulkTransfer, and the
+ * consumer staging item is owned exclusively by the single bulk worker.
+ * k_msgq_put() copies the complete item before it returns.
+ */
+static sT_BulkQueueMessage_t stBulkQueueProducerMessage;
+static sT_BulkQueueMessage_t stBulkQueueConsumerMessage;
+
 static struct k_msgq stMsgQueue_FileTransfer;
 static sT_BulkQueueMessage_t staMsgData[MAX_MSGQ_DEPTH];
 static struct k_work stMsgWorkQUeue;
@@ -220,12 +229,12 @@ void vEnd_BulkDataTransfer( sT_TransferResult_t *pstTransferResult )
 
     vSet_BulkTransferState(eFileTransfer_Finalizing);
 
-    sT_BulkQueueMessage_t stEndMessage = {
-        .eType = eBulkQueueMessage_End,
-    };
+    memset(&stBulkQueueProducerMessage, 0,
+           sizeof(stBulkQueueProducerMessage));
+    stBulkQueueProducerMessage.eType = eBulkQueueMessage_End;
     int iResult = k_msgq_put(
         &stMsgQueue_FileTransfer,
-        &stEndMessage,
+        &stBulkQueueProducerMessage,
         K_MSEC(DATA_TRANSFER_THREAD_TIMEOUT_ms));
     if(iResult != 0)
     {
@@ -322,10 +331,11 @@ void vEnd_BulkDataTransfer( sT_TransferResult_t *pstTransferResult )
         k_mutex_unlock(&kMutex_BulkTransfer);
 }
 
-int iSend_BulkTransferData( sT_MsgData_t stTMsg )
+int iSend_BulkTransferData( const sT_MsgData_t *pstMsg )
 {
-    if(stTMsg.uiDataLen == 0U ||
-       stTMsg.uiDataLen > MAX_FRAME_LENGTH)
+    if(pstMsg == NULL ||
+       pstMsg->uiDataLen == 0U ||
+       pstMsg->uiDataLen > MAX_FRAME_LENGTH)
     {
         return -EINVAL;
     }
@@ -338,13 +348,13 @@ int iSend_BulkTransferData( sT_MsgData_t stTMsg )
         k_mutex_unlock(&kMutex_BulkTransfer);
         return -EBADE;
     }
-    if(stTMsg.uiFrameId != stTBulkDataCtrl.uiNextFrameId)
+    if(pstMsg->uiFrameId != stTBulkDataCtrl.uiNextFrameId)
     {
         k_mutex_unlock(&kMutex_BulkTransfer);
         return -EILSEQ;
     }
     if(stTBulkDataCtrl.uiAcceptedSize > stTBulkDataCtrl.uiFileSize ||
-       stTMsg.uiDataLen >
+       pstMsg->uiDataLen >
            (stTBulkDataCtrl.uiFileSize -
             stTBulkDataCtrl.uiAcceptedSize))
     {
@@ -354,25 +364,23 @@ int iSend_BulkTransferData( sT_MsgData_t stTMsg )
 
     uint16_t uiFrameCRC = u16CRC16_CCITT_Update(
         0xFFFFU,
-        stTMsg.uiMsg,
-        stTMsg.uiDataLen);
-    if(uiFrameCRC != stTMsg.uiFrameCRC)
+        pstMsg->uiMsg,
+        pstMsg->uiDataLen);
+    if(uiFrameCRC != pstMsg->uiFrameCRC)
     {
         k_mutex_unlock(&kMutex_BulkTransfer);
         return -EBADMSG;
     }
 
-    sT_BulkQueueMessage_t stQueueMessage = {
-        .eType = eBulkQueueMessage_Data,
-        .stData = stTMsg,
-    };
+    stBulkQueueProducerMessage.eType = eBulkQueueMessage_Data;
+    stBulkQueueProducerMessage.stData = *pstMsg;
     int iRet = k_msgq_put(
         &stMsgQueue_FileTransfer,
-        &stQueueMessage,
+        &stBulkQueueProducerMessage,
         K_NO_WAIT);
     if(iRet == 0)
     {
-        stTBulkDataCtrl.uiAcceptedSize += stTMsg.uiDataLen;
+        stTBulkDataCtrl.uiAcceptedSize += pstMsg->uiDataLen;
         stTBulkDataCtrl.uiNextFrameId++;
     }
     k_mutex_unlock(&kMutex_BulkTransfer);
@@ -418,13 +426,14 @@ static void vLittleFs_FileTransferMonitor(void *d1, void *d2, void *d3)
     ARG_UNUSED(d2);
     ARG_UNUSED(d3);
 
-    sT_BulkQueueMessage_t stQueueMessage = {0};
+    memset(&stBulkQueueConsumerMessage, 0,
+           sizeof(stBulkQueueConsumerMessage));
 
     while(true)
     {
         int iRes = k_msgq_get(
             &stMsgQueue_FileTransfer,
-            &stQueueMessage,
+            &stBulkQueueConsumerMessage,
             K_MSEC(DATA_TRANSFER_TIMEOUT_ms));
         if(iRes < 0)
         {
@@ -434,12 +443,12 @@ static void vLittleFs_FileTransferMonitor(void *d1, void *d2, void *d3)
             return;
         }
 
-        if(stQueueMessage.eType == eBulkQueueMessage_End)
+        if(stBulkQueueConsumerMessage.eType == eBulkQueueMessage_End)
         {
             vSignal_BulkWorkerDone(false);
             return;
         }
-        if(stQueueMessage.eType != eBulkQueueMessage_Data ||
+        if(stBulkQueueConsumerMessage.eType != eBulkQueueMessage_Data ||
            !bCanProcess_QueuedBulkData())
         {
             vSet_Transfer_ErrorState(eErrorState_QueueError);
@@ -449,7 +458,7 @@ static void vLittleFs_FileTransferMonitor(void *d1, void *d2, void *d3)
         }
 
         stTBulkDataCtrl.uiLastActivityTime_ms = k_uptime_get_32();
-        iRes = iBulkWrite_ToFile(&stQueueMessage.stData);
+        iRes = iBulkWrite_ToFile(&stBulkQueueConsumerMessage.stData);
         if(iRes != 0)
         {
             vSet_Transfer_ErrorState(eErrorState_WriteError);
@@ -460,10 +469,10 @@ static void vLittleFs_FileTransferMonitor(void *d1, void *d2, void *d3)
 
         stTBulkDataCtrl.uiRunningCRC = u16CRC16_CCITT_Update(
             stTBulkDataCtrl.uiRunningCRC,
-            stQueueMessage.stData.uiMsg,
-            stQueueMessage.stData.uiDataLen);
+            stBulkQueueConsumerMessage.stData.uiMsg,
+            stBulkQueueConsumerMessage.stData.uiDataLen);
         stTBulkDataCtrl.uiReceivedSize +=
-            stQueueMessage.stData.uiDataLen;
+            stBulkQueueConsumerMessage.stData.uiDataLen;
     }
 }
 
@@ -1384,7 +1393,6 @@ static int iDelete_FileInternal(const char *pcaFilePath)
 
     k_mutex_unlock(&kMutex_FileAccess);
     iResult = iGetFileInfo(EXT_LITTLEFS_MOUNT_POINT);
-    printf("\n\rFile Deleted!!!\n\r");
     return iResult;
 }
 

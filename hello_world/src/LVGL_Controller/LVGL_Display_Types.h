@@ -14,7 +14,9 @@
 
 typedef enum
 {
-    eScreen_Welcome = 0,
+    eScreen_None = 0,
+    eScreen_Welcome,
+    eScreen_AudioSrcInfo,
     eScreen_SourceSelect,
     eNUMBER_OF_SCREENs
 } eScreenId_t;
@@ -34,7 +36,7 @@ typedef enum
     eAudio_Src_1,
     eAudio_Src_2,
     eAudio_Src_3,
-    eAudio_Src_4,
+/*     eAudio_Src_4,
     eAudio_Src_5,
     eAudio_Src_6,
     eAudio_Src_7,
@@ -61,7 +63,7 @@ typedef enum
     eAudio_Src_28,
     eAudio_Src_29,
     eAudio_Src_30,
-    eAudio_Src_31,
+    eAudio_Src_31, */
     eNUMBER_OF_AUDIO_SOURCES
 } eAudioSrc_Id_t;
 
@@ -97,6 +99,23 @@ typedef enum
     eHostSystem_DMA,
     eNUMBER_OF_HOST_SYSTEMs
 } eHostSystemType_t;
+
+typedef enum
+{
+    eUIInput_None = 0,
+    eUIInput_Rotate,
+    eUIInput_Press,
+    eUIInput_Release,
+    eNUMBER_OF_UI_INPUT_EVENTs
+} eUIInputType_t;
+
+typedef struct
+{
+    eUIInputType_t eType;
+
+    int32_t iDetents;
+    uint32_t uiTimestamp_ms;
+} sT_UIInput_t;
 
 typedef struct
 {
@@ -202,18 +221,26 @@ typedef struct
 
 typedef bool (*bScreenCreate_t)( void );
 
-typedef struct sT_UIScreen_t
+typedef struct sT_UIScreenRuntime_t
 {
     eScreenId_t eScreenId;
-    _Atomic bool bIsActive;
-    lv_obj_t *pstScreenObj;
+    lv_obj_t *pstRootObj;
+    void *pvScreenData;
+} sT_UIScreenRuntime_t;
 
-    bScreenCreate_t pfCreate;
-    void (*pfShow)(void);
-    void (*pfDestroy)(void);
+typedef struct
+{
+    eScreenId_t eScreenId;
 
-    sT_UIScreenDisplay stTDisplayInfo;
-} sT_UIScreen_t;
+    sT_UIScreenRuntime_t *pstScreenRuntime;
+    bool bDeleteOnExit;
+
+    bool (*pfCreate)(sT_UIScreenRuntime_t *pstScreenRuntime);
+    void (*pfEnter)(sT_UIScreenRuntime_t *pstScreenRuntime);
+    void (*pfExit)(sT_UIScreenRuntime_t *pstScreenRuntime);
+    void (*pfHandleInput)(sT_UIScreenRuntime_t *pstScreenRuntime, const sT_UIInput_t *pstTUIInput);
+    void (*pfRun)(sT_UIScreenRuntime_t *pstScreenRuntime);
+} sT_UIScreenDescriptor_t;
 
 typedef struct
 {

@@ -7,11 +7,14 @@ and for transferring files into the MCU's local LittleFS storage.
 
 from __future__ import annotations
 
+import json
 import queue
+import re
 import struct
 import threading
 import time
 import tkinter as tk
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -36,7 +39,11 @@ FW_REV = 0x0001
 
 ACK_TIMEOUT_S = 2.0
 TARGET_READY_TIMEOUT_S = 30.0
-WRITE_TIMEOUT_S = 2.0
+# The Windows MCU-Link VCOM driver (usbser) can report a write timeout even
+# though its endpoint accepts the same transfer immediately in blocking mode.
+# Keep reads bounded by ACK_TIMEOUT_S; protocol ACK timeouts still detect a
+# disconnected or unresponsive target after each transmitted frame.
+WRITE_TIMEOUT_S = None
 START_DELAY_S = 3.0
 INTER_FRAME_DELAY_S = 0.05
 TX_BYTE_DELAY_S = 0.001
@@ -104,12 +111,213 @@ BULK_DATA_LENGTH = 256
 MAX_BULK_FILE_NAME_BYTES = 29
 
 
+# ---------------------------------------------------------------------------
+# Source configuration file format
+# ---------------------------------------------------------------------------
+
+DEFAULT_NUMBER_OF_AUDIO_SOURCES = 32
+
+
+def read_audio_source_count() -> int:
+    """Read the source count from the firmware enum when the source tree exists."""
+    header_path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "LVGL_Controller"
+        / "LVGL_Display_Types.h"
+    )
+    try:
+        header_text = header_path.read_text(encoding="utf-8")
+        enum_start = header_text.index("eAudio_Src_0")
+        enum_end = header_text.index("eNUMBER_OF_AUDIO_SOURCES", enum_start)
+        source_ids = {
+            int(source_id)
+            for source_id in re.findall(
+                r"eAudio_Src_(\d+)",
+                header_text[enum_start:enum_end],
+            )
+        }
+        if source_ids and source_ids == set(range(max(source_ids) + 1)):
+            return len(source_ids)
+    except (OSError, UnicodeError, ValueError):
+        pass
+
+    # The fallback keeps a packaged/standalone copy of the PC tool usable.
+    return DEFAULT_NUMBER_OF_AUDIO_SOURCES
+
+
+NUMBER_OF_AUDIO_SOURCES = read_audio_source_count()
+
+SOURCE_CONFIG_MAGIC = b"SRCF"
+SOURCE_CONFIG_VERSION = 1
+SOURCE_CONFIG_JSON_SCHEMA_VERSION = 1
+SOURCE_CONFIG_NAME_MAX_BYTES = 23
+SOURCE_CONFIG_ZONE_MAX_BYTES = 23
+
+SOURCE_CONFIG_FLAG_ENABLED = 1 << 0
+SOURCE_CONFIG_FLAG_MUTED = 1 << 1
+SOURCE_CONFIG_FLAG_BLUETOOTH_CONNECTED = 1 << 2
+
+# magic, version, header size, total size, payload CRC32, source ID, flags,
+# source volume, volume limit, zone-name length, source-name length, reserved
+SOURCE_CONFIG_HEADER = struct.Struct("<4sHHIIBBBBBBH")
+
+
 @dataclass(frozen=True)
 class FirmwarePacket:
     packet_id: int
     offset: int
     valid_len: int
     payload: bytes
+
+
+@dataclass
+class SourceConfiguration:
+    source_id: int
+    zone_name: str
+    source_name: str
+    source_volume: int
+    volume_limit: int
+    is_muted: bool
+    is_enabled: bool
+    is_bluetooth_connected: bool
+
+
+def default_source_configuration(source_id: int) -> SourceConfiguration:
+    return SourceConfiguration(
+        source_id=source_id,
+        zone_name=f"Zone {source_id + 1}",
+        source_name=f"Source {source_id + 1}",
+        source_volume=0,
+        volume_limit=100,
+        is_muted=False,
+        is_enabled=True,
+        is_bluetooth_connected=False,
+    )
+
+
+def validate_source_configuration(configuration: SourceConfiguration) -> tuple[bytes, bytes]:
+    if not 0 <= configuration.source_id < NUMBER_OF_AUDIO_SOURCES:
+        raise ValueError(
+            f"Source ID {configuration.source_id} is outside 0..{NUMBER_OF_AUDIO_SOURCES - 1}"
+        )
+
+    if not configuration.zone_name.strip():
+        raise ValueError(f"Source {configuration.source_id}: Zone Name cannot be empty")
+    if not configuration.source_name.strip():
+        raise ValueError(f"Source {configuration.source_id}: Source Name cannot be empty")
+
+    zone_name = configuration.zone_name.strip().encode("utf-8")
+    source_name = configuration.source_name.strip().encode("utf-8")
+    if len(zone_name) > SOURCE_CONFIG_ZONE_MAX_BYTES:
+        raise ValueError(
+            f"Source {configuration.source_id}: Zone Name is {len(zone_name)} UTF-8 bytes; "
+            f"maximum is {SOURCE_CONFIG_ZONE_MAX_BYTES}"
+        )
+    if len(source_name) > SOURCE_CONFIG_NAME_MAX_BYTES:
+        raise ValueError(
+            f"Source {configuration.source_id}: Source Name is {len(source_name)} UTF-8 bytes; "
+            f"maximum is {SOURCE_CONFIG_NAME_MAX_BYTES}"
+        )
+
+    if not 0 <= configuration.source_volume <= 100:
+        raise ValueError(
+            f"Source {configuration.source_id}: Source Volume must be between 0 and 100"
+        )
+    if not 0 <= configuration.volume_limit <= 100:
+        raise ValueError(
+            f"Source {configuration.source_id}: Volume Limit must be between 0 and 100"
+        )
+
+    return zone_name, source_name
+
+
+def encode_source_configuration(configuration: SourceConfiguration) -> bytes:
+    zone_name, source_name = validate_source_configuration(configuration)
+    payload = zone_name + source_name
+
+    flags = 0
+    if configuration.is_enabled:
+        flags |= SOURCE_CONFIG_FLAG_ENABLED
+    if configuration.is_muted:
+        flags |= SOURCE_CONFIG_FLAG_MUTED
+    if configuration.is_bluetooth_connected:
+        flags |= SOURCE_CONFIG_FLAG_BLUETOOTH_CONNECTED
+
+    total_size = SOURCE_CONFIG_HEADER.size + len(payload)
+    payload_crc32 = zlib.crc32(payload) & 0xFFFFFFFF
+    header = SOURCE_CONFIG_HEADER.pack(
+        SOURCE_CONFIG_MAGIC,
+        SOURCE_CONFIG_VERSION,
+        SOURCE_CONFIG_HEADER.size,
+        total_size,
+        payload_crc32,
+        configuration.source_id,
+        flags,
+        configuration.source_volume,
+        configuration.volume_limit,
+        len(zone_name),
+        len(source_name),
+        0,
+    )
+    return header + payload
+
+
+def source_configuration_to_json(configuration: SourceConfiguration) -> dict[str, object]:
+    return {
+        "sourceId": configuration.source_id,
+        "zoneName": configuration.zone_name,
+        "sourceName": configuration.source_name,
+        "sourceVolume": configuration.source_volume,
+        "volumeLimit": configuration.volume_limit,
+        "isMuted": configuration.is_muted,
+        "isEnabled": configuration.is_enabled,
+        "isBluetoothConnected": configuration.is_bluetooth_connected,
+    }
+
+
+def source_configuration_from_json(data: object) -> SourceConfiguration:
+    if not isinstance(data, dict):
+        raise ValueError("Every source configuration must be a JSON object")
+
+    required_fields = {
+        "sourceId",
+        "zoneName",
+        "sourceName",
+        "sourceVolume",
+        "volumeLimit",
+        "isMuted",
+        "isEnabled",
+        "isBluetoothConnected",
+    }
+    missing_fields = required_fields.difference(data)
+    if missing_fields:
+        raise ValueError(f"Source configuration is missing: {', '.join(sorted(missing_fields))}")
+
+    for field_name in ("isMuted", "isEnabled", "isBluetoothConnected"):
+        if not isinstance(data[field_name], bool):
+            raise ValueError(f"{field_name} must be true or false")
+
+    for field_name in ("sourceId", "sourceVolume", "volumeLimit"):
+        if isinstance(data[field_name], bool) or not isinstance(data[field_name], int):
+            raise ValueError(f"{field_name} must be a whole number")
+
+    for field_name in ("zoneName", "sourceName"):
+        if not isinstance(data[field_name], str):
+            raise ValueError(f"{field_name} must be text")
+
+    configuration = SourceConfiguration(
+        source_id=data["sourceId"],
+        zone_name=data["zoneName"],
+        source_name=data["sourceName"],
+        source_volume=data["sourceVolume"],
+        volume_limit=data["volumeLimit"],
+        is_muted=data["isMuted"],
+        is_enabled=data["isEnabled"],
+        is_bluetooth_connected=data["isBluetoothConnected"],
+    )
+    validate_source_configuration(configuration)
+    return configuration
 
 
 def crc16_ccitt(data: bytes, initial: int = 0xFFFF) -> int:
@@ -540,6 +748,26 @@ class FirmwareUpdateGui:
         self.file_transfer_progress = tk.DoubleVar(value=0.0)
         self.file_transfer_percent = tk.StringVar(value="0%")
 
+        self.source_configurations = [
+            default_source_configuration(source_id)
+            for source_id in range(NUMBER_OF_AUDIO_SOURCES)
+        ]
+        self.current_source_index = 0
+        self.source_selector_values = tuple(
+            f"Source {source_id:02d}" for source_id in range(NUMBER_OF_AUDIO_SOURCES)
+        )
+        self.source_selector = tk.StringVar(value=self.source_selector_values[0])
+        self.source_zone_name = tk.StringVar()
+        self.source_name = tk.StringVar()
+        self.source_volume = tk.StringVar()
+        self.source_volume_limit = tk.StringVar()
+        self.source_is_muted = tk.BooleanVar()
+        self.source_is_enabled = tk.BooleanVar()
+        self.source_is_bluetooth_connected = tk.BooleanVar()
+        self.source_config_status = tk.StringVar(
+            value=f"Editing 1 of {NUMBER_OF_AUDIO_SOURCES} source configurations."
+        )
+
         self.image: bytes = b""
         self.packets: list[FirmwarePacket] = []
         self.selected_missing: set[int] = set()
@@ -549,6 +777,8 @@ class FirmwareUpdateGui:
         self.worker: threading.Thread | None = None
         self.operation_frames: dict[str, ttk.Frame] = {}
         self.operation_buttons: dict[str, ttk.Button] = {}
+        self.file_transfer_selection: ttk.LabelFrame | None = None
+        self.source_config_frame: ttk.LabelFrame | None = None
 
         self._build_layout()
         self.root.after(100, self._drain_log_queue)
@@ -671,6 +901,7 @@ class FirmwareUpdateGui:
         selection = ttk.LabelFrame(parent, text="Local File Transfer", padding=10)
         selection.pack(fill=tk.X)
         selection.columnconfigure(1, weight=1)
+        self.file_transfer_selection = selection
 
         ttk.Label(selection, text="File type").grid(row=0, column=0, sticky=tk.W, pady=(0, 8))
         type_box = ttk.Combobox(
@@ -681,6 +912,7 @@ class FirmwareUpdateGui:
             width=16,
         )
         type_box.grid(row=0, column=1, sticky=tk.W, padx=8, pady=(0, 8))
+        type_box.bind("<<ComboboxSelected>>", self._on_file_transfer_type_changed)
 
         ttk.Label(selection, text="File").grid(row=1, column=0, sticky=tk.W)
         ttk.Entry(selection, textvariable=self.file_transfer_path).grid(
@@ -688,6 +920,8 @@ class FirmwareUpdateGui:
         )
         ttk.Button(selection, text="Browse", command=self.browse_transfer_file).grid(row=1, column=2, padx=4)
         ttk.Button(selection, text="Load", command=self.load_transfer_file).grid(row=1, column=3, padx=4)
+
+        self._build_source_configuration_editor(parent)
 
         actions = ttk.Frame(parent, padding=(0, 10, 0, 8))
         actions.pack(fill=tk.X)
@@ -717,6 +951,349 @@ class FirmwareUpdateGui:
         self.file_log.tag_configure("recovery", foreground="#16803C")
         self.file_log.tag_configure("error", foreground="#B42318")
         self.file_log.pack(fill=tk.BOTH, expand=True)
+
+        self._load_source_configuration_into_editor(0)
+        self._update_file_transfer_type_view()
+
+    def _build_source_configuration_editor(self, parent: ttk.Frame) -> None:
+        frame = ttk.LabelFrame(parent, text="Source Configuration Data", padding=10)
+        frame.columnconfigure(1, weight=1)
+        frame.columnconfigure(3, weight=1)
+        self.source_config_frame = frame
+
+        navigation = ttk.Frame(frame)
+        navigation.grid(row=0, column=0, columnspan=4, sticky=tk.EW, pady=(0, 8))
+        navigation.columnconfigure(2, weight=1)
+
+        ttk.Button(
+            navigation,
+            text="Previous",
+            command=lambda: self._navigate_source_configuration(-1),
+        ).grid(row=0, column=0, padx=(0, 6))
+
+        source_selector = ttk.Combobox(
+            navigation,
+            textvariable=self.source_selector,
+            values=self.source_selector_values,
+            state="readonly",
+            width=16,
+        )
+        source_selector.grid(row=0, column=1, sticky=tk.W)
+        source_selector.bind("<<ComboboxSelected>>", self._select_source_configuration)
+
+        ttk.Label(
+            navigation,
+            text=f"Total sources: {NUMBER_OF_AUDIO_SOURCES}",
+        ).grid(row=0, column=2, padx=12, sticky=tk.W)
+
+        ttk.Button(
+            navigation,
+            text="Next",
+            command=lambda: self._navigate_source_configuration(1),
+        ).grid(row=0, column=3, padx=(6, 0))
+
+        ttk.Label(frame, text="Zone Name").grid(row=1, column=0, sticky=tk.W, pady=4)
+        ttk.Entry(frame, textvariable=self.source_zone_name).grid(
+            row=1, column=1, sticky=tk.EW, padx=(8, 18), pady=4
+        )
+
+        ttk.Label(frame, text="Source Name").grid(row=1, column=2, sticky=tk.W, pady=4)
+        ttk.Entry(frame, textvariable=self.source_name).grid(
+            row=1, column=3, sticky=tk.EW, padx=(8, 0), pady=4
+        )
+
+        ttk.Label(frame, text="Source Volume").grid(row=2, column=0, sticky=tk.W, pady=4)
+        ttk.Spinbox(
+            frame,
+            textvariable=self.source_volume,
+            from_=0,
+            to=100,
+            width=8,
+        ).grid(row=2, column=1, sticky=tk.W, padx=(8, 18), pady=4)
+
+        ttk.Label(frame, text="Volume Limit").grid(row=2, column=2, sticky=tk.W, pady=4)
+        ttk.Spinbox(
+            frame,
+            textvariable=self.source_volume_limit,
+            from_=0,
+            to=100,
+            width=8,
+        ).grid(row=2, column=3, sticky=tk.W, padx=(8, 0), pady=4)
+
+        flags = ttk.Frame(frame)
+        flags.grid(row=3, column=0, columnspan=4, sticky=tk.W, pady=(6, 8))
+        ttk.Checkbutton(
+            flags,
+            text="Is Enabled",
+            variable=self.source_is_enabled,
+        ).pack(side=tk.LEFT, padx=(0, 18))
+        ttk.Checkbutton(
+            flags,
+            text="Is Muted",
+            variable=self.source_is_muted,
+        ).pack(side=tk.LEFT, padx=(0, 18))
+        ttk.Checkbutton(
+            flags,
+            text="Is Bluetooth Connected",
+            variable=self.source_is_bluetooth_connected,
+        ).pack(side=tk.LEFT)
+
+        actions = ttk.Frame(frame)
+        actions.grid(row=4, column=0, columnspan=4, sticky=tk.W, pady=(0, 6))
+        ttk.Button(
+            actions,
+            text="Save JSON Project",
+            command=self._save_source_configuration_project,
+        ).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(
+            actions,
+            text="Load JSON Project",
+            command=self._load_source_configuration_project,
+        ).pack(side=tk.LEFT, padx=6)
+        ttk.Button(
+            actions,
+            text=f"Generate {NUMBER_OF_AUDIO_SOURCES} Binary Files",
+            command=self._generate_source_configuration_files,
+        ).pack(side=tk.LEFT, padx=6)
+
+        ttk.Label(frame, textvariable=self.source_config_status).grid(
+            row=5, column=0, columnspan=4, sticky=tk.W
+        )
+
+    def _on_file_transfer_type_changed(self, _event=None) -> None:
+        self._update_file_transfer_type_view()
+
+    def _update_file_transfer_type_view(self) -> None:
+        if self.source_config_frame is None or self.file_transfer_selection is None:
+            return
+
+        if self.file_transfer_type.get() == "Data":
+            self.source_config_frame.pack(
+                fill=tk.X,
+                pady=(8, 0),
+                after=self.file_transfer_selection,
+            )
+        else:
+            self.source_config_frame.pack_forget()
+
+    def _load_source_configuration_into_editor(self, source_index: int) -> None:
+        configuration = self.source_configurations[source_index]
+        self.current_source_index = source_index
+        self.source_selector.set(self.source_selector_values[source_index])
+        self.source_zone_name.set(configuration.zone_name)
+        self.source_name.set(configuration.source_name)
+        self.source_volume.set(str(configuration.source_volume))
+        self.source_volume_limit.set(str(configuration.volume_limit))
+        self.source_is_muted.set(configuration.is_muted)
+        self.source_is_enabled.set(configuration.is_enabled)
+        self.source_is_bluetooth_connected.set(configuration.is_bluetooth_connected)
+        self.source_config_status.set(
+            f"Editing source {source_index + 1} of {NUMBER_OF_AUDIO_SOURCES} "
+            f"(ID {configuration.source_id})."
+        )
+
+    def _commit_source_configuration_editor(self, show_error: bool = True) -> bool:
+        try:
+            try:
+                source_volume = int(self.source_volume.get().strip())
+                volume_limit = int(self.source_volume_limit.get().strip())
+            except ValueError as exc:
+                raise ValueError("Source Volume and Volume Limit must be whole numbers") from exc
+
+            configuration = SourceConfiguration(
+                source_id=self.current_source_index,
+                zone_name=self.source_zone_name.get().strip(),
+                source_name=self.source_name.get().strip(),
+                source_volume=source_volume,
+                volume_limit=volume_limit,
+                is_muted=self.source_is_muted.get(),
+                is_enabled=self.source_is_enabled.get(),
+                is_bluetooth_connected=self.source_is_bluetooth_connected.get(),
+            )
+            validate_source_configuration(configuration)
+            self.source_configurations[self.current_source_index] = configuration
+            self.source_config_status.set(
+                f"Source ID {configuration.source_id} is valid and retained in the editor."
+            )
+            return True
+        except Exception as exc:
+            if show_error:
+                messagebox.showerror("Invalid source configuration", str(exc))
+            return False
+
+    def _navigate_source_configuration(self, direction: int) -> None:
+        if not self._commit_source_configuration_editor():
+            return
+
+        new_index = (self.current_source_index + direction) % NUMBER_OF_AUDIO_SOURCES
+        self._load_source_configuration_into_editor(new_index)
+
+    def _select_source_configuration(self, _event=None) -> None:
+        selected_value = self.source_selector.get()
+        try:
+            new_index = self.source_selector_values.index(selected_value)
+        except ValueError:
+            self.source_selector.set(self.source_selector_values[self.current_source_index])
+            return
+
+        if new_index == self.current_source_index:
+            return
+
+        if not self._commit_source_configuration_editor():
+            self.source_selector.set(self.source_selector_values[self.current_source_index])
+            return
+
+        self._load_source_configuration_into_editor(new_index)
+
+    def _validate_all_source_configurations(self) -> None:
+        if len(self.source_configurations) != NUMBER_OF_AUDIO_SOURCES:
+            raise ValueError(
+                f"Expected {NUMBER_OF_AUDIO_SOURCES} source configurations, "
+                f"found {len(self.source_configurations)}"
+            )
+
+        for expected_source_id, configuration in enumerate(self.source_configurations):
+            if configuration.source_id != expected_source_id:
+                raise ValueError(
+                    f"Source slot {expected_source_id} contains source ID "
+                    f"{configuration.source_id}"
+                )
+            validate_source_configuration(configuration)
+
+    def _save_source_configuration_project(self) -> None:
+        if not self._commit_source_configuration_editor():
+            return
+
+        try:
+            self._validate_all_source_configurations()
+            path_text = filedialog.asksaveasfilename(
+                title="Save source configuration project",
+                defaultextension=".json",
+                filetypes=[("JSON configuration project", "*.json"), ("All files", "*.*")],
+                initialfile="source_configurations.json",
+            )
+            if not path_text:
+                return
+
+            document = {
+                "schemaVersion": SOURCE_CONFIG_JSON_SCHEMA_VERSION,
+                "sourceCount": NUMBER_OF_AUDIO_SOURCES,
+                "sources": [
+                    source_configuration_to_json(configuration)
+                    for configuration in self.source_configurations
+                ],
+            }
+            output_path = Path(path_text).expanduser().resolve()
+            temporary_path = output_path.with_name(output_path.name + ".tmp")
+            temporary_path.write_text(
+                json.dumps(document, indent=4, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            temporary_path.replace(output_path)
+            self.source_config_status.set(f"Saved JSON project: {output_path}")
+            self.append_file_log(f"Saved source configuration project: {output_path}")
+        except Exception as exc:
+            messagebox.showerror("Save failed", str(exc))
+
+    def _load_source_configuration_project(self) -> None:
+        path_text = filedialog.askopenfilename(
+            title="Load source configuration project",
+            filetypes=[("JSON configuration project", "*.json"), ("All files", "*.*")],
+        )
+        if not path_text:
+            return
+
+        try:
+            input_path = Path(path_text).expanduser().resolve()
+            document = json.loads(input_path.read_text(encoding="utf-8"))
+            if not isinstance(document, dict):
+                raise ValueError("Configuration project root must be a JSON object")
+            if document.get("schemaVersion") != SOURCE_CONFIG_JSON_SCHEMA_VERSION:
+                raise ValueError(
+                    f"Unsupported JSON schema version: {document.get('schemaVersion')}"
+                )
+            if document.get("sourceCount") != NUMBER_OF_AUDIO_SOURCES:
+                raise ValueError(
+                    f"Project sourceCount must be {NUMBER_OF_AUDIO_SOURCES}"
+                )
+
+            source_documents = document.get("sources")
+            if not isinstance(source_documents, list):
+                raise ValueError("Project sources must be a JSON array")
+            if len(source_documents) != NUMBER_OF_AUDIO_SOURCES:
+                raise ValueError(
+                    f"Project must contain exactly {NUMBER_OF_AUDIO_SOURCES} sources"
+                )
+
+            loaded_configurations: list[SourceConfiguration | None] = [
+                None
+            ] * NUMBER_OF_AUDIO_SOURCES
+            for source_document in source_documents:
+                configuration = source_configuration_from_json(source_document)
+                if loaded_configurations[configuration.source_id] is not None:
+                    raise ValueError(f"Duplicate source ID {configuration.source_id}")
+                loaded_configurations[configuration.source_id] = configuration
+
+            if any(configuration is None for configuration in loaded_configurations):
+                raise ValueError("Project does not define every required source ID")
+
+            self.source_configurations = [
+                configuration
+                for configuration in loaded_configurations
+                if configuration is not None
+            ]
+            self._validate_all_source_configurations()
+            self._load_source_configuration_into_editor(0)
+            self.source_config_status.set(f"Loaded JSON project: {input_path}")
+            self.append_file_log(f"Loaded source configuration project: {input_path}")
+        except Exception as exc:
+            messagebox.showerror("Load failed", str(exc))
+
+    def _generate_source_configuration_files(self) -> None:
+        if not self._commit_source_configuration_editor():
+            return
+
+        try:
+            self._validate_all_source_configurations()
+            directory_text = filedialog.askdirectory(
+                title="Select output directory for source configuration files"
+            )
+            if not directory_text:
+                return
+
+            output_directory = Path(directory_text).expanduser().resolve()
+            output_directory.mkdir(parents=True, exist_ok=True)
+            output_paths = [
+                output_directory / f"source_{source_id:02d}.bin"
+                for source_id in range(NUMBER_OF_AUDIO_SOURCES)
+            ]
+            existing_paths = [path for path in output_paths if path.exists()]
+            if existing_paths and not messagebox.askyesno(
+                "Replace existing files",
+                f"{len(existing_paths)} source configuration file(s) already exist. Replace them?",
+            ):
+                return
+
+            for configuration, output_path in zip(self.source_configurations, output_paths):
+                encoded_configuration = encode_source_configuration(configuration)
+                temporary_path = output_path.with_name(output_path.name + ".tmp")
+                temporary_path.write_bytes(encoded_configuration)
+                temporary_path.replace(output_path)
+
+            self.source_config_status.set(
+                f"Generated {NUMBER_OF_AUDIO_SOURCES} binary files in {output_directory}"
+            )
+            self.append_file_log(
+                f"Generated {NUMBER_OF_AUDIO_SOURCES} source configuration files in "
+                f"{output_directory}"
+            )
+            messagebox.showinfo(
+                "Configuration files generated",
+                f"Generated {NUMBER_OF_AUDIO_SOURCES} source configuration files in:\n"
+                f"{output_directory}",
+            )
+        except Exception as exc:
+            messagebox.showerror("Generation failed", str(exc))
 
     def browse_image(self) -> None:
         path = filedialog.askopenfilename(

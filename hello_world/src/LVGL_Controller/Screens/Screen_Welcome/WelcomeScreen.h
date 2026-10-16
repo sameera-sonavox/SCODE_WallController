@@ -3,10 +3,7 @@
 
 #include "../../LVGL_Display_Types.h"
 
-extern bool bInit_WelcomeScreen(sT_UIScreen_t *pstWelComeScreen);
+extern bool bInit_WelcomeScreen(sT_UIScreenRuntime_t *pstWelComeScreen, sT_UIScreenDescriptor_t *pstScreenDescriptor);
 extern bool bSetup_WelComeScreen( void );
-extern void vStart_WelcomeImageFadeIn( void );
-extern void vUpdate_DisplayText(const char *pcaText);
-extern void vWelcomeScreen_ReleaseResources( void );
 
 #endif//WELCOMESCREEN_H

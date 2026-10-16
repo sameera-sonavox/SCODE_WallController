@@ -16,6 +16,6 @@ extern int iWrite_ToFileBin(const char *pcFileName, const uint8_t *puiDataBuff, 
 
 extern bool bStart_BulkDataTransfer(sT_BulkTransferData stTTransferData);
 extern void vEnd_BulkDataTransfer( sT_TransferResult_t *pstTransferResult );
-extern int iSend_BulkTransferData( sT_MsgData_t stTMsg );
+extern int iSend_BulkTransferData( const sT_MsgData_t *pstMsg );
 
 #endif

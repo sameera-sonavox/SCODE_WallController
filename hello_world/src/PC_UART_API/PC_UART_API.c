@@ -14,7 +14,7 @@
 #include "PC_UART_FWBridgeService.h"
 #include "PC_UART_Protocol.h"
 
-#define PC_UART_API_THREAD_STACK_SIZE_BYTEs       2048
+#define PC_UART_API_THREAD_STACK_SIZE_BYTEs       4096
 #define PC_UART_API_CAN_THREAD_STACK_SIZE_BYTEs   2048
 #define PC_UART_API_THREAD_PRIORITY               6
 #define PC_UART_API_CAN_THREAD_PRIORITY           7
@@ -165,6 +165,7 @@ static void vThread_PC_UART_API( void *p1, void *p2, void *p3 )
 
         ePC_UART_Error_t eError =
             ePC_UART_API_DispatchFrame(uiCommand, uiaPayload, uiPayloadLen);
+
         vSend_UARTResponse(
             (eError == ePC_UART_Error_None)
                 ? PC_UART_PROTOCOL_ACK
@@ -210,6 +211,7 @@ static bool bRead_UARTBytesWithTimeout( uint8_t *puiBuffer, uint16_t uiLen, uint
             if(k_uptime_get() >= iDeadline)
                 return false;
         }
+
     }
 
     return true;

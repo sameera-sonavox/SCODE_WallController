@@ -1,6 +1,8 @@
 #ifndef LVGL_PROJDEF_H
 #define LVGL_PROJDEF_H
 
+#define LVGL_ENABLE_GUI_GUIDER_UI                       1U
+
 #define NUMBER_OF_UI_CONTROLS_PER_AUDIO_SOURCE          2U
 #define NUMBER_OF_UI_CONTROLS_FOR_WELCOME_SCREEN        2U
 

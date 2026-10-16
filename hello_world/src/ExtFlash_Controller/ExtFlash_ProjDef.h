@@ -53,9 +53,13 @@
 #define MAX_DIRECTORY_COUNT                         10U
 #define MAX_FRAME_LENGTH                            256U
 #define MAX_MSGQ_DEPTH                              10U
-#define DATA_TRANSFER_THREAD_STACK_SIZE             1024U
+#define DATA_TRANSFER_THREAD_STACK_SIZE             2048U
 #define DATA_TRANSFER_THREAD_PRIORITY               4U
-#define DATA_TRANSFER_TIMEOUT_ms                    500U
+/* Maximum inactivity between queued UART file-transfer frames. A complete
+ * 256-byte protocol frame can take well over 500 ms when the PC tool uses
+ * per-byte pacing and Windows scheduling adds latency.
+ */
+#define DATA_TRANSFER_TIMEOUT_ms                    5000U
 #define DATA_TRANSFER_THREAD_TIMEOUT_ms             2000U
 
 #endif//EXTFLASH_PROJDEF_H

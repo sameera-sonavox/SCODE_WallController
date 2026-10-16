@@ -28,6 +28,13 @@ set(DTC_OVERLAY_FILE
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(hello_world)
 
+set(SELECTED_AUDIO_GUI_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/LVGL_Controller/Screens/SelectedAudioSource/GUI_Guider_Generated")
+set(SELECTED_AUDIO_GUI_SCREEN_SOURCE
+    "${SELECTED_AUDIO_GUI_DIR}/generated/screens/gg_Home_revised.c")
+set(SELECTED_AUDIO_GUI_EVENT_SOURCE
+    "${SELECTED_AUDIO_GUI_DIR}/generated/events/gg_event_Home_revised.c")
+
 zephyr_compile_options("-ffile-prefix-map=${MCXA_LIB_DIR}=MCXA_LIB")
 
 # Keep the generated external-IRQ vectors immediately after the Cortex-M
@@ -60,18 +67,30 @@ target_sources(app PRIVATE
                 
                 src/WallController/WallController_StateMachine/WallController_StateMachine.c
                 src/WallController/WallController_Comm_Manager/WallController_Comm_Manager.c
+                src/LVGL_Controller/UI_InputController/UI_InputController.c
+                src/LVGL_Controller/UI_ScreenManager/UI_ScreenManager.c                
+                src/LVGL_Controller/LVGL_Display_Controller.c 
+                src/LVGL_Controller/FileSystem_Adapter/LVGL_ZephyrFS_Adapter.c  
+                src/LVGL_Controller/LVGL_TextAnimator/LVGL_TextAnimate.c 
+
+                #Welcome Screen
+                src/LVGL_Controller/Screens/Screen_Welcome/WelcomeScreen.c
+                src/LVGL_Controller/Screens/Screen_Welcome/GUI_Guider_Generated/generated/screens/gg_Sleep_Screen.c
+                src/LVGL_Controller/Screens/Screen_Welcome/GUI_Guider_Generated/generated/events/gg_event_Sleep_Screen.c
+                #Selected Audio Source
+                src/LVGL_Controller/Screens/SelectedAudioSource/SelectedAudioSrcCtrl.c
+                ${SELECTED_AUDIO_GUI_SCREEN_SOURCE}
+                ${SELECTED_AUDIO_GUI_EVENT_SOURCE}
+                ${SELECTED_AUDIO_GUI_DIR}/generated/assets/fonts/lv_font_montserratMedium_45.c
+                ${SELECTED_AUDIO_GUI_DIR}/generated/assets/fonts/lv_font_Roboto_Bold_9.c
+                ${SELECTED_AUDIO_GUI_DIR}/generated/assets/fonts/lv_font_Roboto_Bold_10.c
+                ${SELECTED_AUDIO_GUI_DIR}/generated/assets/fonts/lv_font_Roboto_Bold_12.c
+                ${SELECTED_AUDIO_GUI_DIR}/generated/assets/fonts/lv_font_Roboto_Bold_13.c
 
                 src/PC_UART_API/PC_UART_API.c
                 src/PC_UART_API/PC_UART_FWBridgeService.c
                 src/PC_UART_API/PC_UART_BulkFileService.c
                 src/PC_UART_API/PC_UART_API_ValidateTest.c 
-
-                src/LVGL_Controller/LVGL_Display_Controller.c 
-                src/LVGL_Controller/Screen_Parameters/LVGL_AudioSources_UIParam.c 
-                src/LVGL_Controller/Screen_Parameters/LVGL_AudioSource_UIScreen.c 
-                src/LVGL_Controller/FileSystem_Adapter/LVGL_ZephyrFS_Adapter.c 
-                src/LVGL_Controller/Screens/Screen_Welcome/WelcomeScreen.c 
-                src/LVGL_Controller/LVGL_TextAnimator/LVGL_TextAnimate.c 
 
                 src/ExtFlash_Controller/ExtFlash_Controller.c 
                 src/ExtFlash_Controller/SPIController/SPIController.c 
@@ -79,4 +98,23 @@ target_sources(app PRIVATE
                 src/ExtFlash_Controller/ExtFlashReadWrite/ExtFlash_ReadWriteControl.c
                 src/ExtFlash_Controller/Flash_Memory_ValidateTest/Flash_Memory_ValidateTest.c 
                 src/ExtFlash_Controller/ZephyrFlashMiddleWare/ZephyrFlashMiddleWare.c
-                src/ExtFlash_Controller/LittleFsController/LittleFs_Controller.c)
+                src/ExtFlash_Controller/LittleFsController/LittleFs_Controller.c
+                
+                src/Temp/Temp.c)
+
+target_include_directories(app PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/LVGL_Controller/Screens/Screen_Welcome/GUI_Guider_Generated/generated
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/LVGL_Controller/Screens/Screen_Welcome/GUI_Guider_Generated/custom
+)
+
+# Both GUI Guider exports contain headers with the same names. Keep the
+# SelectedAudioSource include search local to its generated implementation so
+# it cannot accidentally include the Welcome screen's gui_guider.h.
+set_property(SOURCE
+    ${SELECTED_AUDIO_GUI_SCREEN_SOURCE}
+    ${SELECTED_AUDIO_GUI_EVENT_SOURCE}
+    APPEND PROPERTY COMPILE_OPTIONS
+        "-iquote${SELECTED_AUDIO_GUI_DIR}/generated"
+        "-iquote${SELECTED_AUDIO_GUI_DIR}/custom"
+)
+

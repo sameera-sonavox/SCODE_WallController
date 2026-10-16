@@ -4,228 +4,224 @@
 #include "GenericMacro.h"
 #include "../../LVGL_TextAnimator/LVGL_TextAnimate.h"
 #include "../../../WallController/WallController_StateMachine/Wallcontroller_StateMachine.h"
+#include "GUI_Guider_Generated/generated/gui_guider.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/display.h>
 #include <lvgl_zephyr.h>
 #include <stdlib.h>
+#include <string.h>
 
-static sT_UIScreen_t *pstUIWelcomeScreen = NULL;
-static sT_WelComeScreen_Display_t *pstWelcomeDisplay = NULL;
+typedef struct
+{
+    gg_ui_t stGuiderUI;
+    lv_obj_t *pstLogoImage;
+} sT_WelcomeScreenContext_t;
 
-static bool bCreate_WelComeScreen( void );
-static __attribute__((unused)) void *pGetWelcomeScreen_UIObject(eUI_Obj_Type_t eType);
-static sT_UIControl *pstGetWelcomeScreen_UIControl(eUI_Obj_Type_t eType);
+static sT_WelcomeScreenContext_t stTWelcomeScreenContext;
+
+static bool bCreate_WelComeScreen( sT_UIScreenRuntime_t *pstScreenRuntime );
+static void vEnter_WelcomeScreen( sT_UIScreenRuntime_t *pstScreenRuntime );
+static void vExit_WelcomeScreen( sT_UIScreenRuntime_t *pstScreenRuntime );
+static void vRun_WelcomeScreen( sT_UIScreenRuntime_t *pstScreenRuntime );
+
+void vStart_WelcomeImageFadeIn( sT_UIScreenRuntime_t *pstScreenRuntime );
 static void vSet_WelComeImage_Opacity( void *pvImage, int32_t iOpacity);
 static void vWelcomeScreen_ImageFadingCompleted(lv_anim_t *pstImgAnimation);
 
-static void vUpdate_AnimatingText(const char *pcaText);
-
 static const char *const pcaAnimateString[] = {" .", " ..", " ...", ""};
 
-bool bInit_WelcomeScreen(sT_UIScreen_t *pstWelComeScreen)
+bool bInit_WelcomeScreen(sT_UIScreenRuntime_t *pstWelComeScreen,
+                         sT_UIScreenDescriptor_t *pstScreenDescriptor)
 {
-    if(pstWelComeScreen == NULL)
+    if(pstWelComeScreen == NULL || pstScreenDescriptor == NULL)
     {
-        FHALT("Invalid Null Pointer Reference");
+        FHALT("Null Pointer Reference");
         return false;
     }
 
-    pstUIWelcomeScreen = pstWelComeScreen;
-    pstUIWelcomeScreen->pfCreate = bCreate_WelComeScreen;
-    pstUIWelcomeScreen->pfDestroy = NULL;
-    pstUIWelcomeScreen->pfShow = NULL;
-    pstUIWelcomeScreen->eScreenId = eScreen_Welcome;
+    memset(&stTWelcomeScreenContext, 0, sizeof(stTWelcomeScreenContext));
 
-    pstUIWelcomeScreen->stTDisplayInfo.eScreenId = eScreen_Welcome;
-    pstWelcomeDisplay = &pstUIWelcomeScreen->stTDisplayInfo.screenType.stTWelcomScrDisplay;
-    (void)k_mutex_init(&pstWelcomeDisplay->mutex_DisplayText);
+    pstWelComeScreen->eScreenId = eScreen_Welcome;
+    pstWelComeScreen->pstRootObj = NULL;
+    pstWelComeScreen->pvScreenData = &stTWelcomeScreenContext;
 
-    pstWelcomeDisplay->pstWelSrcObj = NULL;
-    pstWelcomeDisplay->pstAnimationSuffixObj = NULL;
-    pstWelcomeDisplay->uiDisplayTime_ms = 0U;
+    pstScreenDescriptor->eScreenId = eScreen_Welcome;
+    pstScreenDescriptor->pstScreenRuntime = pstWelComeScreen;
 
-    sT_UIControl *pstImgCtrl = &pstWelcomeDisplay->staUIControls[0];
-    pstImgCtrl->eObjType = eUIObj_Img;
-    pstImgCtrl->uiObject.stObj_ImgCtrl.pcaFilePath = WELCOME_IMAGE_PATH;
+    pstScreenDescriptor->bDeleteOnExit = true;
+    pstScreenDescriptor->pfCreate = bCreate_WelComeScreen;
+    pstScreenDescriptor->pfEnter = vEnter_WelcomeScreen;
+    pstScreenDescriptor->pfExit = vExit_WelcomeScreen;
+    pstScreenDescriptor->pfHandleInput = NULL;
+    pstScreenDescriptor->pfRun = vRun_WelcomeScreen;
 
-    sT_UIControl *pstLabelCtrl = &pstWelcomeDisplay->staUIControls[1];
-    pstLabelCtrl->eObjType = eUIObj_Label;
-    sT_UIObj_Label *pstLabel = &pstLabelCtrl->uiObject.stTObj_Label;
-    pstLabel->iheight = WELCOMESCRN_LABELCONTAINER_HEIGHT;
-    pstLabel->iwidth = WELCOMESCRN_LABELCONTAINER_WIDTH;
-    pstLabel->lcolor_Text = lv_color_hex(WELCOMESCRN_LABEL_TEXT_COLOR);
+    return true;
 
-    (void)snprintf(pstLabel->pcaText,
-                   sizeof(pstLabel->pcaText),
-                   "%s",
-                   WELCOMESCRN_LABEL_DEFAULT_TEXT);
-    (void)snprintf(pstWelcomeDisplay->caDisplayText,
-                   sizeof(pstWelcomeDisplay->caDisplayText),
-                   "%s",
-                   WELCOMESCRN_LABEL_DEFAULT_TEXT);
-
-    return pstUIWelcomeScreen->pfCreate();
 }
 
-void vUpdate_DisplayText(const char *pcaText)
+/// @brief Performs Image Validation and Image Loading
+/// @param pstScreenRuntime 
+/// @return 
+static bool bCreate_WelComeScreen( sT_UIScreenRuntime_t *pstScreenRuntime )
 {
-    if((pcaText == NULL) || (pstWelcomeDisplay == NULL))
+    if(pstScreenRuntime == NULL)
     {
-        FHALT("Invalid display text update arguments");
-        return;
+        FHALT("Null Pointer Reference");
+        return false;
     }
 
-    int iResult = k_mutex_lock(&pstWelcomeDisplay->mutex_DisplayText, K_MSEC(200));
-    if(iResult < 0)
+    sT_WelcomeScreenContext_t *pstScreenContext = (sT_WelcomeScreenContext_t *)pstScreenRuntime->pvScreenData;
+    if(pstScreenContext == NULL)
     {
-        FHALT("Welcome Screen Display Text Mutex Locked Time Out");
-        return;
+        FHALT("WelcomeScreen Context is Null");
+        return false;
     }
 
-    vStop_TextAnimator();
+    bool bResult = false;
+    lv_obj_t *pstRoot = NULL;
+    lv_obj_t *pstLogoSlot = NULL;
+    lv_obj_t *pstLogoImage = NULL;
 
-    sT_UIControl *pstLabelCtrl = pstGetWelcomeScreen_UIControl(eUIObj_Label);
-    if(pstLabelCtrl == NULL)
-    {
-        k_mutex_unlock(&pstWelcomeDisplay->mutex_DisplayText);
-        return;
-    }
-
-    sT_UIObj_Label *pstLabel = &pstLabelCtrl->uiObject.stTObj_Label;
-    size_t uiTextLength = strlen(pcaText);
-    if(uiTextLength >= sizeof(pstLabel->pcaText))
-    {
-        k_mutex_unlock(&pstWelcomeDisplay->mutex_DisplayText);
-        FHALT("Welcome Screen display text is too long");
-        return;
-    }
-
-    memcpy(pstLabel->pcaText, pcaText, uiTextLength + 1U); 
-    memcpy(pstWelcomeDisplay->caDisplayText, pcaText, uiTextLength + 1U);
-
-    lv_obj_t *plv_Label = pstLabelCtrl->pstUIObj;
-    if((plv_Label == NULL) || !lv_obj_is_valid(plv_Label))
-    {
-        k_mutex_unlock(&pstWelcomeDisplay->mutex_DisplayText);
-        FHALT("Invalid LVGL Object returned");
-        return;
-    }
-
-    lv_label_set_text(plv_Label, pstWelcomeDisplay->caDisplayText);
-    lv_obj_update_layout(plv_Label);
-    lv_obj_align(plv_Label, LV_ALIGN_CENTER, 0, 0);
-
-    lv_obj_t *plv_SuffixLabel = pstWelcomeDisplay->pstAnimationSuffixObj;
-    if((plv_SuffixLabel != NULL) && lv_obj_is_valid(plv_SuffixLabel))
-    {
-        lv_obj_align_to(plv_SuffixLabel,
-                        plv_Label,
-                        LV_ALIGN_OUT_RIGHT_MID,
-                        0,
-                        0);
-    }
-
-    k_mutex_unlock(&pstWelcomeDisplay->mutex_DisplayText);
-}
-
-static bool bCreate_WelComeScreen( void )
-{
     lvgl_lock();
-    pstUIWelcomeScreen->pstScreenObj = lv_obj_create(NULL);    
-    lv_obj_set_style_bg_color(pstUIWelcomeScreen->pstScreenObj, lv_color_hex(SCREEN_BACKGROUND_COLOR_HEX), LV_PART_MAIN);
-
-    lv_obj_t *pstImage = lv_image_create(pstUIWelcomeScreen->pstScreenObj);
-    lv_obj_set_pos(pstImage, WELCOMESCRN_TOP_LEFT_X, WELCOMESCRN_TOP_LEFT_Y);
-    lv_obj_set_style_radius(pstImage, 0U, LV_PART_MAIN);
-    lv_obj_set_size(pstImage, DISPLAY_WIDTH, WELCOMESCRN_IMAGE_CONTAINER_HEIGHT);
-
-    lv_image_header_t stImageHeader = {0};
-    lv_result_t eRes = lv_image_decoder_get_info(WELCOME_IMAGE_PATH, &stImageHeader);
-    if(eRes != LV_RESULT_OK)
+    if(pstScreenRuntime->pstRootObj != NULL &&
+       lv_obj_is_valid(pstScreenRuntime->pstRootObj))
     {
-        vDelete_LVGLObject(&pstUIWelcomeScreen->pstScreenObj);
         lvgl_unlock();
-        FHALT("Invalid Image File : %s", WELCOME_IMAGE_PATH);
-        return false;
+        return true;
     }
 
-    lv_img_set_src(pstImage, WELCOME_IMAGE_PATH);
-    lv_image_set_inner_align(pstImage, LV_IMAGE_ALIGN_CENTER);
-    lv_obj_set_style_image_opa(pstImage, LV_OPA_TRANSP, LV_PART_MAIN);
-    sT_UIControl *pstUIControl = pstGetWelcomeScreen_UIControl(eUIObj_Img);
-    if(pstUIControl == NULL)
+    pstScreenRuntime->pstRootObj = NULL;
+    memset(pstScreenContext, 0, sizeof(*pstScreenContext));
+
+    setup_Sleep_Screen(&pstScreenContext->stGuiderUI);
+    pstRoot = pstScreenContext->stGuiderUI.Sleep_Screen.screen;
+    pstLogoSlot = pstScreenContext->stGuiderUI.Sleep_Screen.Welcome_LogoSlot;
+
+    if(pstRoot == NULL || pstLogoSlot==NULL)
     {
-        vDelete_LVGLObject(&pstUIWelcomeScreen->pstScreenObj);
-        lvgl_unlock();
-        FHALT("Invalid UI Control for Image Type");
-        return false;        
+        FHALT("GUI Guider Failed to Create Welcome Screen");
+        goto Exit;        
     }
-    pstUIControl->pstUIObj = pstImage;
 
-    lv_obj_t *pstTextContainer = lv_obj_create(pstUIWelcomeScreen->pstScreenObj);
-    lv_obj_set_pos(pstTextContainer, WELCOMESCRN_TOP_LEFT_X, WELCOMESCRN_TEXT_CONTAINER_POS_Y);
-    lv_obj_set_size(pstTextContainer, WELCOMESCRN_LABELCONTAINER_WIDTH, WELCOMESCRN_LABELCONTAINER_HEIGHT);
-    lv_obj_set_style_radius(pstTextContainer, 0U, LV_PART_MAIN);
-    lv_obj_set_style_border_width(pstTextContainer, 0U, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(pstTextContainer, 0U, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(pstTextContainer, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_remove_flag(pstTextContainer, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(pstTextContainer, LV_OBJ_FLAG_HIDDEN);
-    pstWelcomeDisplay->pstWelSrcObj = pstTextContainer;
+    lv_obj_remove_flag(pstLogoSlot, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *pstLabel = lv_label_create(pstTextContainer);
-    lv_obj_set_size(pstLabel, LV_SIZE_CONTENT, WELCOMESCRN_LABEL_HEIGHT);
-    lv_label_set_long_mode(pstLabel, LV_LABEL_LONG_MODE_CLIP);
-    lv_obj_set_style_radius(pstLabel, 0U, LV_PART_MAIN);
-    lv_obj_set_style_text_align(pstLabel, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-
-    pstUIControl = pstGetWelcomeScreen_UIControl(eUIObj_Label);
-    if(pstUIControl == NULL)
+    lv_image_header_t stTImageHeader = {0};
+    lv_result_t eResult = lv_image_decoder_get_info(WELCOME_IMAGE_PATH, &stTImageHeader);
+    if(eResult != LV_RESULT_OK)
     {
-        vDelete_LVGLObject(&pstUIWelcomeScreen->pstScreenObj);
-        lvgl_unlock();
-        FHALT("Invalid UI Control for Image Type");
-        return false;        
+        FHALT("Welcome image validation failed: %s, result: %d",
+              WELCOME_IMAGE_PATH,
+              (int)eResult);
+        goto Exit;        
     }
-    pstUIControl->pstUIObj = pstLabel;
 
-    sT_UIObj_Label *pstLabelCtrl = (sT_UIObj_Label *)&pstUIControl->uiObject.stTObj_Label;
-    lv_label_set_text(pstLabel, pstLabelCtrl->pcaText);
-    lv_obj_set_style_text_color(pstLabel, pstLabelCtrl->lcolor_Text, LV_PART_MAIN);
-    lv_obj_update_layout(pstLabel);
-    lv_obj_align(pstLabel, LV_ALIGN_CENTER, 0U, 0U);
+    pstLogoImage = lv_image_create(pstLogoSlot);
+    if(pstLogoImage == NULL)
+    {
+        FHALT("Failed to create Welcome logo image");
+        goto Exit;
+    }
+    
+    lv_image_set_src(pstLogoImage, WELCOME_IMAGE_PATH);
+    lv_obj_center(pstLogoImage);
+    pstScreenContext->pstLogoImage = pstLogoImage;
 
-    lv_obj_t *pstSuffixLabel = lv_label_create(pstTextContainer);
-    lv_obj_set_size(pstSuffixLabel, LV_SIZE_CONTENT, WELCOMESCRN_LABEL_HEIGHT);
-    lv_label_set_long_mode(pstSuffixLabel, LV_LABEL_LONG_MODE_CLIP);
-    lv_obj_set_style_radius(pstSuffixLabel, 0U, LV_PART_MAIN);
-    lv_obj_set_style_text_align(pstSuffixLabel, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
-    lv_obj_set_style_text_color(pstSuffixLabel, pstLabelCtrl->lcolor_Text, LV_PART_MAIN);
-    lv_label_set_text(pstSuffixLabel, "");
-    lv_obj_align_to(pstSuffixLabel, pstLabel, LV_ALIGN_OUT_RIGHT_MID, 0, 0);
-    pstWelcomeDisplay->pstAnimationSuffixObj = pstSuffixLabel;
+    pstScreenRuntime->pstRootObj = pstRoot;
+    bResult = true;
+
+    Exit:
+
+    if(!bResult)
+    {
+        if(pstRoot != NULL && lv_obj_is_valid(pstRoot))
+        {
+            lv_obj_delete(pstRoot);
+        }
+        memset(pstScreenContext, 0, sizeof(*pstScreenContext));
+        pstScreenRuntime->pstRootObj = NULL;
+    }
 
     lvgl_unlock();
-    
-    return true;
+    return bResult;
 }
 
-void vStart_WelcomeImageFadeIn( void )
+/// @brief Called when it is required to load the screen
+/// @param pstScreenRuntime 
+static void vEnter_WelcomeScreen( sT_UIScreenRuntime_t *pstScreenRuntime )
 {
-    sT_UIControl *pstUIImgControl = pstGetWelcomeScreen_UIControl(eUIObj_Img);
-    if((pstUIImgControl == NULL) ||
-       (pstWelcomeDisplay == NULL) ||
-       (pstWelcomeDisplay->pstWelSrcObj == NULL))
+    if(pstScreenRuntime == NULL || pstScreenRuntime->pstRootObj == NULL)
     {
+        FHALT("Invalid Welcome Screen Runtime Data");
         return;
     }
 
     lvgl_lock();
 
-    lv_obj_t *plv_Image = pstUIImgControl->pstUIObj;
-    lv_obj_t *plv_TextContainer = pstWelcomeDisplay->pstWelSrcObj;
+    if(!lv_obj_is_valid(pstScreenRuntime->pstRootObj))
+    {
+        lvgl_unlock();
+        FHALT("Invalid Welcome Screen Root Object");
+        return;        
+    }
+
+    lv_screen_load(pstScreenRuntime->pstRootObj);
+    lvgl_unlock();
+    
+    vStart_WelcomeImageFadeIn(pstScreenRuntime);
+}
+
+static void vExit_WelcomeScreen( sT_UIScreenRuntime_t *pstScreenRuntime )
+{
+    if(pstScreenRuntime == NULL)
+    {
+        FHALT("Null Pointer Reference");
+        return;
+    }
+        
+}
+
+static void vRun_WelcomeScreen( sT_UIScreenRuntime_t *pstScreenRuntime )
+{
+    if(pstScreenRuntime == NULL)
+    {
+        FHALT("Null Pointer Reference");
+        return;
+    }    
+}
+
+void vStart_WelcomeImageFadeIn( sT_UIScreenRuntime_t *pstScreenRuntime )
+{
+    if(pstScreenRuntime == NULL)
+    {
+        FHALT("Null Pointer Reference");
+        return;        
+    }
+
+    sT_WelcomeScreenContext_t *pstScreenContext = (sT_WelcomeScreenContext_t *)pstScreenRuntime->pvScreenData;
+    if(pstScreenContext == NULL)
+    {
+        FHALT("WelcomeScreen Context is Null");
+        return;
+    }
+
+    lvgl_lock();
+
+    if(!lv_obj_is_valid(pstScreenRuntime->pstRootObj))
+    {
+        lvgl_unlock();
+        FHALT("Invalid Welcome Screen Root Object");
+        return;        
+    }
+
+    lv_obj_t *plv_Image = pstScreenContext->pstLogoImage;
+    if(plv_Image == NULL || !lv_obj_is_valid(plv_Image))
+    {
+        lvgl_unlock();
+        FHALT("Invalid Welcome Screen Image Object");
+        return;        
+    }
 
     (void)lv_anim_delete(plv_Image, vSet_WelComeImage_Opacity);
 
@@ -238,7 +234,6 @@ void vStart_WelcomeImageFadeIn( void )
     lv_anim_set_values(&stImgAnimation, LV_OPA_TRANSP, LV_OPA_COVER);
     lv_anim_set_duration(&stImgAnimation, WELCOME_IMAGE_FADE_DURATION_ms);
     lv_anim_set_path_cb(&stImgAnimation, lv_anim_path_ease_in_out);
-    lv_anim_set_user_data(&stImgAnimation, plv_TextContainer);
     lv_anim_set_completed_cb(&stImgAnimation, vWelcomeScreen_ImageFadingCompleted);
 
     (void)lv_anim_start(&stImgAnimation);
@@ -248,75 +243,11 @@ void vStart_WelcomeImageFadeIn( void )
 
 static void vWelcomeScreen_ImageFadingCompleted(lv_anim_t *pstImgAnimation)
 {
-    if(pstImgAnimation == NULL)
-    {
-        return;
-    }
-
-    lv_obj_t *plv_TextContainer = (lv_obj_t *)lv_anim_get_user_data(pstImgAnimation);
-    if(plv_TextContainer == NULL || !lv_obj_is_valid(plv_TextContainer))
-    {
-        return;
-    }
-
-    vStart_TextAnimator(pcaAnimateString, "", 4U, vUpdate_AnimatingText, 1000U);
     vWallCtrl_Set_Command(eWallCtrlCmd_Startup);
-
-    lv_obj_set_flag(plv_TextContainer, LV_OBJ_FLAG_HIDDEN, false);
-}
-
-void vWelcomeScreen_ReleaseResources( void )
-{
-    vStop_TextAnimator();
-}
-
-static void vUpdate_AnimatingText(const char *pcaText)
-{
-    if(pcaText == NULL)
-    {
-        return;
-    }
-
-    if((pstWelcomeDisplay == NULL) ||
-       (pstWelcomeDisplay->pstAnimationSuffixObj == NULL) ||
-       !lv_obj_is_valid(pstWelcomeDisplay->pstAnimationSuffixObj))
-    {
-        return;
-    }
-
-    lv_label_set_text(pstWelcomeDisplay->pstAnimationSuffixObj, pcaText);
 }
 
 static void vSet_WelComeImage_Opacity( void *pvImage, int32_t iOpacity)
 {
     lv_obj_set_style_image_opa((lv_obj_t *)pvImage, (lv_opa_t)iOpacity, LV_PART_MAIN);
-}
-
-static void *pGetWelcomeScreen_UIObject(eUI_Obj_Type_t eType)
-{
-    sT_UIControl *pstUICtrl = pstUIWelcomeScreen->stTDisplayInfo.screenType.stTWelcomScrDisplay.staUIControls;
-
-    for(uint8_t i = 0; i < NUMBER_OF_UI_CONTROLS_FOR_WELCOME_SCREEN; i++)
-    {
-        if(pstUICtrl[i].eObjType == eType)
-        {
-            return (void *)&pstUICtrl[i].uiObject;
-        }
-    }
-    return NULL;
-}
-
-static sT_UIControl *pstGetWelcomeScreen_UIControl(eUI_Obj_Type_t eType)
-{
-    sT_UIControl *pstUICtrl = pstUIWelcomeScreen->stTDisplayInfo.screenType.stTWelcomScrDisplay.staUIControls;
-
-    for(uint8_t i = 0; i < NUMBER_OF_UI_CONTROLS_FOR_WELCOME_SCREEN; i++)
-    {
-        if(pstUICtrl[i].eObjType == eType)
-        {
-            return &pstUICtrl[i];
-        }        
-    }
-    return NULL;
 }
 

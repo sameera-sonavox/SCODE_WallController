@@ -5,8 +5,8 @@
 #include "../Lib/QDC/NXP_eQDC_Types.h"
 #include "../LVGL_ProjDef.h"
 
-extern bool bInit_SourceSelectScreen_Controls(sT_UIScreen_t *pstAudioSrcSelect);
-extern void vRun_AudioSourceScreen( sT_UIScreen_t *pstUIScreen, sT_QEncData_t *pstQEncData );
+extern bool bInit_SourceSelectScreen_Controls(sT_UIScreenRuntime_t *pstAudioSrcSelect);
+extern void vRun_AudioSourceScreen( sT_UIScreenRuntime_t *pstUIScreen, sT_QEncData_t *pstQEncData );
 extern void vSetup_AudioSrc_ScreenStartup( void );
 extern struct k_msgq *pstGetMessageQueue( void );
 extern void vUpdate_SrcVolume(sT_AudioSource_t *pstAudioSource, uint8_t uiVol);
