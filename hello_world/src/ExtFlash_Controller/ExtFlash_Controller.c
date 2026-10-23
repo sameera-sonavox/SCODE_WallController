@@ -13,8 +13,28 @@ static inline void vClear_SetupSuccess_Flag( void );
 
 bool bInit_ExtFlash( void )
 {
-    bool bResult = bInit_LPSPI_ForExtFlash();
-    if(!bResult)
+    if(!bInit_ExtFlashHardware())
+    {
+        return false;
+    }
+
+    if(!bRun_FlashMemory_ValidationTests())
+    {
+        FHALT("Flash Test Failed");
+        return false;
+    }
+
+    return true;
+}
+
+bool bInit_ExtFlashHardware( void )
+{
+    if(bIsExtFlash_SetupSUccess())
+    {
+        return true;
+    }
+
+    if(!bInit_LPSPI_ForExtFlash())
     {
         vClear_SetupSuccess_Flag();
         FHALT("Failed to initialize LPSPI1 for External Flash");
@@ -28,13 +48,6 @@ bool bInit_ExtFlash( void )
     }
 
     vSet_SetupSuccess_Flag();
-
-    if(!bRun_FlashMemory_ValidationTests())
-    {
-        FHALT("Flash Test Failed");
-        return false;
-    }
-
     return true;
 }
 

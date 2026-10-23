@@ -12,7 +12,8 @@ extern int iCreate_File(const char *pcafilePath, const char *pcafileName);
 extern const sT_FileInfo_t *const pstGetFileInfo( void );
 extern int iDelete_File(const char *pcaFilePath);
 extern bool bDelete_Directory(const char *pcaDirectoryPath);
-extern int iWrite_ToFileBin(const char *pcFileName, const uint8_t *puiDataBuff, size_t uiLen, uint16_t uiMaxWriteSize);
+extern int iWrite_ToFileBin(const char *pcaFilePath, const uint8_t *puiDataBuff, size_t uiLen, uint16_t uiMaxWriteSize);
+extern int iRead_FromFileBin(const char *pcaFilePath, uint8_t *puiData, size_t uiLength);
 
 extern bool bStart_BulkDataTransfer(sT_BulkTransferData stTTransferData);
 extern void vEnd_BulkDataTransfer( sT_TransferResult_t *pstTransferResult );

@@ -5,13 +5,64 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "PC_UART_API.h"
+#include "../ExtFlash_Controller/AudioSrcConfiguration/AudioSrcConfiguration.h"
 #include "../ExtFlash_Controller/LittleFsController/LittleFs_Controller.h"
 
 _Static_assert(
     PC_UART_PROTOCOL_BULK_MAX_DATA_LENGTH == MAX_FRAME_LENGTH,
     "PC UART bulk payload and LittleFS frame sizes must match");
+_Static_assert(
+    (1U + AUDIO_SOURCE_CONFIG_RECORD_SIZE) <=
+        PC_UART_PROTOCOL_MAX_PAYLOAD_LENGTH,
+    "Audio source configuration readback exceeds UART payload size");
 
 static _Atomic bool bBulkSessionActive;
+
+static ePC_UART_Error_t eProcess_ConfigRead(
+    const uint8_t *puiPayload,
+    uint16_t uiPayloadLen)
+{
+    if(puiPayload == NULL || uiPayloadLen != 1U)
+    {
+        return ePC_UART_Error_InvalidLength;
+    }
+    if(bPC_UART_BulkFileService_IsSessionActive())
+    {
+        return ePC_UART_Error_OperationBusy;
+    }
+
+    const eAudioSrc_Id_t eSourceId = (eAudioSrc_Id_t)puiPayload[0];
+    if(eSourceId >= eNUMBER_OF_AUDIO_SOURCES)
+    {
+        return ePC_UART_Error_InvalidFrame;
+    }
+
+    uint8_t uiaResponse[1U + AUDIO_SOURCE_CONFIG_RECORD_SIZE] = {0};
+    uiaResponse[0] = (uint8_t)eSourceId;
+
+    const int iResult = iRead_AudioSrcConfigurationRecord(
+        eSourceId,
+        &uiaResponse[1],
+        AUDIO_SOURCE_CONFIG_RECORD_SIZE);
+    if(iResult == -ENOENT)
+    {
+        return ePC_UART_Error_FileNotFound;
+    }
+    if(iResult != 0)
+    {
+        return ePC_UART_Error_FileReadFailed;
+    }
+
+    if(!bPC_UART_API_SendFrame(ePC_UART_Command_ConfigRead,
+                               uiaResponse,
+                               sizeof(uiaResponse)))
+    {
+        return ePC_UART_Error_ServiceUnavailable;
+    }
+
+    return ePC_UART_Error_None;
+}
 
 static uint16_t u16Read_BigEndian(const uint8_t *puiData)
 {
@@ -165,6 +216,8 @@ ePC_UART_Error_t ePC_UART_BulkFileService_Process(
         case ePC_UART_Command_BulkEnd:
             *pbOperationComplete = true;
             return eProcess_BulkEnd(puiPayload, uiPayloadLen);
+        case ePC_UART_Command_ConfigRead:
+            return eProcess_ConfigRead(puiPayload, uiPayloadLen);
         default:
             return ePC_UART_Error_InvalidCommand;
     }

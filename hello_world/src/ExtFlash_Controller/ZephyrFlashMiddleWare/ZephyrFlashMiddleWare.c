@@ -110,7 +110,7 @@ static int iZephyrFlash_Init(const struct device *pstDevice)
     k_mutex_init(&pstDeviceData->stFlashMutex);
     k_msleep(300U);
     
-    if(!bInit_ExtFlash())
+    if(!bInit_ExtFlashHardware())
     {
         return -EIO;
     }

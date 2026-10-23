@@ -38,6 +38,7 @@ typedef enum
     ePC_UART_Command_BulkStart = 0x40,
     ePC_UART_Command_BulkData = 0x41,
     ePC_UART_Command_BulkEnd = 0x42,
+    ePC_UART_Command_ConfigRead = 0x43,
 } ePC_UART_Command_t;
 
 typedef enum
@@ -60,6 +61,8 @@ typedef enum
     ePC_UART_Error_BulkTimeout,
     ePC_UART_Error_BulkCRCMismatch,
     ePC_UART_Error_BulkSizeMismatch,
+    ePC_UART_Error_FileNotFound,
+    ePC_UART_Error_FileReadFailed,
     eNUMBER_OF_PC_UART_ERRORS
 } ePC_UART_Error_t;
 
@@ -77,6 +80,13 @@ typedef enum
  *   [8..]    N data bytes
  *
  * Bulk END has an empty payload.
+ *
+ * Config READ request payload:
+ *   [0]      source ID
+ *
+ * Config READ response frame payload:
+ *   [0]      source ID
+ *   [1..48]  raw source configuration record
  */
 
 #endif /* PC_UART_PROTOCOL_H */

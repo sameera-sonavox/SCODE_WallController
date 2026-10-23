@@ -7,6 +7,7 @@
 #include <string.h>
 
 extern bool bInit_ExtFlash( void );
+extern bool bInit_ExtFlashHardware( void );
 extern bool bIsExtFlash_SetupSUccess( void );
 
 #endif // EXTFLASH_CONTROLLER_H

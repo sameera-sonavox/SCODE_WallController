@@ -14,11 +14,17 @@
             #address-cells = <1>;
             #size-cells = <1>;
 
-            ext_fw_partition: partition@0 {
-                label = "ext-fw";
-                reg = <0x000000 0x100000>;
+            /*
+             * Swap-using-offset reserves the first 8 KiB sector and stores
+             * the update image at offset 0x2000.  The secondary slot is one
+             * 8 KiB sector larger than the 960 KiB primary slot.
+             */
+            slot1_partition: partition@0 {
+                label = "image-1";
+                reg = <0x000000 0x0F2000>;
             };
 
+            /* 0x0F2000-0x0FFFFF is intentionally left unused. */
             ext_storage_partition: partition@100000 {
                 label = "ext-storage";
                 reg = <0x100000 0x700000>;

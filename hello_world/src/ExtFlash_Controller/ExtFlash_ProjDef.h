@@ -62,4 +62,7 @@
 #define DATA_TRANSFER_TIMEOUT_ms                    5000U
 #define DATA_TRANSFER_THREAD_TIMEOUT_ms             2000U
 
+//Configuration Name Sizes
+#define AUDIO_SOURCE_CONFIG_NAME_SIZE               24U
+
 #endif//EXTFLASH_PROJDEF_H

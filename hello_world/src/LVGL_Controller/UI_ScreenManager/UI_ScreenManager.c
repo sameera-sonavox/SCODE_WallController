@@ -3,8 +3,12 @@
 #include "../UI_InputController/UI_InputController.h"
 #include "GenericMacro.h"
 #include <stdatomic.h>
+#include <lvgl_zephyr.h>
 
 #include "../Screens/Screen_Welcome/WelcomeScreen.h"
+#include "../Screens/SelectedAudioSource/SelectedAudioSrcCtrl.h"
+#include "../Screens/AudioSourceSelect_Menu/AudioSrcSelection.h"
+#include "../Screens/AudioSrcMute/AudioSrcMute.h"
 
 #include <zephyr/kernel.h>
 
@@ -29,6 +33,7 @@ static sT_UIScreenDescriptor_t staScreenDescriptors[UI_SCREEN_SLOT_COUNT];
 static bool bInit_ScreenData( void );
 static inline bool bIsScreenTransitionPending( void );
 static bool bActivate_RequestedScreen( void );
+static void vDelete_ScreenOnExit(sT_UIScreenDescriptor_t *pstScreenDescriptor);
 
 bool bInit_UIScreenManager( void )
 {
@@ -88,6 +93,15 @@ static bool bActivate_RequestedScreen( void )
     sT_UIScreenDescriptor_t *pstActiveDescriptor = &staScreenDescriptors[uiScreenIndex];
     sT_UIScreenRuntime_t *pstScrRuntime = pstActiveDescriptor->pstScreenRuntime;
 
+    if(stTUIScreenManager.pstActiveDescriptor == pstActiveDescriptor)
+    {
+        stTUIScreenManager.ePendingScreenId = eScreen_None;
+        atomic_store_explicit(&stTUIScreenManager.bIsTransitionPending,
+                              false,
+                              memory_order_release);
+        return true;
+    }
+
     if(pstScrRuntime == NULL)
     {
         FHALT("Screen runtime is not registered for Screen Id: %d", eId);
@@ -109,18 +123,45 @@ static bool bActivate_RequestedScreen( void )
         return false;        
     }
 
-    if(stTUIScreenManager.pstActiveDescriptor != NULL)
+    sT_UIScreenDescriptor_t *pstPreviousDescriptor =
+        stTUIScreenManager.pstActiveDescriptor;
+
+    if(pstPreviousDescriptor != NULL && pstPreviousDescriptor->pfExit != NULL)
     {
-        sT_UIScreenRuntime_t *pstRuntimeScreen = stTUIScreenManager.pstActiveDescriptor->pstScreenRuntime;
-        stTUIScreenManager.pstActiveDescriptor->pfExit(pstRuntimeScreen);
+        pstPreviousDescriptor->pfExit(pstPreviousDescriptor->pstScreenRuntime);
     }
 
     pstActiveDescriptor->pfEnter(pstScrRuntime);
     stTUIScreenManager.pstActiveDescriptor = pstActiveDescriptor;
 
+    /* The new screen must be loaded before deleting the old active screen. */
+    vDelete_ScreenOnExit(pstPreviousDescriptor);
+
     stTUIScreenManager.ePendingScreenId = eScreen_None;
     atomic_store_explicit(&stTUIScreenManager.bIsTransitionPending, false, memory_order_release);
     return true;
+}
+
+static void vDelete_ScreenOnExit(sT_UIScreenDescriptor_t *pstScreenDescriptor)
+{
+    if(pstScreenDescriptor == NULL ||
+       !pstScreenDescriptor->bDeleteOnExit ||
+       pstScreenDescriptor->pstScreenRuntime == NULL)
+    {
+        return;
+    }
+
+    sT_UIScreenRuntime_t *pstScreenRuntime =
+        pstScreenDescriptor->pstScreenRuntime;
+
+    lvgl_lock();
+    if(pstScreenRuntime->pstRootObj != NULL &&
+       lv_obj_is_valid(pstScreenRuntime->pstRootObj))
+    {
+        lv_obj_delete(pstScreenRuntime->pstRootObj);
+    }
+    pstScreenRuntime->pstRootObj = NULL;
+    lvgl_unlock();
 }
 
 bool bRequest_UIScreen(eScreenId_t eID)
@@ -173,18 +214,22 @@ static bool bInit_ScreenData( void )
         switch(eScreenId)
         {
             case eScreen_Welcome:
-                bResult = bInit_WelcomeScreen(
-                    &staScreenRuntimeInfo[uiScreenIndex],
-                    &staScreenDescriptors[uiScreenIndex]);
+                bResult = bInit_WelcomeScreen(&staScreenRuntimeInfo[uiScreenIndex],
+                                              &staScreenDescriptors[uiScreenIndex]);
                 break;
 
             case eScreen_SourceSelect:
-                /* Temporary: keep the screen slot unregistered until the
-                 * descriptor-based Source Select screen is implemented.
-                 * bRequest_UIScreen() rejects unregistered screen IDs.
-                 */
-                continue;
-
+                bResult = bInit_AudioSrcSelectionScreen(&staScreenRuntimeInfo[uiScreenIndex],
+                                                        &staScreenDescriptors[uiScreenIndex]);
+                break;
+            case eScreen_AudioSrcInfo:
+                bResult = bInit_AudioSrcInfoScreen(&staScreenRuntimeInfo[uiScreenIndex],
+                                                   &staScreenDescriptors[uiScreenIndex]);
+                break;
+            case eScreen_SourceMute:
+                bResult = bInit_AudioSrcMuteScreen(&staScreenRuntimeInfo[uiScreenIndex],
+                                                   &staScreenDescriptors[uiScreenIndex]);
+                break;
             case eScreen_None:
             case eNUMBER_OF_SCREENs:
             default:

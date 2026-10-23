@@ -98,7 +98,7 @@ static bool bCreate_WelComeScreen( sT_UIScreenRuntime_t *pstScreenRuntime )
     setup_Sleep_Screen(&pstScreenContext->stGuiderUI);
     pstRoot = pstScreenContext->stGuiderUI.Sleep_Screen.screen;
     pstLogoSlot = pstScreenContext->stGuiderUI.Sleep_Screen.Welcome_LogoSlot;
-
+    
     if(pstRoot == NULL || pstLogoSlot==NULL)
     {
         FHALT("GUI Guider Failed to Create Welcome Screen");

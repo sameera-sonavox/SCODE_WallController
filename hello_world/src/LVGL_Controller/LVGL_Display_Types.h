@@ -18,6 +18,7 @@ typedef enum
     eScreen_Welcome,
     eScreen_AudioSrcInfo,
     eScreen_SourceSelect,
+    eScreen_SourceMute,
     eNUMBER_OF_SCREENs
 } eScreenId_t;
 
@@ -109,6 +110,14 @@ typedef enum
     eNUMBER_OF_UI_INPUT_EVENTs
 } eUIInputType_t;
 
+typedef enum
+{
+    eAudioSrc_Type_None = 0,
+    eAudioSrc_Type_Wired,
+    eAudioSrc_Type_Bluetooth,
+    eNUMBER_OF_AUDIO_SRC_TYPEs
+} eAudioSrc_Type_t;
+
 typedef struct
 {
     eUIInputType_t eType;
@@ -119,70 +128,16 @@ typedef struct
 
 typedef struct
 {
-    lv_coord_t lx;
-    lv_coord_t ly;
-    int32_t iwidth;
-    int32_t iheight;
-    lv_color_t lcolor_Text;
-    lv_color_t lcolor_BackGround;
-    char pcaText[DEFAULT_LABEL_TEXT_LENGTH];
-} sT_UIObj_Label;
-
-typedef struct
-{
-    lv_coord_t lx;
-    lv_coord_t ly;
-    int32_t iwidth;
-    int32_t iheight;
-    lv_color_t lcolor_Border;
-    _Atomic bool bIsVisible;
-} sT_UIObj_Indicator;
-
-typedef struct
-{
-    lv_coord_t lx_Top;
-    lv_coord_t ly_Top;
-    int32_t iWidth;
-    int32_t iHeight;
-    _Atomic bool baIsLocked[eNUMBER_OF_AUDIO_SOURCES];
-    _Atomic uint8_t uiMaxVolume;
-    _Atomic uint8_t uiVol;
-    lv_color_t lcolor_VolColor;    
-} sT_UIObj_VolControl;
-
-typedef struct
-{
-    char *pcaFilePath;    
-} sT_UIObj_Image;
-
-typedef struct
-{
-    eUI_Obj_Type_t eObjType;
-    lv_obj_t *pstUIObj;
-    union{
-        sT_UIObj_Label stTObj_Label;
-        sT_UIObj_Indicator stTObj_Indicator;
-        sT_UIObj_VolControl stTObj_VolCtrl;
-        sT_UIObj_Image stObj_ImgCtrl;
-    } uiObject;
-
-} sT_UIControl;
-
-typedef struct
-{
     eAudioSrc_Id_t eSrcId;
-    lv_obj_t *pstAudSrcObj;
-    char acName[24];
-    _Atomic bool bIsExlusivelyOwned;//Only one entity will own the source
-    _Atomic bool bIsInclusivelyOwned;//Multiple entities can own the resource
+    eAudioSrc_Type_t eSrcType;
+
+    char caSrcName[24];
+
     _Atomic bool bIsActive;
     _Atomic bool bIsMute;
     _Atomic bool bIsSelected;
-    _Atomic bool bIsVisible;
     _Atomic uint16_t uiVolume;
-    sT_UIControl staUIControls[NUMBER_OF_UI_CONTROLS_PER_AUDIO_SOURCE];
-    lv_point_precise_t sourceHoriz_SeparatorPoints[2];
-} sT_AudioSource_t;
+} sT_AudioSourceConfig_t;
 
 typedef struct
 {
@@ -190,36 +145,6 @@ typedef struct
     _Atomic bool bIsEncPressed;
     struct k_mutex stkIsLocked;
 } sT_QEncData_t;
-
-typedef struct
-{
-    lv_obj_t *pstSrcVolObj;
-    sT_UIObj_VolControl stTVolCtrl;
-    sT_AudioSource_t staAudioSources[eNUMBER_OF_AUDIO_SOURCES];
-} sT_AudioSrc_Display_t;
-
-typedef struct
-{
-    lv_obj_t *pstWelSrcObj;
-    lv_obj_t *pstAnimationSuffixObj;
-    uint32_t uiDisplayTime_ms;
-    sT_UIControl staUIControls[NUMBER_OF_UI_CONTROLS_FOR_WELCOME_SCREEN];
-    struct k_mutex mutex_DisplayText;
-    char caDisplayText[DEFAULT_LABEL_TEXT_LENGTH];
-} sT_WelComeScreen_Display_t;
-
-typedef struct
-{
-    eScreenId_t eScreenId;
-    union
-    {
-        sT_AudioSrc_Display_t stTAudioSrcDisplay;
-        sT_WelComeScreen_Display_t stTWelcomScrDisplay;
-    } screenType;
-
-} sT_UIScreenDisplay;
-
-typedef bool (*bScreenCreate_t)( void );
 
 typedef struct sT_UIScreenRuntime_t
 {

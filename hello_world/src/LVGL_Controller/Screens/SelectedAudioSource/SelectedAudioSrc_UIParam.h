@@ -1,0 +1,12 @@
+#ifndef SELECTEDAUDIOSRC_UIPARAM_H
+#define SELECTEDAUDIOSRC_UIPARAM_H
+
+
+#define SELECTED_AUDIO_SRC_MIN_VOLUME                   0U
+#define SELECTED_AUDIO_SRC_MAX_VOLUME                   100U
+
+#define ENCODER_SWITCH_HOLD_TIME_ms                     2000U
+#define MAX_ENCODER_PRESS_COUNTS_TO_SCRN_EXIT           2U
+#define ENCODER_DOUBLE_PRESS_WINDOW_ms                  500U
+
+#endif//SELECTEDAUDIOSRC_UIPARAM_H

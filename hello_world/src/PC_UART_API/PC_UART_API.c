@@ -7,6 +7,7 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
+#include <zephyr/sys/ring_buffer.h>
 
 #include "PC_UART_API.h"
 #include "PC_UART_API_Internal.h"
@@ -19,6 +20,7 @@
 #define PC_UART_API_THREAD_PRIORITY               6
 #define PC_UART_API_CAN_THREAD_PRIORITY           7
 #define PC_UART_API_CAN_RX_QUEUE_DEPTH            8
+#define PC_UART_API_RX_RING_SIZE_BYTEs             512
 
 #define PC_UART_API_SOF_BYTE_0                    'B'
 #define PC_UART_API_SOF_BYTE_1                    'L'
@@ -52,12 +54,14 @@ static bool bPC_UART_APIInitialized;
 static uint16_t uiPC_UART_APITxSeq;
 static _Atomic ePC_UART_Operation_t eActiveOperation;
 static PC_UART_API_DataRequestCallback_t pfADCDataRequestCallback;
+RING_BUF_DECLARE(stPC_UART_APIRxRing, PC_UART_API_RX_RING_SIZE_BYTEs);
 K_THREAD_STACK_DEFINE(thread_PC_UART_APIStack, PC_UART_API_THREAD_STACK_SIZE_BYTEs);
 K_THREAD_STACK_DEFINE(thread_PC_UART_APICANStack, PC_UART_API_CAN_THREAD_STACK_SIZE_BYTEs);
 K_MSGQ_DEFINE(msgq_PC_UART_APICANRx, sizeof(struct can_frame), PC_UART_API_CAN_RX_QUEUE_DEPTH, 4);
 
 static void vThread_PC_UART_API( void *p1, void *p2, void *p3 );
 static void vThread_PC_UART_API_CANRx( void *p1, void *p2, void *p3 );
+static void vPC_UART_API_RxISR( const struct device *pstDev, void *pvUserData );
 static int iRead_UARTByte( uint8_t *puiByte );
 static bool bRead_UARTBytesWithTimeout( uint8_t *puiBuffer, uint16_t uiLen, uint32_t uiTimeoutMs );
 static bool bRead_UARTFrame( uint8_t *puiCommand, uint8_t *puiPayload, uint16_t *puiPayloadLen, uint16_t *puiSeq );
@@ -82,6 +86,17 @@ void vInit_PC_UART_API( void )
     }
 
     k_mutex_init(&stUARTTxMutex);
+    ring_buf_reset(&stPC_UART_APIRxRing);
+
+    if(uart_irq_callback_user_data_set(pstUARTDev,
+                                       vPC_UART_API_RxISR,
+                                       NULL) != 0)
+    {
+        PC_UART_API_Print("PC UART API: RX interrupt setup failed\n\r");
+        return;
+    }
+    uart_irq_rx_enable(pstUARTDev);
+
     uiPC_UART_APITxSeq = 0;
     vSet_ActiveOperation(ePC_UART_Operation_Idle);
     bPC_UART_APIInitialized = true;
@@ -127,6 +142,53 @@ bool bPC_UART_API_SendDataWithPostDelay( const uint8_t *puiData, uint16_t uiLen,
     vUART_WriteBytes(puiData, uiLen);
     if(uiDelayMs > 0U)
         k_msleep(uiDelayMs);
+    k_mutex_unlock(&stUARTTxMutex);
+    return true;
+}
+
+bool bPC_UART_API_SendFrame(uint8_t uiCommand,
+                            const uint8_t *puiPayload,
+                            uint16_t uiPayloadLen)
+{
+    if(!bPC_UART_APIInitialized ||
+       uiPayloadLen > PC_UART_PROTOCOL_MAX_PAYLOAD_LENGTH ||
+       (uiPayloadLen > 0U && puiPayload == NULL))
+    {
+        return false;
+    }
+
+    uint8_t uiaHeaderTail[PC_UART_PROTOCOL_HEADER_LENGTH - 4U];
+    uint16_t uiCRC = 0xFFFFU;
+
+    k_mutex_lock(&stUARTTxMutex, K_FOREVER);
+
+    uiaHeaderTail[0] = PC_UART_PROTOCOL_VERSION;
+    uiaHeaderTail[1] = uiCommand;
+    uiaHeaderTail[2] = (uint8_t)(uiPC_UART_APITxSeq >> 8U);
+    uiaHeaderTail[3] = (uint8_t)uiPC_UART_APITxSeq;
+    uiaHeaderTail[4] = (uint8_t)(uiPayloadLen >> 8U);
+    uiaHeaderTail[5] = (uint8_t)uiPayloadLen;
+
+    uiCRC = u16CRC16_CCITT_Update(uiCRC,
+                                  uiaHeaderTail,
+                                  sizeof(uiaHeaderTail));
+    if(uiPayloadLen > 0U)
+    {
+        uiCRC = u16CRC16_CCITT_Update(uiCRC,
+                                      puiPayload,
+                                      uiPayloadLen);
+    }
+
+    vUART_WriteBytes((const uint8_t *)"BLUP", 4U);
+    vUART_WriteBytes(uiaHeaderTail, sizeof(uiaHeaderTail));
+    if(uiPayloadLen > 0U)
+    {
+        vUART_WriteBytes(puiPayload, uiPayloadLen);
+    }
+    vUART_WriteByte((uint8_t)(uiCRC >> 8U));
+    vUART_WriteByte((uint8_t)uiCRC);
+    uiPC_UART_APITxSeq++;
+
     k_mutex_unlock(&stUARTTxMutex);
     return true;
 }
@@ -191,13 +253,39 @@ static void vThread_PC_UART_API_CANRx( void *p1, void *p2, void *p3 )
     }
 }
 
+static void vPC_UART_API_RxISR( const struct device *pstDev, void *pvUserData )
+{
+    uint8_t uiaRxData[32];
+    int iReadCount = 0;
+
+    ARG_UNUSED(pvUserData);
+
+    if(!uart_irq_update(pstDev) || !uart_irq_rx_ready(pstDev))
+        return;
+
+    do
+    {
+        iReadCount = uart_fifo_read(pstDev,
+                                    uiaRxData,
+                                    sizeof(uiaRxData));
+        if(iReadCount > 0)
+        {
+            (void)ring_buf_put(&stPC_UART_APIRxRing,
+                               uiaRxData,
+                               (uint32_t)iReadCount);
+        }
+    } while(iReadCount > 0);
+}
+
 static int iRead_UARTByte( uint8_t *puiByte )
 {
-    int ret = uart_poll_in(pstUARTDev, puiByte);
-    if(ret != 0)
+    if(ring_buf_get(&stPC_UART_APIRxRing, puiByte, 1U) != 1U)
+    {
         k_msleep(1);
+        return -1;
+    }
 
-    return ret;
+    return 0;
 }
 
 static bool bRead_UARTBytesWithTimeout( uint8_t *puiBuffer, uint16_t uiLen, uint32_t uiTimeoutMs )
@@ -434,8 +522,6 @@ static void vSend_UARTFrameToPC( const struct can_frame *pstFrame )
 {
     uint8_t uiLen = 0;
     uint8_t uiPayloadLen = 0;
-    uint8_t uiaHeaderTail[PC_UART_PROTOCOL_HEADER_LENGTH - 4U];
-    uint16_t uiCRC = 0xFFFF;
 
     if(pstFrame == NULL)
         return;
@@ -445,27 +531,9 @@ static void vSend_UARTFrameToPC( const struct can_frame *pstFrame )
         return;
 
     uiPayloadLen = uiLen - 1;
-    uiaHeaderTail[0] = PC_UART_PROTOCOL_VERSION;
-    uiaHeaderTail[1] = pstFrame->data[0];
-    uiaHeaderTail[2] = (uiPC_UART_APITxSeq >> 8) & 0xFF;
-    uiaHeaderTail[3] = uiPC_UART_APITxSeq & 0xFF;
-    uiaHeaderTail[4] = 0;
-    uiaHeaderTail[5] = uiPayloadLen;
-
-    uiCRC = u16CRC16_CCITT_Update(uiCRC, uiaHeaderTail, sizeof(uiaHeaderTail));
-    if(uiPayloadLen > 0)
-        uiCRC = u16CRC16_CCITT_Update(uiCRC, &pstFrame->data[1], uiPayloadLen);
-
-    k_mutex_lock(&stUARTTxMutex, K_FOREVER);
-    vUART_WriteBytes((const uint8_t *)"BLUP", 4);
-    vUART_WriteBytes(uiaHeaderTail, sizeof(uiaHeaderTail));
-    if(uiPayloadLen > 0)
-        vUART_WriteBytes(&pstFrame->data[1], uiPayloadLen);
-    vUART_WriteByte((uiCRC >> 8) & 0xFF);
-    vUART_WriteByte(uiCRC & 0xFF);
-    k_mutex_unlock(&stUARTTxMutex);
-
-    uiPC_UART_APITxSeq++;
+    (void)bPC_UART_API_SendFrame(pstFrame->data[0],
+                                &pstFrame->data[1],
+                                uiPayloadLen);
 }
 
 static void vSend_UARTResponse( uint8_t uiStatus, uint8_t uiErrorCode )

@@ -39,11 +39,11 @@ FW_REV = 0x0001
 
 ACK_TIMEOUT_S = 2.0
 TARGET_READY_TIMEOUT_S = 30.0
-# The Windows MCU-Link VCOM driver (usbser) can report a write timeout even
-# though its endpoint accepts the same transfer immediately in blocking mode.
-# Keep reads bounded by ACK_TIMEOUT_S; protocol ACK timeouts still detect a
-# disconnected or unresponsive target after each transmitted frame.
+# Bulk transfers use blocking writes because the Windows MCU-Link VCOM driver
+# can report false timeouts while it is still accepting a long transfer.
 WRITE_TIMEOUT_S = None
+FILE_TRANSFER_WRITE_TIMEOUT_S = 1.0
+SERIAL_PACED_WRITE_CHUNK_SIZE = 8
 START_DELAY_S = 3.0
 INTER_FRAME_DELAY_S = 0.05
 TX_BYTE_DELAY_S = 0.001
@@ -89,19 +89,43 @@ UART_VERSION = 1
 UART_ACK = 0x06
 UART_NACK = 0x15
 
+UART_ERROR_NAMES = {
+    0: "None",
+    1: "InvalidVersion",
+    2: "InvalidLength",
+    3: "FrameCRCMismatch",
+    4: "CANTxFail",
+    5: "InvalidCommand",
+    6: "InvalidOperation",
+    7: "OperationBusy",
+    8: "ServiceUnavailable",
+    9: "QueueFull",
+    10: "InvalidFrame",
+    11: "BulkStartFailed",
+    12: "BulkTransferFailed",
+    13: "BulkTimeout",
+    14: "BulkCRCMismatch",
+    15: "BulkSizeMismatch",
+    16: "FileNotFound",
+    17: "FileReadFailed",
+}
+
 CMD_SELECT_OPERATION = 0x01
 CMD_RELEASE_OPERATION = 0x02
 CMD_BULK_START = 0x40
 CMD_BULK_DATA = 0x41
 CMD_BULK_END = 0x42
+CMD_CONFIG_READ = 0x43
 
 OPERATION_FIRMWARE_BRIDGE = 1
 OPERATION_LOCAL_BULK_FILE = 2
 
+FILE_TYPE_CONFIG = 1
 FILE_TYPE_DATA = 2
 FILE_TYPE_IMAGE = 3
 FILE_TYPE_ICON = 4
 FILE_TYPE_IDS = {
+    "Config": FILE_TYPE_CONFIG,
     "Data": FILE_TYPE_DATA,
     "Image": FILE_TYPE_IMAGE,
     "Icon": FILE_TYPE_ICON,
@@ -115,7 +139,7 @@ MAX_BULK_FILE_NAME_BYTES = 29
 # Source configuration file format
 # ---------------------------------------------------------------------------
 
-DEFAULT_NUMBER_OF_AUDIO_SOURCES = 32
+DEFAULT_NUMBER_OF_AUDIO_SOURCES = 4
 
 
 def read_audio_source_count() -> int:
@@ -128,6 +152,9 @@ def read_audio_source_count() -> int:
     )
     try:
         header_text = header_path.read_text(encoding="utf-8")
+        # Do not count enum entries that are currently disabled in C comments.
+        header_text = re.sub(r"/\*.*?\*/", "", header_text, flags=re.DOTALL)
+        header_text = re.sub(r"//.*", "", header_text)
         enum_start = header_text.index("eAudio_Src_0")
         enum_end = header_text.index("eNUMBER_OF_AUDIO_SOURCES", enum_start)
         source_ids = {
@@ -149,18 +176,33 @@ def read_audio_source_count() -> int:
 NUMBER_OF_AUDIO_SOURCES = read_audio_source_count()
 
 SOURCE_CONFIG_MAGIC = b"SRCF"
-SOURCE_CONFIG_VERSION = 1
-SOURCE_CONFIG_JSON_SCHEMA_VERSION = 1
+SOURCE_CONFIG_VERSION = 2
+SOURCE_CONFIG_JSON_SCHEMA_VERSION = 2
 SOURCE_CONFIG_NAME_MAX_BYTES = 23
-SOURCE_CONFIG_ZONE_MAX_BYTES = 23
 
-SOURCE_CONFIG_FLAG_ENABLED = 1 << 0
+SOURCE_TYPE_IDS = {
+    "None": 0,
+    "Wired": 1,
+    "Bluetooth": 2,
+}
+SOURCE_TYPE_NAMES = {source_type: name for name, source_type in SOURCE_TYPE_IDS.items()}
+
+SOURCE_CONFIG_FLAG_ACTIVE = 1 << 0
 SOURCE_CONFIG_FLAG_MUTED = 1 << 1
-SOURCE_CONFIG_FLAG_BLUETOOTH_CONNECTED = 1 << 2
+SOURCE_CONFIG_FLAG_SELECTED = 1 << 2
+SOURCE_CONFIG_KNOWN_FLAGS = (
+    SOURCE_CONFIG_FLAG_ACTIVE
+    | SOURCE_CONFIG_FLAG_MUTED
+    | SOURCE_CONFIG_FLAG_SELECTED
+)
 
-# magic, version, header size, total size, payload CRC32, source ID, flags,
-# source volume, volume limit, zone-name length, source-name length, reserved
-SOURCE_CONFIG_HEADER = struct.Struct("<4sHHIIBBBBBBH")
+# Fixed 48-byte firmware record:
+# magic, version, header size, total size, payload CRC32, source type,
+# source ID, flags, volume, source-name length, reserved[3], source-name[24].
+# The CRC covers bytes 16..47, protecting every source-specific field.
+SOURCE_CONFIG_HEADER_SIZE = 24
+SOURCE_CONFIG_RECORD = struct.Struct("<4sHHIIBBBBB3s24s")
+SOURCE_CONFIG_CRC_OFFSET = 16
 
 
 @dataclass(frozen=True)
@@ -171,108 +213,237 @@ class FirmwarePacket:
     payload: bytes
 
 
+@dataclass(frozen=True)
+class SerialConnectionSettings:
+    port_name: str
+    baud_rate: int
+    start_delay_s: float
+    inter_frame_delay_s: float
+    byte_delay_s: float
+
+
 @dataclass
 class SourceConfiguration:
+    source_type: int
     source_id: int
-    zone_name: str
     source_name: str
-    source_volume: int
-    volume_limit: int
+    volume: int
+    is_active: bool
     is_muted: bool
-    is_enabled: bool
-    is_bluetooth_connected: bool
+    is_selected: bool
 
 
 def default_source_configuration(source_id: int) -> SourceConfiguration:
     return SourceConfiguration(
+        source_type=SOURCE_TYPE_IDS["None"],
         source_id=source_id,
-        zone_name=f"Zone {source_id + 1}",
         source_name=f"Source {source_id + 1}",
-        source_volume=0,
-        volume_limit=100,
+        volume=0,
+        is_active=False,
         is_muted=False,
-        is_enabled=True,
-        is_bluetooth_connected=False,
+        is_selected=False,
     )
 
 
-def validate_source_configuration(configuration: SourceConfiguration) -> tuple[bytes, bytes]:
+def validate_source_configuration(configuration: SourceConfiguration) -> bytes:
+    if configuration.source_type not in SOURCE_TYPE_NAMES:
+        raise ValueError(
+            f"Source {configuration.source_id}: Source Type must match "
+            "eAudioSrc_Type_t"
+        )
     if not 0 <= configuration.source_id < NUMBER_OF_AUDIO_SOURCES:
         raise ValueError(
             f"Source ID {configuration.source_id} is outside 0..{NUMBER_OF_AUDIO_SOURCES - 1}"
         )
 
-    if not configuration.zone_name.strip():
-        raise ValueError(f"Source {configuration.source_id}: Zone Name cannot be empty")
     if not configuration.source_name.strip():
         raise ValueError(f"Source {configuration.source_id}: Source Name cannot be empty")
-
-    zone_name = configuration.zone_name.strip().encode("utf-8")
-    source_name = configuration.source_name.strip().encode("utf-8")
-    if len(zone_name) > SOURCE_CONFIG_ZONE_MAX_BYTES:
+    if configuration.source_name != configuration.source_name.strip():
         raise ValueError(
-            f"Source {configuration.source_id}: Zone Name is {len(zone_name)} UTF-8 bytes; "
-            f"maximum is {SOURCE_CONFIG_ZONE_MAX_BYTES}"
+            f"Source {configuration.source_id}: Source Name cannot start or end with whitespace"
         )
+    if "\0" in configuration.source_name:
+        raise ValueError(f"Source {configuration.source_id}: Source Name cannot contain NUL")
+
+    source_name = configuration.source_name.strip().encode("utf-8")
     if len(source_name) > SOURCE_CONFIG_NAME_MAX_BYTES:
         raise ValueError(
             f"Source {configuration.source_id}: Source Name is {len(source_name)} UTF-8 bytes; "
             f"maximum is {SOURCE_CONFIG_NAME_MAX_BYTES}"
         )
 
-    if not 0 <= configuration.source_volume <= 100:
+    if not 0 <= configuration.volume <= 100:
         raise ValueError(
-            f"Source {configuration.source_id}: Source Volume must be between 0 and 100"
-        )
-    if not 0 <= configuration.volume_limit <= 100:
-        raise ValueError(
-            f"Source {configuration.source_id}: Volume Limit must be between 0 and 100"
+            f"Source {configuration.source_id}: Volume must be between 0 and 100"
         )
 
-    return zone_name, source_name
+    if configuration.is_active and configuration.source_type == SOURCE_TYPE_IDS["None"]:
+        raise ValueError(
+            f"Source {configuration.source_id}: An active source cannot have Source Type None"
+        )
+    if configuration.is_selected and not configuration.is_active:
+        raise ValueError(
+            f"Source {configuration.source_id}: A selected source must also be active"
+        )
+
+    return source_name
+
+
+def validate_all_source_configurations(
+    configurations: list[SourceConfiguration],
+) -> None:
+    if len(configurations) != NUMBER_OF_AUDIO_SOURCES:
+        raise ValueError(
+            f"Expected {NUMBER_OF_AUDIO_SOURCES} source configurations, "
+            f"found {len(configurations)}"
+        )
+
+    for expected_source_id, configuration in enumerate(configurations):
+        if configuration.source_id != expected_source_id:
+            raise ValueError(
+                f"Source slot {expected_source_id} contains source ID "
+                f"{configuration.source_id}"
+            )
+        validate_source_configuration(configuration)
+
+    selected_sources = [
+        configuration.source_id
+        for configuration in configurations
+        if configuration.is_selected
+    ]
+    if len(selected_sources) > 1:
+        raise ValueError(
+            "Only one source may be selected; selected source IDs: "
+            + ", ".join(str(source_id) for source_id in selected_sources)
+        )
 
 
 def encode_source_configuration(configuration: SourceConfiguration) -> bytes:
-    zone_name, source_name = validate_source_configuration(configuration)
-    payload = zone_name + source_name
+    source_name = validate_source_configuration(configuration)
+    source_name_field = source_name.ljust(SOURCE_CONFIG_NAME_MAX_BYTES + 1, b"\0")
 
     flags = 0
-    if configuration.is_enabled:
-        flags |= SOURCE_CONFIG_FLAG_ENABLED
+    if configuration.is_active:
+        flags |= SOURCE_CONFIG_FLAG_ACTIVE
     if configuration.is_muted:
         flags |= SOURCE_CONFIG_FLAG_MUTED
-    if configuration.is_bluetooth_connected:
-        flags |= SOURCE_CONFIG_FLAG_BLUETOOTH_CONNECTED
+    if configuration.is_selected:
+        flags |= SOURCE_CONFIG_FLAG_SELECTED
 
-    total_size = SOURCE_CONFIG_HEADER.size + len(payload)
-    payload_crc32 = zlib.crc32(payload) & 0xFFFFFFFF
-    header = SOURCE_CONFIG_HEADER.pack(
-        SOURCE_CONFIG_MAGIC,
-        SOURCE_CONFIG_VERSION,
-        SOURCE_CONFIG_HEADER.size,
-        total_size,
-        payload_crc32,
+    source_payload = struct.pack(
+        "<BBBBB3s24s",
+        configuration.source_type,
         configuration.source_id,
         flags,
-        configuration.source_volume,
-        configuration.volume_limit,
-        len(zone_name),
+        configuration.volume,
         len(source_name),
-        0,
+        b"\0\0\0",
+        source_name_field,
     )
-    return header + payload
+    payload_crc32 = zlib.crc32(source_payload) & 0xFFFFFFFF
+    return SOURCE_CONFIG_RECORD.pack(
+        SOURCE_CONFIG_MAGIC,
+        SOURCE_CONFIG_VERSION,
+        SOURCE_CONFIG_HEADER_SIZE,
+        SOURCE_CONFIG_RECORD.size,
+        payload_crc32,
+        configuration.source_type,
+        configuration.source_id,
+        flags,
+        configuration.volume,
+        len(source_name),
+        b"\0\0\0",
+        source_name_field,
+    )
+
+
+def decode_source_configuration(record: bytes) -> SourceConfiguration:
+    if len(record) != SOURCE_CONFIG_RECORD.size:
+        raise ValueError(
+            f"Source configuration record must be {SOURCE_CONFIG_RECORD.size} bytes"
+        )
+
+    (
+        magic,
+        version,
+        header_size,
+        total_size,
+        expected_crc32,
+        source_type,
+        source_id,
+        flags,
+        volume,
+        source_name_length,
+        reserved,
+        source_name_field,
+    ) = SOURCE_CONFIG_RECORD.unpack(record)
+
+    if magic != SOURCE_CONFIG_MAGIC:
+        raise ValueError("Invalid source configuration magic")
+    if version != SOURCE_CONFIG_VERSION:
+        raise ValueError(f"Unsupported source configuration version: {version}")
+    if header_size != SOURCE_CONFIG_HEADER_SIZE:
+        raise ValueError(f"Invalid source configuration header size: {header_size}")
+    if total_size != SOURCE_CONFIG_RECORD.size:
+        raise ValueError(f"Invalid source configuration record size: {total_size}")
+    if flags & ~SOURCE_CONFIG_KNOWN_FLAGS:
+        raise ValueError(f"Source {source_id}: Unknown flag bits 0x{flags:02X}")
+    if reserved != b"\0\0\0":
+        raise ValueError(f"Source {source_id}: Reserved bytes must be zero")
+    if source_name_length > SOURCE_CONFIG_NAME_MAX_BYTES:
+        raise ValueError(f"Source {source_id}: Invalid source-name length")
+
+    actual_crc32 = zlib.crc32(record[SOURCE_CONFIG_CRC_OFFSET:]) & 0xFFFFFFFF
+    if actual_crc32 != expected_crc32:
+        raise ValueError(
+            f"Source {source_id}: CRC32 mismatch "
+            f"(stored 0x{expected_crc32:08X}, calculated 0x{actual_crc32:08X})"
+        )
+
+    encoded_name = source_name_field[:source_name_length]
+    if any(source_name_field[source_name_length:]):
+        raise ValueError(f"Source {source_id}: Source-name padding must be zero")
+    try:
+        source_name = encoded_name.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"Source {source_id}: Source Name is not valid UTF-8") from exc
+
+    configuration = SourceConfiguration(
+        source_type=source_type,
+        source_id=source_id,
+        source_name=source_name,
+        volume=volume,
+        is_active=bool(flags & SOURCE_CONFIG_FLAG_ACTIVE),
+        is_muted=bool(flags & SOURCE_CONFIG_FLAG_MUTED),
+        is_selected=bool(flags & SOURCE_CONFIG_FLAG_SELECTED),
+    )
+    validate_source_configuration(configuration)
+    return configuration
+
+
+def validate_bulk_file_selection(file_type: int, file_name: str, file_data: bytes) -> None:
+    """Reject file/type combinations that the MCU cannot safely accept."""
+    if file_type != FILE_TYPE_CONFIG:
+        return
+
+    configuration = decode_source_configuration(file_data)
+    expected_name = f"source_{configuration.source_id:02d}.bin"
+    if file_name.lower() != expected_name.lower():
+        raise ValueError(
+            "Config transfers must use the source record filename matching the "
+            f"record ID. Expected {expected_name}, received {file_name}."
+        )
 
 
 def source_configuration_to_json(configuration: SourceConfiguration) -> dict[str, object]:
     return {
+        "sourceType": SOURCE_TYPE_NAMES[configuration.source_type],
         "sourceId": configuration.source_id,
-        "zoneName": configuration.zone_name,
         "sourceName": configuration.source_name,
-        "sourceVolume": configuration.source_volume,
-        "volumeLimit": configuration.volume_limit,
+        "isActive": configuration.is_active,
         "isMuted": configuration.is_muted,
-        "isEnabled": configuration.is_enabled,
-        "isBluetoothConnected": configuration.is_bluetooth_connected,
+        "isSelected": configuration.is_selected,
+        "volume": configuration.volume,
     }
 
 
@@ -281,40 +452,44 @@ def source_configuration_from_json(data: object) -> SourceConfiguration:
         raise ValueError("Every source configuration must be a JSON object")
 
     required_fields = {
+        "sourceType",
         "sourceId",
-        "zoneName",
         "sourceName",
-        "sourceVolume",
-        "volumeLimit",
+        "isActive",
         "isMuted",
-        "isEnabled",
-        "isBluetoothConnected",
+        "isSelected",
+        "volume",
     }
     missing_fields = required_fields.difference(data)
     if missing_fields:
         raise ValueError(f"Source configuration is missing: {', '.join(sorted(missing_fields))}")
 
-    for field_name in ("isMuted", "isEnabled", "isBluetoothConnected"):
+    for field_name in ("isActive", "isMuted", "isSelected"):
         if not isinstance(data[field_name], bool):
             raise ValueError(f"{field_name} must be true or false")
 
-    for field_name in ("sourceId", "sourceVolume", "volumeLimit"):
+    for field_name in ("sourceId", "volume"):
         if isinstance(data[field_name], bool) or not isinstance(data[field_name], int):
             raise ValueError(f"{field_name} must be a whole number")
 
-    for field_name in ("zoneName", "sourceName"):
+    for field_name in ("sourceType", "sourceName"):
         if not isinstance(data[field_name], str):
             raise ValueError(f"{field_name} must be text")
 
+    source_type_name = data["sourceType"]
+    if source_type_name not in SOURCE_TYPE_IDS:
+        raise ValueError(
+            f"sourceType must be one of: {', '.join(SOURCE_TYPE_IDS)}"
+        )
+
     configuration = SourceConfiguration(
+        source_type=SOURCE_TYPE_IDS[source_type_name],
         source_id=data["sourceId"],
-        zone_name=data["zoneName"],
         source_name=data["sourceName"],
-        source_volume=data["sourceVolume"],
-        volume_limit=data["volumeLimit"],
+        volume=data["volume"],
+        is_active=data["isActive"],
         is_muted=data["isMuted"],
-        is_enabled=data["isEnabled"],
-        is_bluetooth_connected=data["isBluetoothConnected"],
+        is_selected=data["isSelected"],
     )
     validate_source_configuration(configuration)
     return configuration
@@ -392,6 +567,7 @@ class BridgeClient:
         inter_frame_delay_s: float,
         byte_delay_s: float,
         log_target: str = "firmware",
+        write_timeout_s: float | None = WRITE_TIMEOUT_S,
     ):
         if serial is None:
             raise RuntimeError("Missing dependency: pyserial. Install with: python -m pip install pyserial")
@@ -403,11 +579,12 @@ class BridgeClient:
         self.pending_slave_frames: list[tuple[int, int, bytes]] = []
         self.inter_frame_delay_s = inter_frame_delay_s
         self.byte_delay_s = byte_delay_s
+        self.write_timeout_s = write_timeout_s
         self.port = serial.Serial(
             port_name,
             baud_rate,
             timeout=ACK_TIMEOUT_S,
-            write_timeout=WRITE_TIMEOUT_S,
+            write_timeout=write_timeout_s,
             xonxoff=False,
             rtscts=False,
             dsrdtr=False,
@@ -418,12 +595,26 @@ class BridgeClient:
 
     def close(self) -> None:
         if self.port and self.port.is_open:
-            if self.selected_operation is not None:
+            try:
+                if self.selected_operation is not None:
+                    try:
+                        self.release_operation()
+                    except Exception as exc:
+                        self._log(f"Could not release PC UART operation during close: {exc}", "bridge")
+            finally:
+                # A write_timeout=0 operation can still be pending in the
+                # Windows driver.  Cancel it before pyserial tries to restore
+                # COM timeouts; otherwise Serial.close() itself can block and
+                # leave the port owned by this worker.
                 try:
-                    self.release_operation()
-                except Exception as exc:
-                    self._log(f"Could not release PC UART operation during close: {exc}", "bridge")
-            self.port.close()
+                    self.port.cancel_write()
+                except Exception:
+                    pass
+                try:
+                    self.port.cancel_read()
+                except Exception:
+                    pass
+                self.port.close()
 
     def _log(self, text: str, category: str = "info") -> None:
         if self.log_target == "file":
@@ -476,6 +667,14 @@ class BridgeClient:
         return command, sequence, payload
 
     def _log_slave_frame(self, command: int, sequence: int, payload: bytes) -> None:
+        if command == CMD_CONFIG_READ:
+            source_id = payload[0] if payload else -1
+            self._log(
+                f"Configuration readback frame: source={source_id}, bytes={max(0, len(payload) - 1)}",
+                "bridge",
+            )
+            return
+
         if command not in VALID_BOOTLOADER_REPLY_COMMANDS:
             payload_text = " ".join(f"{byte:02X}" for byte in payload)
             self._log(
@@ -597,7 +796,11 @@ class BridgeClient:
             return status, error_code
 
         if status == UART_NACK:
-            raise RuntimeError(f"Bridge NACK: cmd={command}, seq={sequence}, error={error_code}")
+            error_name = UART_ERROR_NAMES.get(error_code, "UnknownError")
+            raise RuntimeError(
+                f"Bridge NACK: cmd={command}, seq={sequence}, "
+                f"error={error_code} ({error_name})"
+            )
 
         raise RuntimeError(f"Unexpected bridge response 0x{status:02X}: cmd={command}, seq={sequence}")
 
@@ -610,6 +813,24 @@ class BridgeClient:
         self.send_pc_uart_command(CMD_SELECT_OPERATION, bytes([operation]))
         self.selected_operation = operation
         self._log(f"Selected PC UART operation {operation}", "bridge")
+
+    def ping_uart_receiver(self, timeout_s: float = ACK_TIMEOUT_S) -> bool:
+        """Test the MCU UART receive thread without invoking the BLUP parser."""
+        self.write_raw(b"?")
+        self._log("PC-to-MCU probe byte was accepted by the COM driver", "bridge")
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            response = self.port.read(1)
+            if response == b"!":
+                self._log("MCU UART receiver returned the probe reply", "bridge")
+                return True
+            if response:
+                byte = response[0]
+                if 32 <= byte <= 126:
+                    self._log(f"UART text/noise during receiver probe: {chr(byte)}", "bridge")
+                else:
+                    self._log(f"UART byte/noise during receiver probe: 0x{byte:02X}", "bridge")
+        return False
 
     def release_operation(self) -> None:
         self.send_pc_uart_command(CMD_RELEASE_OPERATION)
@@ -656,11 +877,49 @@ class BridgeClient:
         # The MCU returns its hub to Idle after finalizing a bulk transfer.
         self.selected_operation = None
 
+    def read_source_configuration_record(self, source_id: int) -> bytes:
+        if self.selected_operation != OPERATION_LOCAL_BULK_FILE:
+            raise RuntimeError("Local Bulk File operation is not selected")
+        if not 0 <= source_id < NUMBER_OF_AUDIO_SOURCES:
+            raise ValueError(f"Invalid source ID: {source_id}")
+
+        self.send_pc_uart_command(CMD_CONFIG_READ, bytes([source_id]))
+        response = self.wait_for_slave_frame(CMD_CONFIG_READ, timeout_s=3.0)
+        if response is None:
+            raise TimeoutError(
+                f"Timeout waiting for source {source_id:02d} configuration readback"
+            )
+
+        _command, _sequence, payload = response
+        expected_length = 1 + SOURCE_CONFIG_RECORD.size
+        if len(payload) != expected_length:
+            raise RuntimeError(
+                f"Source {source_id:02d} readback has {len(payload)} bytes; "
+                f"expected {expected_length}"
+            )
+        if payload[0] != source_id:
+            raise RuntimeError(
+                f"Source readback ID mismatch: received {payload[0]}, expected {source_id}"
+            )
+
+        record = payload[1:]
+        configuration = decode_source_configuration(record)
+        if configuration.source_id != source_id:
+            raise RuntimeError(
+                f"Record source ID mismatch: received {configuration.source_id}, "
+                f"expected {source_id}"
+            )
+        return record
+
     def write_raw(self, data: bytes) -> None:
         try:
             self._write_raw_once(data)
         except serial.SerialTimeoutException as exc:
-            self._log("Serial TX stalled while writing to bridge; reset the bridge board if this repeats", "error")
+            self._log(
+                "MCU-Link VCOM PC-to-board TX is stalled; unplug and reconnect "
+                "the MCU-Link USB cable before retrying",
+                "error",
+            )
             try:
                 self.port.reset_output_buffer()
             except Exception:
@@ -668,17 +927,32 @@ class BridgeClient:
             raise TimeoutError("Serial write timeout") from exc
 
     def _write_raw_once(self, data: bytes) -> None:
-        if self.byte_delay_s <= 0:
+        # A zero timeout is reserved for explicit non-blocking diagnostics.
+        # Production transfers use a finite write timeout so a queued Windows
+        # overlapped write is not mistaken for data that reached MCU-Link.
+        if self.write_timeout_s == 0 or self.byte_delay_s <= 0:
             written = self.port.write(data)
             if written != len(data):
                 raise TimeoutError(f"Serial short write: {written}/{len(data)} bytes")
         else:
-            for byte in data:
-                written = self.port.write(bytes([byte]))
-                if written != 1:
-                    raise TimeoutError("Serial short write while sending byte")
-                time.sleep(self.byte_delay_s)
-        self.port.flush()
+            # Do not issue one Windows/USB driver transaction per UART byte.
+            # The UART baud rate already serializes bytes on the wire, while
+            # small chunks retain the configured receiver pacing without
+            # creating hundreds of overlapped COM writes per frame.
+            for offset in range(0, len(data), SERIAL_PACED_WRITE_CHUNK_SIZE):
+                chunk = data[offset : offset + SERIAL_PACED_WRITE_CHUNK_SIZE]
+                written = self.port.write(chunk)
+                if written != len(chunk):
+                    raise TimeoutError(
+                        f"Serial short write: {written}/{len(chunk)} bytes"
+                    )
+                if offset + len(chunk) < len(data):
+                    time.sleep(self.byte_delay_s * len(chunk))
+        # A blocking Windows write has already completed when port.write()
+        # returns.  Avoid flush() in watchdog mode because some MCU-Link VCOM
+        # drivers keep out_waiting asserted and can block there indefinitely.
+        if self.write_timeout_s != 0:
+            self.port.flush()
 
     def _write_probe_byte(self) -> bool:
         for _attempt in range(PROBE_WRITE_RETRY_COUNT):
@@ -757,13 +1031,12 @@ class FirmwareUpdateGui:
             f"Source {source_id:02d}" for source_id in range(NUMBER_OF_AUDIO_SOURCES)
         )
         self.source_selector = tk.StringVar(value=self.source_selector_values[0])
-        self.source_zone_name = tk.StringVar()
+        self.source_type = tk.StringVar()
         self.source_name = tk.StringVar()
         self.source_volume = tk.StringVar()
-        self.source_volume_limit = tk.StringVar()
+        self.source_is_active = tk.BooleanVar()
         self.source_is_muted = tk.BooleanVar()
-        self.source_is_enabled = tk.BooleanVar()
-        self.source_is_bluetooth_connected = tk.BooleanVar()
+        self.source_is_selected = tk.BooleanVar()
         self.source_config_status = tk.StringVar(
             value=f"Editing 1 of {NUMBER_OF_AUDIO_SOURCES} source configurations."
         )
@@ -779,6 +1052,9 @@ class FirmwareUpdateGui:
         self.operation_buttons: dict[str, ttk.Button] = {}
         self.file_transfer_selection: ttk.LabelFrame | None = None
         self.source_config_frame: ttk.LabelFrame | None = None
+        self.file_transfer_file_widgets: list[tk.Widget] = []
+        self.send_transfer_file_button: ttk.Button | None = None
+        self.clear_file_messages_button: ttk.Button | None = None
 
         self._build_layout()
         self.root.after(100, self._drain_log_queue)
@@ -914,19 +1190,45 @@ class FirmwareUpdateGui:
         type_box.grid(row=0, column=1, sticky=tk.W, padx=8, pady=(0, 8))
         type_box.bind("<<ComboboxSelected>>", self._on_file_transfer_type_changed)
 
-        ttk.Label(selection, text="File").grid(row=1, column=0, sticky=tk.W)
-        ttk.Entry(selection, textvariable=self.file_transfer_path).grid(
-            row=1, column=1, sticky=tk.EW, padx=8
+        file_label = ttk.Label(selection, text="File")
+        file_label.grid(row=1, column=0, sticky=tk.W)
+        file_entry = ttk.Entry(selection, textvariable=self.file_transfer_path)
+        file_entry.grid(row=1, column=1, sticky=tk.EW, padx=8)
+        browse_button = ttk.Button(
+            selection,
+            text="Browse",
+            command=self.browse_transfer_file,
         )
-        ttk.Button(selection, text="Browse", command=self.browse_transfer_file).grid(row=1, column=2, padx=4)
-        ttk.Button(selection, text="Load", command=self.load_transfer_file).grid(row=1, column=3, padx=4)
+        browse_button.grid(row=1, column=2, padx=4)
+        load_button = ttk.Button(
+            selection,
+            text="Load",
+            command=self.load_transfer_file,
+        )
+        load_button.grid(row=1, column=3, padx=4)
+        self.file_transfer_file_widgets = [
+            file_label,
+            file_entry,
+            browse_button,
+            load_button,
+        ]
 
         self._build_source_configuration_editor(parent)
 
         actions = ttk.Frame(parent, padding=(0, 10, 0, 8))
         actions.pack(fill=tk.X)
-        ttk.Button(actions, text="Send File", command=self.send_transfer_file).pack(side=tk.LEFT)
-        ttk.Button(actions, text="Clear Messages", command=self.clear_file_messages).pack(side=tk.LEFT, padx=8)
+        self.send_transfer_file_button = ttk.Button(
+            actions,
+            text="Send File",
+            command=self.send_transfer_file,
+        )
+        self.send_transfer_file_button.pack(side=tk.LEFT)
+        self.clear_file_messages_button = ttk.Button(
+            actions,
+            text="Clear Messages",
+            command=self.clear_file_messages,
+        )
+        self.clear_file_messages_button.pack(side=tk.LEFT, padx=8)
 
         ttk.Label(parent, textvariable=self.file_transfer_status).pack(fill=tk.X, pady=(0, 6))
 
@@ -992,9 +1294,15 @@ class FirmwareUpdateGui:
             command=lambda: self._navigate_source_configuration(1),
         ).grid(row=0, column=3, padx=(6, 0))
 
-        ttk.Label(frame, text="Zone Name").grid(row=1, column=0, sticky=tk.W, pady=4)
-        ttk.Entry(frame, textvariable=self.source_zone_name).grid(
-            row=1, column=1, sticky=tk.EW, padx=(8, 18), pady=4
+        ttk.Label(frame, text="Source Type").grid(row=1, column=0, sticky=tk.W, pady=4)
+        ttk.Combobox(
+            frame,
+            textvariable=self.source_type,
+            values=tuple(SOURCE_TYPE_IDS),
+            state="readonly",
+            width=16,
+        ).grid(
+            row=1, column=1, sticky=tk.W, padx=(8, 18), pady=4
         )
 
         ttk.Label(frame, text="Source Name").grid(row=1, column=2, sticky=tk.W, pady=4)
@@ -1002,7 +1310,7 @@ class FirmwareUpdateGui:
             row=1, column=3, sticky=tk.EW, padx=(8, 0), pady=4
         )
 
-        ttk.Label(frame, text="Source Volume").grid(row=2, column=0, sticky=tk.W, pady=4)
+        ttk.Label(frame, text="Volume").grid(row=2, column=0, sticky=tk.W, pady=4)
         ttk.Spinbox(
             frame,
             textvariable=self.source_volume,
@@ -1011,21 +1319,16 @@ class FirmwareUpdateGui:
             width=8,
         ).grid(row=2, column=1, sticky=tk.W, padx=(8, 18), pady=4)
 
-        ttk.Label(frame, text="Volume Limit").grid(row=2, column=2, sticky=tk.W, pady=4)
-        ttk.Spinbox(
-            frame,
-            textvariable=self.source_volume_limit,
-            from_=0,
-            to=100,
-            width=8,
-        ).grid(row=2, column=3, sticky=tk.W, padx=(8, 0), pady=4)
+        ttk.Label(frame, text="Source ID").grid(row=2, column=2, sticky=tk.W, pady=4)
+        self.source_id_label = ttk.Label(frame)
+        self.source_id_label.grid(row=2, column=3, sticky=tk.W, padx=(8, 0), pady=4)
 
         flags = ttk.Frame(frame)
         flags.grid(row=3, column=0, columnspan=4, sticky=tk.W, pady=(6, 8))
         ttk.Checkbutton(
             flags,
-            text="Is Enabled",
-            variable=self.source_is_enabled,
+            text="Is Active",
+            variable=self.source_is_active,
         ).pack(side=tk.LEFT, padx=(0, 18))
         ttk.Checkbutton(
             flags,
@@ -1034,8 +1337,8 @@ class FirmwareUpdateGui:
         ).pack(side=tk.LEFT, padx=(0, 18))
         ttk.Checkbutton(
             flags,
-            text="Is Bluetooth Connected",
-            variable=self.source_is_bluetooth_connected,
+            text="Is Selected",
+            variable=self.source_is_selected,
         ).pack(side=tk.LEFT)
 
         actions = ttk.Frame(frame)
@@ -1055,19 +1358,41 @@ class FirmwareUpdateGui:
             text=f"Generate {NUMBER_OF_AUDIO_SOURCES} Binary Files",
             command=self._generate_source_configuration_files,
         ).pack(side=tk.LEFT, padx=6)
+        ttk.Button(
+            actions,
+            text="Write Current Source to MCU",
+            command=self._send_current_source_configuration,
+        ).pack(side=tk.LEFT, padx=6)
+        ttk.Button(
+            actions,
+            text=f"Read Back {NUMBER_OF_AUDIO_SOURCES} Binary Files",
+            command=self._read_source_configuration_files,
+        ).pack(side=tk.LEFT, padx=6)
 
         ttk.Label(frame, textvariable=self.source_config_status).grid(
             row=5, column=0, columnspan=4, sticky=tk.W
         )
 
     def _on_file_transfer_type_changed(self, _event=None) -> None:
+        self.file_transfer_source = None
+        self.file_transfer_data = b""
+        self.file_transfer_path.set("")
+        self.file_transfer_progress.set(0.0)
+        self.file_transfer_percent.set("0%")
+        self.file_transfer_status.set(
+            f"Select a {self.file_transfer_type.get()} file to transfer."
+        )
         self._update_file_transfer_type_view()
 
     def _update_file_transfer_type_view(self) -> None:
         if self.source_config_frame is None or self.file_transfer_selection is None:
             return
 
-        if self.file_transfer_type.get() == "Data":
+        if self.file_transfer_type.get() == "Config":
+            for widget in self.file_transfer_file_widgets:
+                widget.grid_remove()
+            if self.send_transfer_file_button is not None:
+                self.send_transfer_file_button.pack_forget()
             self.source_config_frame.pack(
                 fill=tk.X,
                 pady=(8, 0),
@@ -1075,18 +1400,28 @@ class FirmwareUpdateGui:
             )
         else:
             self.source_config_frame.pack_forget()
+            for widget in self.file_transfer_file_widgets:
+                widget.grid()
+            if (
+                self.send_transfer_file_button is not None
+                and not self.send_transfer_file_button.winfo_manager()
+            ):
+                pack_options: dict[str, object] = {"side": tk.LEFT}
+                if self.clear_file_messages_button is not None:
+                    pack_options["before"] = self.clear_file_messages_button
+                self.send_transfer_file_button.pack(**pack_options)
 
     def _load_source_configuration_into_editor(self, source_index: int) -> None:
         configuration = self.source_configurations[source_index]
         self.current_source_index = source_index
         self.source_selector.set(self.source_selector_values[source_index])
-        self.source_zone_name.set(configuration.zone_name)
+        self.source_type.set(SOURCE_TYPE_NAMES[configuration.source_type])
         self.source_name.set(configuration.source_name)
-        self.source_volume.set(str(configuration.source_volume))
-        self.source_volume_limit.set(str(configuration.volume_limit))
+        self.source_volume.set(str(configuration.volume))
+        self.source_id_label.configure(text=str(configuration.source_id))
+        self.source_is_active.set(configuration.is_active)
         self.source_is_muted.set(configuration.is_muted)
-        self.source_is_enabled.set(configuration.is_enabled)
-        self.source_is_bluetooth_connected.set(configuration.is_bluetooth_connected)
+        self.source_is_selected.set(configuration.is_selected)
         self.source_config_status.set(
             f"Editing source {source_index + 1} of {NUMBER_OF_AUDIO_SOURCES} "
             f"(ID {configuration.source_id})."
@@ -1095,20 +1430,22 @@ class FirmwareUpdateGui:
     def _commit_source_configuration_editor(self, show_error: bool = True) -> bool:
         try:
             try:
-                source_volume = int(self.source_volume.get().strip())
-                volume_limit = int(self.source_volume_limit.get().strip())
+                volume = int(self.source_volume.get().strip())
             except ValueError as exc:
-                raise ValueError("Source Volume and Volume Limit must be whole numbers") from exc
+                raise ValueError("Volume must be a whole number") from exc
+
+            source_type_name = self.source_type.get()
+            if source_type_name not in SOURCE_TYPE_IDS:
+                raise ValueError("Select a valid Source Type")
 
             configuration = SourceConfiguration(
+                source_type=SOURCE_TYPE_IDS[source_type_name],
                 source_id=self.current_source_index,
-                zone_name=self.source_zone_name.get().strip(),
                 source_name=self.source_name.get().strip(),
-                source_volume=source_volume,
-                volume_limit=volume_limit,
+                volume=volume,
+                is_active=self.source_is_active.get(),
                 is_muted=self.source_is_muted.get(),
-                is_enabled=self.source_is_enabled.get(),
-                is_bluetooth_connected=self.source_is_bluetooth_connected.get(),
+                is_selected=self.source_is_selected.get(),
             )
             validate_source_configuration(configuration)
             self.source_configurations[self.current_source_index] = configuration
@@ -1146,19 +1483,7 @@ class FirmwareUpdateGui:
         self._load_source_configuration_into_editor(new_index)
 
     def _validate_all_source_configurations(self) -> None:
-        if len(self.source_configurations) != NUMBER_OF_AUDIO_SOURCES:
-            raise ValueError(
-                f"Expected {NUMBER_OF_AUDIO_SOURCES} source configurations, "
-                f"found {len(self.source_configurations)}"
-            )
-
-        for expected_source_id, configuration in enumerate(self.source_configurations):
-            if configuration.source_id != expected_source_id:
-                raise ValueError(
-                    f"Source slot {expected_source_id} contains source ID "
-                    f"{configuration.source_id}"
-                )
-            validate_source_configuration(configuration)
+        validate_all_source_configurations(self.source_configurations)
 
     def _save_source_configuration_project(self) -> None:
         if not self._commit_source_configuration_editor():
@@ -1276,6 +1601,11 @@ class FirmwareUpdateGui:
 
             for configuration, output_path in zip(self.source_configurations, output_paths):
                 encoded_configuration = encode_source_configuration(configuration)
+                decoded_configuration = decode_source_configuration(encoded_configuration)
+                if decoded_configuration != configuration:
+                    raise ValueError(
+                        f"Source {configuration.source_id}: Generated binary verification failed"
+                    )
                 temporary_path = output_path.with_name(output_path.name + ".tmp")
                 temporary_path.write_bytes(encoded_configuration)
                 temporary_path.replace(output_path)
@@ -1294,6 +1624,56 @@ class FirmwareUpdateGui:
             )
         except Exception as exc:
             messagebox.showerror("Generation failed", str(exc))
+
+    def _send_current_source_configuration(self) -> None:
+        if not self._commit_source_configuration_editor():
+            return
+
+        try:
+            self._validate_all_source_configurations()
+            configuration = self.source_configurations[self.current_source_index]
+            file_data = encode_source_configuration(configuration)
+            file_name = f"source_{configuration.source_id:02d}.bin"
+            validate_bulk_file_selection(FILE_TYPE_CONFIG, file_name, file_data)
+        except Exception as exc:
+            messagebox.showerror("Configuration transfer failed", str(exc))
+            return
+
+        self.file_transfer_type.set("Config")
+        self.file_transfer_path.set("")
+        self.file_transfer_source = None
+        self.file_transfer_data = b""
+        self.start_worker(
+            lambda: self._send_transfer_file_worker(
+                "Config",
+                FILE_TYPE_CONFIG,
+                file_name,
+                file_data,
+            )
+        )
+
+    def _read_source_configuration_files(self) -> None:
+        directory_text = filedialog.askdirectory(
+            title="Select directory for source configuration readback"
+        )
+        if not directory_text:
+            return
+
+        output_directory = Path(directory_text).expanduser().resolve()
+        existing_paths = [
+            output_directory / f"source_{source_id:02d}.bin"
+            for source_id in range(NUMBER_OF_AUDIO_SOURCES)
+            if (output_directory / f"source_{source_id:02d}.bin").exists()
+        ]
+        if existing_paths and not messagebox.askyesno(
+            "Replace existing readback files",
+            f"{len(existing_paths)} source configuration file(s) already exist. Replace them?",
+        ):
+            return
+
+        self.start_worker(
+            lambda: self._read_source_configuration_files_worker(output_directory)
+        )
 
     def browse_image(self) -> None:
         path = filedialog.askopenfilename(
@@ -1396,7 +1776,19 @@ class FirmwareUpdateGui:
 
     def load_transfer_file(self) -> None:
         try:
-            source = Path(self.file_transfer_path.get()).expanduser().resolve()
+            requested_path = self.file_transfer_path.get().strip()
+            if not requested_path:
+                raise ValueError(
+                    "No transfer file is selected. Use Browse for a file transfer, "
+                    "or use Send Current Source for the displayed configuration."
+                )
+
+            source = Path(requested_path).expanduser().resolve()
+            if not source.exists():
+                raise ValueError(f"Transfer file does not exist: {source}")
+            if not source.is_file():
+                raise ValueError(f"Transfer path is not a file: {source}")
+
             data = source.read_bytes()
             encoded_name = source.name.encode("utf-8")
             if not data:
@@ -1442,7 +1834,10 @@ class FirmwareUpdateGui:
         file_type_name = self.file_transfer_type.get()
         file_type = FILE_TYPE_IDS.get(file_type_name)
         if file_type is None:
-            messagebox.showerror("Invalid file type", "Select Data, Image, or Icon.")
+            messagebox.showerror(
+                "Invalid file type",
+                "Select Config, Data, Image, or Icon.",
+            )
             return
 
         source = self.file_transfer_source
@@ -1453,6 +1848,12 @@ class FirmwareUpdateGui:
         # cannot alter a transfer that is already in progress.
         file_data = self.file_transfer_data
         file_name = source.name
+        try:
+            validate_bulk_file_selection(file_type, file_name, file_data)
+        except Exception as exc:
+            messagebox.showerror("Invalid transfer file", str(exc))
+            return
+
         self.start_worker(
             lambda: self._send_transfer_file_worker(
                 file_type_name,
@@ -1508,20 +1909,68 @@ class FirmwareUpdateGui:
             messagebox.showwarning("Busy", "A transfer is already running.")
             return
 
+        # Tk variables must only be read by the Tk/UI thread.  Workers use this
+        # immutable snapshot; calling StringVar.get() from a worker can block
+        # indefinitely on Windows while Tk is servicing another callback.
+        try:
+            self._worker_connection_settings = SerialConnectionSettings(
+                port_name=self.port_name.get().strip(),
+                baud_rate=int(self.baud_rate.get()),
+                start_delay_s=float(self.start_delay.get()),
+                inter_frame_delay_s=float(self.inter_frame_delay.get()),
+                byte_delay_s=float(self.byte_delay.get()),
+            )
+        except ValueError as exc:
+            messagebox.showerror("Invalid UART setting", str(exc))
+            return
+
+        if not self._worker_connection_settings.port_name:
+            messagebox.showerror("Invalid UART setting", "Enter a COM port name.")
+            return
+
         self.worker = threading.Thread(target=target, daemon=True)
         self.worker.start()
 
-    def _open_client(self, operation: int = OPERATION_FIRMWARE_BRIDGE) -> BridgeClient:
+    def _open_client(
+        self,
+        operation: int = OPERATION_FIRMWARE_BRIDGE,
+        write_timeout_s: float | None = WRITE_TIMEOUT_S,
+        byte_delay_s: float | None = None,
+        probe_receiver: bool = False,
+    ) -> BridgeClient:
+        settings = self._worker_connection_settings
+        log_target = "file" if operation == OPERATION_LOCAL_BULK_FILE else "firmware"
+        if operation == OPERATION_LOCAL_BULK_FILE:
+            self.log_queue.put(
+                (
+                    "file_log",
+                    "bridge",
+                    f"Opening {settings.port_name} at {settings.baud_rate} baud",
+                )
+            )
+
         client = BridgeClient(
-            self.port_name.get(),
-            int(self.baud_rate.get()),
+            settings.port_name,
+            settings.baud_rate,
             self.log_queue,
-            float(self.start_delay.get()),
-            float(self.inter_frame_delay.get()),
-            float(self.byte_delay.get()),
-            "file" if operation == OPERATION_LOCAL_BULK_FILE else "firmware",
+            settings.start_delay_s,
+            settings.inter_frame_delay_s,
+            settings.byte_delay_s if byte_delay_s is None else byte_delay_s,
+            log_target,
+            write_timeout_s,
         )
         try:
+            if probe_receiver:
+                self.log_queue.put(("file_log", "bridge", "Probing PC-to-MCU UART receiver"))
+                if not client.ping_uart_receiver():
+                    raise RuntimeError(
+                        "PC-to-MCU UART probe failed: MCU did not return '!' for '?'"
+                    )
+                self.log_queue.put(("file_log", "bridge", "PC-to-MCU UART receiver probe passed"))
+            if operation == OPERATION_LOCAL_BULK_FILE:
+                self.log_queue.put(
+                    ("file_log", "bridge", f"Selecting PC UART operation {operation}")
+                )
             client.select_operation(operation)
         except Exception:
             client.close()
@@ -1545,7 +1994,10 @@ class FirmwareUpdateGui:
         self.log_queue.put(("file_log", "info", f"Starting {file_type_name} transfer: {file_name}"))
 
         try:
-            client = self._open_client(OPERATION_LOCAL_BULK_FILE)
+            client = self._open_client(
+                OPERATION_LOCAL_BULK_FILE,
+                write_timeout_s=FILE_TRANSFER_WRITE_TIMEOUT_S,
+            )
             client.send_bulk_start(file_type, file_name, file_data)
             self.log_queue.put(
                 ("file_log", "bridge", f"Bulk START accepted: {total_size} bytes, {total_frames} frames")
@@ -1585,6 +2037,81 @@ class FirmwareUpdateGui:
         except Exception as exc:
             self.log_queue.put(("file_log", "error", f"ERROR: {exc}"))
             self.log_queue.put(("file_status", f"Transfer failed: {exc}"))
+        finally:
+            if client is not None:
+                client.close()
+
+    def _read_source_configuration_files_worker(
+        self,
+        output_directory: Path,
+    ) -> None:
+        client: BridgeClient | None = None
+        total_bytes = NUMBER_OF_AUDIO_SOURCES * SOURCE_CONFIG_RECORD.size
+        records: list[bytes] = []
+        configurations: list[SourceConfiguration] = []
+
+        self.log_queue.put(("file_progress", 0, total_bytes))
+        self.log_queue.put(("file_status", "Reading source configurations from external flash..."))
+        self.log_queue.put(
+            (
+                "file_log",
+                "info",
+                f"Starting readback of {NUMBER_OF_AUDIO_SOURCES} source configuration files",
+            )
+        )
+
+        try:
+            client = self._open_client(
+                OPERATION_LOCAL_BULK_FILE,
+                write_timeout_s=FILE_TRANSFER_WRITE_TIMEOUT_S,
+            )
+            transferred = 0
+            for source_id in range(NUMBER_OF_AUDIO_SOURCES):
+                record = client.read_source_configuration_record(source_id)
+                configuration = decode_source_configuration(record)
+                records.append(record)
+                configurations.append(configuration)
+                transferred += len(record)
+                self.log_queue.put(("file_progress", transferred, total_bytes))
+                self.log_queue.put(
+                    (
+                        "file_log",
+                        "recovery",
+                        f"Read source_{source_id:02d}.bin ({len(record)} bytes)",
+                    )
+                )
+
+            validate_all_source_configurations(configurations)
+            output_directory.mkdir(parents=True, exist_ok=True)
+            for source_id, record in enumerate(records):
+                output_path = output_directory / f"source_{source_id:02d}.bin"
+                temporary_path = output_path.with_name(output_path.name + ".tmp")
+                temporary_path.write_bytes(record)
+                temporary_path.replace(output_path)
+
+            self.log_queue.put(
+                (
+                    "source_config_readback",
+                    configurations,
+                    str(output_directory),
+                )
+            )
+            self.log_queue.put(
+                (
+                    "file_log",
+                    "recovery",
+                    f"Readback completed and saved to {output_directory}",
+                )
+            )
+            self.log_queue.put(
+                (
+                    "file_status",
+                    f"Readback complete: {NUMBER_OF_AUDIO_SOURCES} configuration files",
+                )
+            )
+        except Exception as exc:
+            self.log_queue.put(("file_log", "error", f"ERROR: {exc}"))
+            self.log_queue.put(("file_status", f"Readback failed: {exc}"))
         finally:
             if client is not None:
                 client.close()
@@ -1815,6 +2342,13 @@ class FirmwareUpdateGui:
                 if len(item) == 3 and item[0] == "file_progress":
                     _event, transferred, total = item
                     self._update_file_progress(int(transferred), int(total))
+                elif len(item) == 3 and item[0] == "source_config_readback":
+                    _event, configurations, output_directory = item
+                    self.source_configurations = list(configurations)
+                    self._load_source_configuration_into_editor(0)
+                    self.source_config_status.set(
+                        f"Read back configurations from external flash; saved to {output_directory}"
+                    )
                 elif len(item) == 3 and item[0] == "file_log":
                     _event, category, text = item
                     self.append_file_log(str(text), str(category))

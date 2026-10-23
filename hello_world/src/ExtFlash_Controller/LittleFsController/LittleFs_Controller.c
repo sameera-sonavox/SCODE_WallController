@@ -9,6 +9,7 @@
 #include <string.h>
 #include <stdatomic.h>
 #include "../ExtFlash_DeviceTreeEntries.h"
+#include "../AudioSrcConfiguration/AudioSrcConfiguration.h"
 
 //#define EXT_LITTLEFS_NODE            DT_NODELABEL(ext_littlefs)
 FS_FSTAB_DECLARE_ENTRY(EXT_LITTLEFS_NODE);
@@ -56,7 +57,6 @@ static int iCheck_FileAvailability(const char *caFullPath, bool *pbIsAvailable);
 static bool bBuild_Validate_FullPathName( const char *pcafilePath, const char *pcafileName, char *caFullPath, size_t uiFilePathLen, size_t uiFileNameLen );
 static bool bContains_DotPathComponent(const char *pcaPath);
 static int iCheckOrCreateDirectory(const char *caDirectoryPath, bool *pbIsAvailable);
-static sT_FileInfo_t *pstGetFile_ByFileName(const char *pcaFileName);
 static sT_FileInfo_t *pstGetFile_ByFilePath(const char *pcaFilePath);
 static int iDelete_AllFiles_InsideDirectory(const char *pcaDirectoryPath);
 static int iDelete_FileInternal(const char *pcaFilePath);
@@ -91,6 +91,15 @@ bool bInit_ExtFlash_FsController( void )
     if(iGetFileInfo(EXT_LITTLEFS_MOUNT_POINT) != 0)
     {
         return false;
+    }
+    if(!bLoad_AudioConfigurations())
+    {
+        /*
+         * A blank or newly provisioned unit has no source configuration yet.
+         * Keep the filesystem and PC UART services available so the files can
+         * be transferred into the Config directory.
+         */
+        printf("Audio source configuration is not available\n\r");
     }
     return true;
 }
@@ -952,12 +961,6 @@ static bool bBuild_Validate_FullPathName( const char *pcafilePath, const char *p
         FHALT("LittlFS: Invalid Characters inside the Filename @FileName: %s", pcafileName);
         return false;        
     }
-    if(stTFileCatalog.uiFileCount >= MAX_FILE_COUNT)
-    {
-        FHALT("LittlFS: Maximum number of files reached @Count: %d", stTFileCatalog.uiFileCount);
-        return false;        
-    }
-
     const char *pcaSeparator = (pcafilePath[uiFilePathLen - 1U] == '/')? "":"/";
 
     int iPathLength = snprintf(caFullPath, MAX_FILE_PATH_LENGTH, "%s%s%s", 
@@ -1396,24 +1399,6 @@ static int iDelete_FileInternal(const char *pcaFilePath)
     return iResult;
 }
 
-static sT_FileInfo_t *pstGetFile_ByFileName(const char *pcaFileName)
-{
-    if(pcaFileName == NULL)
-    {
-        FHALT("LittleFS: Null Pointer reference for the File Name");
-        return NULL;
-    }
-
-    for(uint8_t i = 0; i < stTFileCatalog.uiFileCount; i++)
-    {
-        if(strcmp(pstFileInfo[i].caFileName, pcaFileName) == 0)
-        {
-            return &pstFileInfo[i];
-        }
-    }
-    return NULL;
-}
-
 static sT_FileInfo_t *pstGetFile_ByFilePath(const char *pcaFilePath)
 {
     if(pcaFilePath == NULL)
@@ -1432,9 +1417,98 @@ static sT_FileInfo_t *pstGetFile_ByFilePath(const char *pcaFilePath)
     return NULL;
 }
 
-int iWrite_ToFileBin(const char *pcFileName, const uint8_t *puiDataBuff, size_t uiLen, uint16_t uiMaxWriteSize)
+int iRead_FromFileBin(const char *pcaFilePath, uint8_t *puiData, size_t uiLength)
 {
-    if(pcFileName == NULL)
+    if(pcaFilePath == NULL)
+    {
+        FHALT("LittleFS: Null Pointer for file name");
+        return -EINVAL;
+    }
+    if(puiData == NULL)
+    {
+        FHALT("LittleFS: Null Pointer for data buffer");
+        return -EINVAL;        
+    }
+    if(uiLength == 0U)
+    {
+        FHALT("LittleFS: Invalid Write Length for data buffer");
+        return -EINVAL;        
+    }
+    if(bIsBulkTransferActive())
+    {
+        return -EBUSY;
+    }
+
+    if(k_mutex_lock(&kMutex_FileAccess, K_MSEC(100)) != 0)
+    {
+        FHALT("LittleFS: File cannot be accessed, since File System is busy");
+        return -EBUSY;        
+    }
+    
+    int iResult = 0;
+    bool bFileOpen = false;
+    struct fs_file_t stTFile;
+    struct fs_dirent stTFileInfo;
+
+    fs_file_t_init(&stTFile);
+
+    iResult = fs_stat(pcaFilePath, &stTFileInfo);
+    if(iResult != 0)
+    {
+        goto cleanup;
+    }
+    
+    if((stTFileInfo.type != FS_DIR_ENTRY_FILE) || (stTFileInfo.size != uiLength))
+    {
+        iResult = -EMSGSIZE;
+        goto cleanup;
+    }
+    
+    iResult = fs_open(&stTFile, pcaFilePath, FS_O_READ);
+    if(iResult != 0)
+    {
+        goto cleanup;
+    }
+
+    bFileOpen = true;
+    size_t uiTotalRead = 0U;
+
+    while (uiTotalRead < uiLength)
+    {
+        ssize_t iReadLength = fs_read(&stTFile, &puiData[uiTotalRead], uiLength - uiTotalRead);
+
+        if(iReadLength < 0)
+        {
+            iResult = (int)iReadLength;
+            goto cleanup;
+        }
+        if(iReadLength == 0)
+        {
+            iResult = -EIO;
+            goto cleanup;
+        }
+
+        uiTotalRead += (size_t)iReadLength;
+    }
+
+    cleanup:
+
+    if(bFileOpen)
+    {
+        const int iCloseResult = fs_close(&stTFile);
+        if(iCloseResult != 0 && iResult == 0)
+        {
+            iResult = iCloseResult;
+        }
+    }
+
+    k_mutex_unlock(&kMutex_FileAccess);
+    return iResult;    
+}
+
+int iWrite_ToFileBin(const char *pcaFilePath, const uint8_t *puiDataBuff, size_t uiLen, uint16_t uiMaxWriteSize)
+{
+    if(pcaFilePath == NULL)
     {
         FHALT("LittleFS: Null Pointer for file name");
         return -EINVAL;
@@ -1465,7 +1539,7 @@ int iWrite_ToFileBin(const char *pcFileName, const uint8_t *puiDataBuff, size_t 
         return -EBUSY;        
     }
 
-    sT_FileInfo_t *pstFile = pstGetFile_ByFileName(pcFileName);
+    sT_FileInfo_t *pstFile = pstGetFile_ByFilePath(pcaFilePath);
     if(pstFile == NULL)
     {
         k_mutex_unlock(&kMutex_FileAccess);
@@ -1476,7 +1550,7 @@ int iWrite_ToFileBin(const char *pcFileName, const uint8_t *puiDataBuff, size_t 
     struct fs_file_t stTFile;
     fs_file_t_init(&stTFile);
 
-    int iResult = fs_open(&stTFile, pstFile->caFilePath, FS_O_APPEND | FS_O_WRITE);
+    int iResult = fs_open(&stTFile, pstFile->caFilePath, FS_O_WRITE | FS_O_TRUNC);
     if(iResult != 0)
     {
         k_mutex_unlock(&kMutex_FileAccess);

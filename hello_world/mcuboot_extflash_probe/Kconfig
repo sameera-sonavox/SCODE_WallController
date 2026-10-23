@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config WALLCONTROLLER_MCUBOOT_EXTFLASH_PROBE
+    bool "Probe the Wall Controller external flash during MCUboot startup"
+    depends on FLASH && SPI_NOR
+    default n
+    help
+      Perform a non-destructive readiness, size, and read check against the
+      external SPI NOR device before MCUboot starts its normal image handling.

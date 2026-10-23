@@ -2,6 +2,7 @@
 #include "GenericMacro.h"
 #include "../../LVGL_Controller/LVGL_Display_Controller.h"
 #include "../../LVGL_Controller/UI_ScreenManager/UI_ScreenManager.h"
+#include "../../ExtFlash_Controller/AudioSrcConfiguration/AudioSrcConfiguration.h"
 
 #ifdef DEBUG_WALLCONTROLLER_STATEMACHINE
     #define print_WallCtrl                      printf
@@ -15,6 +16,7 @@ static inline void vWallCtrl_Set_State(eWallCtrlState_t eNewState);
 static inline eWallCtrlState_t eGet_WallCtrl_State(void);
 static inline bool IsStateFirstEntry( void );
 static eWallCtrlCmd_t eGet_WallCtrl_Command(void);
+static void vLoad_UIScreen( void );
 
 static void vHandle_IdleState( void );
 static void vHandle_StartupState( void );
@@ -101,17 +103,54 @@ static void vHandle_BootloaderState( void )
     }
 }
 
+static void vLoad_UIScreen( void )
+{
+    sT_AudioSourceConfig_t stAudioConfig = {0};
+    int iResult = iGet_SelectedAudioSrcConfig(&stAudioConfig);
+    if(iResult != 0 && iResult != -ENODATA)
+    {
+        FHALT("Screen Load Request for Screen[%d] failed with Error: %d", eScreen_AudioSrcInfo, iResult);
+        return;
+    }
+
+    eScreenId_t eNewScreenId = (stAudioConfig.bIsMute)? eScreen_SourceMute: eScreen_AudioSrcInfo;
+
+    if(iResult == 0)
+    {
+        if(!bRequest_UIScreen(eNewScreenId))
+        {
+            FHALT("Screen Load Request for Screen[%d] failed", eNewScreenId);
+        }
+        return;        
+    }
+
+    memset(&stAudioConfig, 0, sizeof(stAudioConfig));
+    if(!bGet_AudioSrcConfigurations(eAudio_Src_0, &stAudioConfig ))
+    {
+        FHALT("Audio Source :%d could not be selected", eAudio_Src_0);
+        return;        
+    }
+    
+    iResult = iUpdate_AudioScrSelected(eAudio_Src_0, true);
+    if(iResult != 0)
+    {
+        FHALT("Audio Source :%d could not be selected", eAudio_Src_0);
+        return;
+    }
+
+    eNewScreenId = (stAudioConfig.bIsMute)? eScreen_SourceMute: eScreen_AudioSrcInfo;
+    if(!bRequest_UIScreen(eNewScreenId))
+    {
+        FHALT("Screen Load Request for Screen[%d] failed", eNewScreenId);
+    }    
+}
+
 static void vHandle_ActiveState( void )
 {
     if(IsStateFirstEntry())
     {
         print_WallCtrl("Wall Controller State: Active\n");
-        if(!bRequest_UIScreen(eScreen_AudioSrcInfo))
-        {
-            FHALT("Screen Load Request for Screen[%d] failed", eScreen_AudioSrcInfo);
-            stTWallCtrlStateMachine.bIsFirstEntry = true;
-            return;
-        }
+        vLoad_UIScreen();      
     }
 
     eWallCtrlCmd_t eCmd = eGet_WallCtrl_Command();

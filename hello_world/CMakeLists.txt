@@ -29,11 +29,32 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(hello_world)
 
 set(SELECTED_AUDIO_GUI_DIR
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/LVGL_Controller/Screens/SelectedAudioSource/GUI_Guider_Generated")
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/LVGL_Controller/Screens/SelectedAudioSource/SelectedAudioSrc_Bluetooth/GUI_Guider_Generated")
 set(SELECTED_AUDIO_GUI_SCREEN_SOURCE
     "${SELECTED_AUDIO_GUI_DIR}/generated/screens/gg_Home_revised.c")
 set(SELECTED_AUDIO_GUI_EVENT_SOURCE
     "${SELECTED_AUDIO_GUI_DIR}/generated/events/gg_event_Home_revised.c")
+
+set(SELECTED_AUDIO_WIRED_GUI_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/LVGL_Controller/Screens/SelectedAudioSource/SelectedAudioSrc_Wired/GUI_Guider_Generated")
+set(SELECTED_AUDIO_WIRED_GUI_SCREEN_SOURCE
+    "${SELECTED_AUDIO_WIRED_GUI_DIR}/generated/screens/gg_Home_revised.c")
+set(SELECTED_AUDIO_WIRED_GUI_EVENT_SOURCE
+    "${SELECTED_AUDIO_WIRED_GUI_DIR}/generated/events/gg_event_Home_revised.c")
+
+set(AUDIO_SRC_SELECTION_GUI_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/LVGL_Controller/Screens/AudioSourceSelect_Menu/GUI_Guider_Generated")
+set(AUDIO_SRC_SELECTION_GUI_SCREEN_SOURCE
+    "${AUDIO_SRC_SELECTION_GUI_DIR}/generated/screens/gg_Source_Selection_revised.c")
+set(AUDIO_SRC_SELECTION_GUI_EVENT_SOURCE
+    "${AUDIO_SRC_SELECTION_GUI_DIR}/generated/events/gg_event_Source_Selection_revised.c")
+
+set(AUDIO_SRC_MUTE_GUI_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/LVGL_Controller/Screens/AudioSrcMute/GUI_Guider_Generated")
+set(AUDIO_SRC_MUTE_GUI_SCREEN_SOURCE
+    "${AUDIO_SRC_MUTE_GUI_DIR}/generated/screens/gg_Home_revised.c")
+set(AUDIO_SRC_MUTE_GUI_EVENT_SOURCE
+    "${AUDIO_SRC_MUTE_GUI_DIR}/generated/events/gg_event_Home_revised.c")
 
 zephyr_compile_options("-ffile-prefix-map=${MCXA_LIB_DIR}=MCXA_LIB")
 
@@ -79,6 +100,18 @@ target_sources(app PRIVATE
                 src/LVGL_Controller/Screens/Screen_Welcome/GUI_Guider_Generated/generated/events/gg_event_Sleep_Screen.c
                 #Selected Audio Source
                 src/LVGL_Controller/Screens/SelectedAudioSource/SelectedAudioSrcCtrl.c
+                src/LVGL_Controller/Screens/SelectedAudioSource/SelectedAudioSrc_Bluetooth/SelectedAudioSrcBluetooth_View.c
+                src/LVGL_Controller/Screens/SelectedAudioSource/SelectedAudioSrc_Wired/SelectedAudioSrcWired_View.c
+
+                #AudioSrc Selection Screen
+                src/LVGL_Controller/Screens/AudioSourceSelect_Menu/AudioSrcSelection.c 
+                ${AUDIO_SRC_SELECTION_GUI_SCREEN_SOURCE}
+                ${AUDIO_SRC_SELECTION_GUI_EVENT_SOURCE}
+                
+                #Muted Audio Source Screen
+                src/LVGL_Controller/Screens/AudioSrcMute/AudioSrcMute.c
+                ${AUDIO_SRC_MUTE_GUI_SCREEN_SOURCE}
+                ${AUDIO_SRC_MUTE_GUI_EVENT_SOURCE}
                 ${SELECTED_AUDIO_GUI_SCREEN_SOURCE}
                 ${SELECTED_AUDIO_GUI_EVENT_SOURCE}
                 ${SELECTED_AUDIO_GUI_DIR}/generated/assets/fonts/lv_font_montserratMedium_45.c
@@ -86,6 +119,10 @@ target_sources(app PRIVATE
                 ${SELECTED_AUDIO_GUI_DIR}/generated/assets/fonts/lv_font_Roboto_Bold_10.c
                 ${SELECTED_AUDIO_GUI_DIR}/generated/assets/fonts/lv_font_Roboto_Bold_12.c
                 ${SELECTED_AUDIO_GUI_DIR}/generated/assets/fonts/lv_font_Roboto_Bold_13.c
+                ${SELECTED_AUDIO_WIRED_GUI_SCREEN_SOURCE}
+                ${SELECTED_AUDIO_WIRED_GUI_EVENT_SOURCE}
+                ${SELECTED_AUDIO_WIRED_GUI_DIR}/generated/assets/fonts/lv_font_Roboto_Bold_16.c
+                ${SELECTED_AUDIO_WIRED_GUI_DIR}/generated/assets/fonts/lv_font_Roboto_Bold_52.c
 
                 src/PC_UART_API/PC_UART_API.c
                 src/PC_UART_API/PC_UART_FWBridgeService.c
@@ -99,6 +136,7 @@ target_sources(app PRIVATE
                 src/ExtFlash_Controller/Flash_Memory_ValidateTest/Flash_Memory_ValidateTest.c 
                 src/ExtFlash_Controller/ZephyrFlashMiddleWare/ZephyrFlashMiddleWare.c
                 src/ExtFlash_Controller/LittleFsController/LittleFs_Controller.c
+                src/ExtFlash_Controller/AudioSrcConfiguration/AudioSrcConfiguration.c 
                 
                 src/Temp/Temp.c)
 
@@ -107,14 +145,37 @@ target_include_directories(app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/LVGL_Controller/Screens/Screen_Welcome/GUI_Guider_Generated/custom
 )
 
-# Both GUI Guider exports contain headers with the same names. Keep the
-# SelectedAudioSource include search local to its generated implementation so
-# it cannot accidentally include the Welcome screen's gui_guider.h.
+# The GUI Guider exports contain headers with the same names. Keep each
+# generated source's include search local to its own export.
 set_property(SOURCE
     ${SELECTED_AUDIO_GUI_SCREEN_SOURCE}
     ${SELECTED_AUDIO_GUI_EVENT_SOURCE}
     APPEND PROPERTY COMPILE_OPTIONS
         "-iquote${SELECTED_AUDIO_GUI_DIR}/generated"
         "-iquote${SELECTED_AUDIO_GUI_DIR}/custom"
+)
+
+set_property(SOURCE
+    ${SELECTED_AUDIO_WIRED_GUI_SCREEN_SOURCE}
+    ${SELECTED_AUDIO_WIRED_GUI_EVENT_SOURCE}
+    APPEND PROPERTY COMPILE_OPTIONS
+        "-iquote${SELECTED_AUDIO_WIRED_GUI_DIR}/generated"
+        "-iquote${SELECTED_AUDIO_WIRED_GUI_DIR}/custom"
+)
+
+set_property(SOURCE
+    ${AUDIO_SRC_SELECTION_GUI_SCREEN_SOURCE}
+    ${AUDIO_SRC_SELECTION_GUI_EVENT_SOURCE}
+    APPEND PROPERTY COMPILE_OPTIONS
+        "-iquote${AUDIO_SRC_SELECTION_GUI_DIR}/generated"
+        "-iquote${AUDIO_SRC_SELECTION_GUI_DIR}/custom"
+)
+
+set_property(SOURCE
+    ${AUDIO_SRC_MUTE_GUI_SCREEN_SOURCE}
+    ${AUDIO_SRC_MUTE_GUI_EVENT_SOURCE}
+    APPEND PROPERTY COMPILE_OPTIONS
+        "-iquote${AUDIO_SRC_MUTE_GUI_DIR}/generated"
+        "-iquote${AUDIO_SRC_MUTE_GUI_DIR}/custom"
 )
 
