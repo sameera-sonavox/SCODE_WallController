@@ -56,6 +56,13 @@ set(AUDIO_SRC_MUTE_GUI_SCREEN_SOURCE
 set(AUDIO_SRC_MUTE_GUI_EVENT_SOURCE
     "${AUDIO_SRC_MUTE_GUI_DIR}/generated/events/gg_event_Home_revised.c")
 
+set(MENU_SELECTION_GUI_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/LVGL_Controller/Screens/MenuSelection/GUI_Guider_Generated")
+set(MENU_SELECTION_GUI_SCREEN_SOURCE
+    "${MENU_SELECTION_GUI_DIR}/generated/screens/gg_Menu_revised.c")
+set(MENU_SELECTION_GUI_EVENT_SOURCE
+    "${MENU_SELECTION_GUI_DIR}/generated/events/gg_event_Menu_revised.c")
+
 zephyr_compile_options("-ffile-prefix-map=${MCXA_LIB_DIR}=MCXA_LIB")
 
 # Keep the generated external-IRQ vectors immediately after the Cortex-M
@@ -112,6 +119,11 @@ target_sources(app PRIVATE
                 src/LVGL_Controller/Screens/AudioSrcMute/AudioSrcMute.c
                 ${AUDIO_SRC_MUTE_GUI_SCREEN_SOURCE}
                 ${AUDIO_SRC_MUTE_GUI_EVENT_SOURCE}
+
+                #Main Menu Selection Screen
+                ${MENU_SELECTION_GUI_SCREEN_SOURCE}
+                ${MENU_SELECTION_GUI_EVENT_SOURCE}
+
                 ${SELECTED_AUDIO_GUI_SCREEN_SOURCE}
                 ${SELECTED_AUDIO_GUI_EVENT_SOURCE}
                 ${SELECTED_AUDIO_GUI_DIR}/generated/assets/fonts/lv_font_montserratMedium_45.c
@@ -123,6 +135,9 @@ target_sources(app PRIVATE
                 ${SELECTED_AUDIO_WIRED_GUI_EVENT_SOURCE}
                 ${SELECTED_AUDIO_WIRED_GUI_DIR}/generated/assets/fonts/lv_font_Roboto_Bold_16.c
                 ${SELECTED_AUDIO_WIRED_GUI_DIR}/generated/assets/fonts/lv_font_Roboto_Bold_52.c
+
+                #MainMenuSelection
+                src/LVGL_Controller/Screens/MenuSelection/MenuSelection.c
 
                 src/PC_UART_API/PC_UART_API.c
                 src/PC_UART_API/PC_UART_FWBridgeService.c
@@ -177,5 +192,13 @@ set_property(SOURCE
     APPEND PROPERTY COMPILE_OPTIONS
         "-iquote${AUDIO_SRC_MUTE_GUI_DIR}/generated"
         "-iquote${AUDIO_SRC_MUTE_GUI_DIR}/custom"
+)
+
+set_property(SOURCE
+    ${MENU_SELECTION_GUI_SCREEN_SOURCE}
+    ${MENU_SELECTION_GUI_EVENT_SOURCE}
+    APPEND PROPERTY COMPILE_OPTIONS
+        "-iquote${MENU_SELECTION_GUI_DIR}/generated"
+        "-iquote${MENU_SELECTION_GUI_DIR}/custom"
 )
 

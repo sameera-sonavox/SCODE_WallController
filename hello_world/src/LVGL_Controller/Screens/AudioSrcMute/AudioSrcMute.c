@@ -287,12 +287,15 @@ static bool bLoad_BluetoothIcon(sT_AudioSrcMute_Context_t *pstScreenContext)
 
 static void vExit_AudioSrcMuteScreen(sT_UIScreenRuntime_t *pstAudioSrcMuteScreenRuntime)
 {
+    ARG_UNUSED(pstAudioSrcMuteScreenRuntime);
+
     atomic_store_explicit(&stTAudSrcMuteCtrlContext.bIsUnmuteInProgress, false, memory_order_release);
 
     struct k_work_sync stWorkSync;
     (void)k_work_cancel_delayable_sync(&stTMuteContext.kwork_SubmitNewScreen, &stWorkSync);
+
     atomic_store_explicit(&stTMuteContext.bWorkCompleted, false, memory_order_release);
-    stTMuteContext.eSourceId = eNUMBER_OF_AUDIO_SOURCES;    
+    stTMuteContext.eSourceId = eNUMBER_OF_AUDIO_SOURCES;
 }
 
 static void vHandle_EncoderInput(sT_UIScreenRuntime_t *pstAudioSrcMuteScreenRuntime, const sT_UIInput_t *pstTUIInput)
@@ -322,7 +325,7 @@ static void vHandle_EncoderInput(sT_UIScreenRuntime_t *pstAudioSrcMuteScreenRunt
     }
 
     atomic_store_explicit(&stTMuteContext.bWorkCompleted, false, memory_order_release);
-    k_work_schedule(&stTMuteContext.kwork_SubmitNewScreen, K_MSEC(UNMUTE_OPERATION_RESIDENCE_TIME_ms));
+    (void)k_work_schedule(&stTMuteContext.kwork_SubmitNewScreen, K_MSEC(UNMUTE_OPERATION_RESIDENCE_TIME_ms));
 }
 
 static void vHandle_ScreenSubmit( struct k_work *work)
@@ -346,6 +349,8 @@ static void vHandle_ScreenSubmit( struct k_work *work)
 
 static void vRun_AudioSrcMuteScreen(sT_UIScreenRuntime_t *pstAudioSrcMuteScreenRuntime)
 {
+    ARG_UNUSED(pstAudioSrcMuteScreenRuntime);
+
     bool bCompleted = atomic_load_explicit(&stTMuteContext.bWorkCompleted, memory_order_acquire);
     if(bCompleted)
     {        

@@ -19,6 +19,7 @@ typedef enum
     eScreen_AudioSrcInfo,
     eScreen_SourceSelect,
     eScreen_SourceMute,
+    eScreen_MainMenu,
     eNUMBER_OF_SCREENs
 } eScreenId_t;
 

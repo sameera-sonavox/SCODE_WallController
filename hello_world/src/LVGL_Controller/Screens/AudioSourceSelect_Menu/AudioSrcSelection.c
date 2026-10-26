@@ -288,7 +288,11 @@ static void vHandle_EncoderButonPress(sT_UIScreenRuntime_t *pstAudioSelectionSrc
 
     if(eFocusedItem == eItemSelect_Menu)
     {
-        FHALT("Menu navigation is not implemented yet");
+        (void)k_work_cancel_delayable(&kWork_SubmitNewScreen);
+        if(!bRequest_UIScreen(eScreen_MainMenu))
+        {
+            FHALT("Screen Navigation Failed");
+        }
         return;
     }
 

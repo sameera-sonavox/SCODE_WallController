@@ -9,6 +9,7 @@
 #include "../Screens/SelectedAudioSource/SelectedAudioSrcCtrl.h"
 #include "../Screens/AudioSourceSelect_Menu/AudioSrcSelection.h"
 #include "../Screens/AudioSrcMute/AudioSrcMute.h"
+#include "../Screens/MenuSelection/MenuSelection.h"
 
 #include <zephyr/kernel.h>
 
@@ -229,6 +230,10 @@ static bool bInit_ScreenData( void )
             case eScreen_SourceMute:
                 bResult = bInit_AudioSrcMuteScreen(&staScreenRuntimeInfo[uiScreenIndex],
                                                    &staScreenDescriptors[uiScreenIndex]);
+                break;
+            case eScreen_MainMenu:
+                bResult = bInit_MainMenuScreen(&staScreenRuntimeInfo[uiScreenIndex],
+                                               &staScreenDescriptors[uiScreenIndex]);
                 break;
             case eScreen_None:
             case eNUMBER_OF_SCREENs:
