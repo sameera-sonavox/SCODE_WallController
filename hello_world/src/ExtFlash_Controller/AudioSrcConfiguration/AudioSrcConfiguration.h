@@ -24,6 +24,6 @@ extern int iUpdate_AudioSrcVolume(eAudioSrc_Id_t eSrcId, uint8_t uiVolume);
 extern int iGet_SelectedAudioSrcConfig( sT_AudioSourceConfig_t *pstConfigSnapshot );
 extern int iUpdate_AudioScrSelected(eAudioSrc_Id_t eSrcId, bool bIsSelected);
 extern void vGetSnapshot_Of_AudioSrcName(eAudioSrc_Id_t eSrcId, char *pcaSrcName);
-extern bool bUpdate_AudioSrcMuteStatus(eAudioSrc_Id_t eSrcId, bool IsMute);
+extern bool bUpdate_AudioSrcMuteStatus(eAudioSrc_Id_t eSrcId, bool bIsMute);
 
 #endif//AUDIOSRCCONFIGURATION_H

@@ -151,11 +151,16 @@ int iGet_SelectedAudioSrcConfig( sT_AudioSourceConfig_t *pstConfigSnapshot )
     return 0;
 }
 
-bool bUpdate_AudioSrcMuteStatus(eAudioSrc_Id_t eSrcId, bool IsMute)
+bool bUpdate_AudioSrcMuteStatus(eAudioSrc_Id_t eSrcId, bool bIsMute)
 {
     if(eSrcId >= eNUMBER_OF_AUDIO_SOURCES)
     {
         FHALT("Invalid Audio Source: %d", eSrcId);
+        return false;
+    }
+
+    if(!bAudioSrcMutexesInitialized)
+    {
         return false;
     }
 
@@ -165,9 +170,29 @@ bool bUpdate_AudioSrcMuteStatus(eAudioSrc_Id_t eSrcId, bool IsMute)
         return false;
     }
 
-    atomic_store_explicit(&staAudioSrcConfigs[eSrcId].bIsMute, IsMute, memory_order_release);
+    const bool bPreviousMuteState = atomic_load_explicit(&staAudioSrcConfigs[eSrcId].bIsMute,
+                                                         memory_order_acquire);
+    if(bPreviousMuteState == bIsMute)
+    {
+        return (iUnLock_AudioSourceAccess(eSrcId) == 0);
+    }
 
-    return (iUnLock_AudioSourceAccess(eSrcId) == 0);
+    atomic_store_explicit(&staAudioSrcConfigs[eSrcId].bIsMute,
+                          bIsMute,
+                          memory_order_release);
+
+    iResult = iUpdate_AudioSrcFile(&staAudioSrcConfigs[eSrcId]);
+
+    if(iResult != 0)
+    {
+        atomic_store_explicit(&staAudioSrcConfigs[eSrcId].bIsMute,
+                              bPreviousMuteState,
+                              memory_order_release);
+    }
+
+    const int iUnlockResult = iUnLock_AudioSourceAccess(eSrcId);
+
+    return ((iResult == 0) && (iUnlockResult == 0));
 }
 
 static int iLock_AudioSourceAccess(eAudioSrc_Id_t eSrcId)

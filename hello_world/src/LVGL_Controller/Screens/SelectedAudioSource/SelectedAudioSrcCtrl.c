@@ -40,6 +40,11 @@ typedef struct
 
     bool bButtonPressed;
     bool bLongPressHandled;
+
+    _Atomic bool bIsMuteTransitionPending;
+    _Atomic bool bIsMuteTransitionReady;
+    uint32_t uiMutePendingSince_ms;
+    uint32_t uiMuteTransitionDelay_ms;
 } sT_AudioSrcScreenContext_t;
 
 static sT_AudioSrcScreenContext_t stTAudioSrcScreenContext;
@@ -57,6 +62,7 @@ static void vHandle_SourceLongPress(sT_AudioSrcScreenContext_t *pstScreenContext
 static void vHandle_EncoderInput(sT_UIScreenRuntime_t *pstAudioSrcScreen, const sT_UIInput_t *pstTUIInput);
 static void vHandle_EncoderRotation(sT_UIScreenRuntime_t *pstAudioSrcScreen, const sT_UIInput_t *pstTUIInput);
 static void vHandle_EncoderButonPress(sT_UIScreenRuntime_t *pstAudioSrcScreen, const sT_UIInput_t *pstTUIInput);
+static bool bCanExecute_MuteScreenTransition(sT_AudioSrcScreenContext_t *pstScreenContext);
 
 bool bInit_AudioSrcInfoScreen(sT_UIScreenRuntime_t *pstAudioSrcScreen, sT_UIScreenDescriptor_t *pstScreenDescriptor)
 {
@@ -83,6 +89,9 @@ bool bInit_AudioSrcInfoScreen(sT_UIScreenRuntime_t *pstAudioSrcScreen, sT_UIScre
     pstScreenDescriptor->pfHandleInput = vHandle_EncoderInput;
     pstScreenDescriptor->pfRun = vRun_AudioSrcInfoScreen;
 
+    atomic_store_explicit(&stTAudioSrcScreenContext.bIsMuteTransitionPending, false, memory_order_release);
+    atomic_store_explicit(&stTAudioSrcScreenContext.bIsMuteTransitionReady, false, memory_order_release);
+
     return true;    
 }
 
@@ -103,6 +112,11 @@ static void vRun_AudioSrcInfoScreen(sT_UIScreenRuntime_t *pstAudioSrcScreen)
     }
 
     (void)iUpdate_AudioSrcFile(pstScreenContext, false);
+
+    if(bCanExecute_MuteScreenTransition(pstScreenContext))
+    {
+        return;
+    }
 
     const uint32_t uiCurrentTime_ms = k_uptime_get_32();
     if(pstScreenContext->bButtonPressed && !pstScreenContext->bLongPressHandled)
@@ -129,7 +143,55 @@ static void vRun_AudioSrcInfoScreen(sT_UIScreenRuntime_t *pstAudioSrcScreen)
             pstScreenContext->uiLastShortRelease_ms = 0U;
         }
     }
+}
 
+static bool bCanExecute_MuteScreenTransition(sT_AudioSrcScreenContext_t *pstScreenContext)
+{
+    if(pstScreenContext == NULL)
+    {
+        FHALT("Null Pointer Reference");
+        return false;
+    }
+
+    const bool bIsMuteTransitPending = atomic_load_explicit(&pstScreenContext->bIsMuteTransitionPending,
+                                                            memory_order_acquire);
+    if(!bIsMuteTransitPending || pstScreenContext->uiVolume != 0U)
+    {
+        return false;
+    }
+
+    bool bIsMuteTransitionReady = atomic_load_explicit(&pstScreenContext->bIsMuteTransitionReady,
+                                                        memory_order_acquire);
+    if(!bIsMuteTransitionReady)
+    {
+        /* Do not enter the mute screen until volume zero is stored. */
+        if(pstScreenContext->bIsVolumeDirty)
+        {
+            return false;
+        }
+
+        const uint32_t uiElapsedTime_ms = k_uptime_get_32() - pstScreenContext->uiMutePendingSince_ms;
+        if(uiElapsedTime_ms < pstScreenContext->uiMuteTransitionDelay_ms)
+        {
+            return false;
+        }
+
+        atomic_store_explicit(
+            &pstScreenContext->bIsMuteTransitionReady,
+            true,
+            memory_order_release);
+    }
+
+    if(!bUpdate_AudioSrcMuteStatus(pstScreenContext->eSrcId, true))
+    {
+        return false;
+    }
+    if(!bRequest_UIScreen(eScreen_SourceMute))
+    {
+        return false;
+    }
+
+    return true;
 }
 
 static int iUpdate_AudioSrcFile(sT_AudioSrcScreenContext_t *pstScreenContext, bool bForceUpdate)
@@ -161,7 +223,7 @@ static int iUpdate_AudioSrcFile(sT_AudioSrcScreenContext_t *pstScreenContext, bo
         pstScreenContext->uiVolDirtySince_ms = uiTimeNow_ms;
         return iResult;
     }
-    
+   
     pstScreenContext->bIsVolumeDirty = false;
     return 0;
 }
@@ -297,9 +359,28 @@ static void vHandle_EncoderRotation(sT_UIScreenRuntime_t *pstAudioSrcScreen, con
 
     uint8_t uiPrevious_Volume = pstScreenContext->uiVolume;
     pstScreenContext->uiVolume = (uint8_t)iVol;
+
     if(uiPrevious_Volume == pstScreenContext->uiVolume)
     {
         return;
+    }
+
+    const uint32_t uiTimeNow_ms = k_uptime_get_32();
+
+    if(uiPrevious_Volume > 0U && pstScreenContext->uiVolume == 0U)
+    {
+        pstScreenContext->uiMutePendingSince_ms = uiTimeNow_ms;
+        pstScreenContext->uiMuteTransitionDelay_ms =
+            AUDIO_MUTE_TRANSITION_AFTER_ZERO_DELAY_ms;
+        atomic_store_explicit(&pstScreenContext->bIsMuteTransitionPending, true, memory_order_release);
+        atomic_store_explicit(&pstScreenContext->bIsMuteTransitionReady, false, memory_order_release);
+    }
+    else if(pstScreenContext->uiVolume > 0U)
+    {
+        pstScreenContext->uiMutePendingSince_ms = 0U;
+        pstScreenContext->uiMuteTransitionDelay_ms = 0U;
+        atomic_store_explicit(&pstScreenContext->bIsMuteTransitionPending, false, memory_order_release);
+        atomic_store_explicit(&pstScreenContext->bIsMuteTransitionReady, false, memory_order_release);        
     }
 
     lv_slider_set_value(pstScreenContext->pstVolSlider, pstScreenContext->uiVolume, LV_ANIM_ON);
@@ -310,8 +391,6 @@ static void vHandle_EncoderRotation(sT_UIScreenRuntime_t *pstAudioSrcScreen, con
                         (unsigned int)pstScreenContext->uiVolume);
         lv_label_set_text_static(pstScreenContext->pstVolLabel, pstScreenContext->caVolumeText);
     }
-
-    const uint32_t uiTimeNow_ms = k_uptime_get_32();
 
     if(!pstScreenContext->bIsVolumeDirty)
     {
@@ -443,6 +522,22 @@ static void vEnter_AudioSrcInfoScreen(sT_UIScreenRuntime_t *pstAudioSrcScreen)
         lvgl_unlock();
         return;
     }
+
+    if(pstScreenContext->uiVolume == 0U)
+    {
+        pstScreenContext->uiMutePendingSince_ms = k_uptime_get_32();
+        pstScreenContext->uiMuteTransitionDelay_ms =
+            AUDIO_MUTE_RETRANSITION_DELAY_ms;
+        atomic_store_explicit(&pstScreenContext->bIsMuteTransitionPending, true, memory_order_release);
+        atomic_store_explicit(&pstScreenContext->bIsMuteTransitionReady, false, memory_order_release);
+    }
+    else
+    {
+        pstScreenContext->uiMutePendingSince_ms = 0U;
+        pstScreenContext->uiMuteTransitionDelay_ms = 0U;
+        atomic_store_explicit(&pstScreenContext->bIsMuteTransitionPending, false, memory_order_release);
+        atomic_store_explicit(&pstScreenContext->bIsMuteTransitionReady, false, memory_order_release);
+    }
     
     lv_screen_load(pstAudioSrcScreen->pstRootObj);
     lvgl_unlock();
@@ -538,6 +633,9 @@ static void vExit_AudioSrcInfoScreen(sT_UIScreenRuntime_t *pstAudioSrcScreen)
     {
         FHALT("Volume update failed during screen exit: %d", iResult);    
     }
+    
+    atomic_store_explicit(&pstScreenContext->bIsMuteTransitionPending, false, memory_order_release);
+    atomic_store_explicit(&pstScreenContext->bIsMuteTransitionReady, false, memory_order_release);
 
     pstScreenContext->bButtonPressed = false;
     pstScreenContext->bLongPressHandled = false;
