@@ -63,6 +63,20 @@ set(MENU_SELECTION_GUI_SCREEN_SOURCE
 set(MENU_SELECTION_GUI_EVENT_SOURCE
     "${MENU_SELECTION_GUI_DIR}/generated/events/gg_event_Menu_revised.c")
 
+set(BLUETOOTH_MENU_GUI_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/LVGL_Controller/Screens/BluetoothMenu/GUI_Guider_Generated")
+set(BLUETOOTH_MENU_GUI_SCREEN_SOURCE
+    "${BLUETOOTH_MENU_GUI_DIR}/generated/screens/gg_Bluetooth_Menu.c")
+set(BLUETOOTH_MENU_GUI_EVENT_SOURCE
+    "${BLUETOOTH_MENU_GUI_DIR}/generated/events/gg_event_Bluetooth_Menu.c")
+
+set(BLUETOOTH_CONNECTION_GUI_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/LVGL_Controller/Screens/BluetoothConnection/GUI_Guider_Generated")
+set(BLUETOOTH_CONNECTION_GUI_SCREEN_SOURCE
+    "${BLUETOOTH_CONNECTION_GUI_DIR}/generated/screens/gg_Connected_revised.c")
+set(BLUETOOTH_CONNECTION_GUI_EVENT_SOURCE
+    "${BLUETOOTH_CONNECTION_GUI_DIR}/generated/events/gg_event_Connected_revised.c")
+
 zephyr_compile_options("-ffile-prefix-map=${MCXA_LIB_DIR}=MCXA_LIB")
 
 # Keep the generated external-IRQ vectors immediately after the Cortex-M
@@ -123,6 +137,20 @@ target_sources(app PRIVATE
                 #Main Menu Selection Screen
                 ${MENU_SELECTION_GUI_SCREEN_SOURCE}
                 ${MENU_SELECTION_GUI_EVENT_SOURCE}
+
+                #Bluetooth Menu Screen
+                src/LVGL_Controller/Screens/BluetoothMenu/BluetoothMenu.c
+                ${BLUETOOTH_MENU_GUI_SCREEN_SOURCE}
+                ${BLUETOOTH_MENU_GUI_EVENT_SOURCE}
+                ${BLUETOOTH_MENU_GUI_DIR}/generated/assets/fonts/lv_font_Roboto_Bold_12.c
+                ${BLUETOOTH_MENU_GUI_DIR}/generated/assets/fonts/lv_font_Roboto_Bold_16.c
+
+                #Bluetooth Connection Screen
+                src/LVGL_Controller/Screens/BluetoothConnection/BluetoothControl.c
+                ${BLUETOOTH_CONNECTION_GUI_SCREEN_SOURCE}
+                ${BLUETOOTH_CONNECTION_GUI_EVENT_SOURCE}
+                ${BLUETOOTH_CONNECTION_GUI_DIR}/generated/assets/fonts/lv_font_Roboto_Bold_12.c
+                ${BLUETOOTH_CONNECTION_GUI_DIR}/generated/assets/fonts/lv_font_Roboto_Bold_16.c
 
                 ${SELECTED_AUDIO_GUI_SCREEN_SOURCE}
                 ${SELECTED_AUDIO_GUI_EVENT_SOURCE}
@@ -200,5 +228,21 @@ set_property(SOURCE
     APPEND PROPERTY COMPILE_OPTIONS
         "-iquote${MENU_SELECTION_GUI_DIR}/generated"
         "-iquote${MENU_SELECTION_GUI_DIR}/custom"
+)
+
+set_property(SOURCE
+    ${BLUETOOTH_MENU_GUI_SCREEN_SOURCE}
+    ${BLUETOOTH_MENU_GUI_EVENT_SOURCE}
+    APPEND PROPERTY COMPILE_OPTIONS
+        "-iquote${BLUETOOTH_MENU_GUI_DIR}/generated"
+        "-iquote${BLUETOOTH_MENU_GUI_DIR}/custom"
+)
+
+set_property(SOURCE
+    ${BLUETOOTH_CONNECTION_GUI_SCREEN_SOURCE}
+    ${BLUETOOTH_CONNECTION_GUI_EVENT_SOURCE}
+    APPEND PROPERTY COMPILE_OPTIONS
+        "-iquote${BLUETOOTH_CONNECTION_GUI_DIR}/generated"
+        "-iquote${BLUETOOTH_CONNECTION_GUI_DIR}/custom"
 )
 

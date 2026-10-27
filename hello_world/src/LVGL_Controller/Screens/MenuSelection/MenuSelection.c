@@ -344,7 +344,7 @@ static eMenuItem_t eGet_NextMenuItem(const sT_MenuSelectionScreen_Context_t *pst
 
 static void vHandle_EncoderButonPress(sT_UIScreenRuntime_t *pstMenuSelectionScreen, const sT_UIInput_t *pstTUIInput)
 {
-/*     if(pstTUIInput == NULL || pstMenuSelectionScreen == NULL)
+    if(pstTUIInput == NULL || pstMenuSelectionScreen == NULL)
     {
         FHALT("Null Pointer Reference");
         return;
@@ -355,63 +355,43 @@ static void vHandle_EncoderButonPress(sT_UIScreenRuntime_t *pstMenuSelectionScre
         return;
     }
 
-    sT_AudioSrcSelectionScreen_Context_t *pstScreenContext = (sT_AudioSrcSelectionScreen_Context_t *)pstMenuSelectionScreen->pvScreenData;
+    sT_MenuSelectionScreen_Context_t *pstScreenContext = (sT_MenuSelectionScreen_Context_t *)pstMenuSelectionScreen->pvScreenData;
     if(pstScreenContext == NULL)
     {
         FHALT("Audio Source Screen Context is Null");
         return;
     }
 
-    const eSelectedItem_t eFocusedItem = pstScreenContext->eFocusedItem;
+    const eMenuItem_t eFocusedItem = pstScreenContext->eFocusedItem;
 
-    if(eFocusedItem > eItemSelect_Back && eFocusedItem < eItemSelect_Menu)
+    if(eFocusedItem == eMenuItem_Back)
     {
-        const eAudioSrc_Id_t eSrcId = eGet_AudioSrcFromItem(eFocusedItem);
-        if(eSrcId >= eNUMBER_OF_AUDIO_SOURCES)
-        {
-            return;
-        }
-
-        const int iResult = iUpdate_AudioScrSelected(eSrcId, true);
-        if(iResult != 0)
-        {
-            FHALT("Source[%d] cannot be selected: %d", eSrcId, iResult);
-            return;
-        }
-        pstScreenContext->eCommittedSourceItem = eFocusedItem;
-
-        lvgl_lock();
-        vPlace_SelectionIcon(pstScreenContext->eCommittedSourceItem,
-                             pstScreenContext);
-        lvgl_unlock();
-
-        (void)k_work_reschedule(
-            &kWork_SubmitNewScreen,
-            K_MSEC(SCREEN_DISPLAY_WORKE_SCHEDULE_TIME_ms));
-        return;
-    }
-
-    if(eFocusedItem == eItemSelect_Back)
-    {
-        (void)k_work_cancel_delayable(&kWork_SubmitNewScreen);
-        if(!bRequest_UIScreen(eScreen_AudioSrcInfo))
+        //(void)k_work_cancel_delayable(&kWork_SubmitNewScreen);
+        if(!bRequest_UIScreen(eScreen_SourceSelect))
         {
             FHALT("Screen Navigation Failed");
         }
         return;
     }
 
-    if(eFocusedItem == eItemSelect_Menu)
+    if(eFocusedItem == eMenuItem_Bluetooth)
     {
-        (void)k_work_cancel_delayable(&kWork_SubmitNewScreen);
+        if(!bRequest_UIScreen(eScreen_BluetoothMenu))
+        {
+            FHALT("Screen Navigation Failed");
+        }
+        return;
+    }
+
+    if(eFocusedItem == eMenuItem_Info)
+    {
         if(!bRequest_UIScreen(eScreen_MainMenu))
         {
             FHALT("Screen Navigation Failed");
         }
         return;
     }
-
-    FHALT("Invalid focused item: %d", eFocusedItem); */
+    FHALT("Invalid focused item: %d", eFocusedItem);
 }
 
 static void vRun_AudioSrcSelectionScreen(sT_UIScreenRuntime_t *pstMenuSelectionScreen)

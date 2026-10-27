@@ -24,10 +24,10 @@ static inline void vClear_AnimatorStartFlag( void );
 static inline bool bIsAnimatorActive( void );
 
 void vStart_TextAnimator(const char *const pcaStringAnimate[],
-                        const char *pcaBaseString,
-                        uint8_t uiCount,
-                        TextAnimator_Callback_t animatorCallback,
-                        uint32_t uiPeriod_ms)
+                         const char *pcaBaseString,
+                         uint8_t uiCount,
+                         TextAnimator_Callback_t animatorCallback,
+                         uint32_t uiPeriod_ms)
 {
     if((pcaStringAnimate == NULL) ||
        (pcaBaseString == NULL) ||

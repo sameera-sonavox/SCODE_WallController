@@ -20,6 +20,8 @@ typedef enum
     eScreen_SourceSelect,
     eScreen_SourceMute,
     eScreen_MainMenu,
+    eScreen_BluetoothMenu,
+    eScreen_BluetoothControl,
     eNUMBER_OF_SCREENs
 } eScreenId_t;
 
@@ -119,6 +121,16 @@ typedef enum
     eNUMBER_OF_AUDIO_SRC_TYPEs
 } eAudioSrc_Type_t;
 
+typedef enum
+{
+    eBleState_None,
+    eBleState_Pairing,
+    eBleState_Disconnecting,
+    eBleState_Disconnected,
+    eBleState_Connected,
+    eNUMBER_OF_BLE_STATEs
+} eBLEState_t;
+
 typedef struct
 {
     eUIInputType_t eType;
@@ -137,6 +149,7 @@ typedef struct
     _Atomic bool bIsActive;
     _Atomic bool bIsMute;
     _Atomic bool bIsSelected;
+    _Atomic eBLEState_t eBleState;
     _Atomic uint16_t uiVolume;
 } sT_AudioSourceConfig_t;
 

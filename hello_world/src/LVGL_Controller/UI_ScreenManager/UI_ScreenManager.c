@@ -10,6 +10,8 @@
 #include "../Screens/AudioSourceSelect_Menu/AudioSrcSelection.h"
 #include "../Screens/AudioSrcMute/AudioSrcMute.h"
 #include "../Screens/MenuSelection/MenuSelection.h"
+#include "../Screens/BluetoothMenu/BluetoothMenu.h"
+#include "../Screens/BluetoothConnection/BluetoothControl.h"
 
 #include <zephyr/kernel.h>
 
@@ -234,6 +236,14 @@ static bool bInit_ScreenData( void )
             case eScreen_MainMenu:
                 bResult = bInit_MainMenuScreen(&staScreenRuntimeInfo[uiScreenIndex],
                                                &staScreenDescriptors[uiScreenIndex]);
+                break;
+            case eScreen_BluetoothMenu:
+                bResult = bInit_BluetoothMenuScreen(&staScreenRuntimeInfo[uiScreenIndex],
+                                                    &staScreenDescriptors[uiScreenIndex]);
+                break;
+            case eScreen_BluetoothControl:
+                bResult = bInit_BluetoothControlScreen(&staScreenRuntimeInfo[uiScreenIndex],
+                                                       &staScreenDescriptors[uiScreenIndex]);
                 break;
             case eScreen_None:
             case eNUMBER_OF_SCREENs:

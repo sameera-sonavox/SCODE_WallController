@@ -25,5 +25,8 @@ extern int iGet_SelectedAudioSrcConfig( sT_AudioSourceConfig_t *pstConfigSnapsho
 extern int iUpdate_AudioScrSelected(eAudioSrc_Id_t eSrcId, bool bIsSelected);
 extern void vGetSnapshot_Of_AudioSrcName(eAudioSrc_Id_t eSrcId, char *pcaSrcName);
 extern bool bUpdate_AudioSrcMuteStatus(eAudioSrc_Id_t eSrcId, bool bIsMute);
+extern eAudioSrc_Id_t eGet_BluetoothSource( void );
+extern eBLEState_t eGet_BleConnectionState( void );
+extern bool bSet_BleConnectionState(eBLEState_t eState);
 
 #endif//AUDIOSRCCONFIGURATION_H

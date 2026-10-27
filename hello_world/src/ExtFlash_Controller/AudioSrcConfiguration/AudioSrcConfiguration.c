@@ -392,6 +392,50 @@ static eAudioSrc_Id_t eFind_SelectedAudioSrc( void )
     return eNUMBER_OF_AUDIO_SOURCES;
 }
 
+eAudioSrc_Id_t eGet_BluetoothSource( void )
+{
+    for(uint8_t i = eAudio_Src_0; i < eNUMBER_OF_AUDIO_SOURCES; i++)
+    {
+        if(staAudioSrcConfigs[i].eSrcType == eAudioSrc_Type_Bluetooth)
+        {
+            return (eAudioSrc_Id_t)i;
+        }
+    }
+
+    return eNUMBER_OF_AUDIO_SOURCES;
+}
+
+eBLEState_t eGet_BleConnectionState( void )
+{
+    eAudioSrc_Id_t eId = eGet_BluetoothSource();
+    if(eId == eNUMBER_OF_AUDIO_SOURCES)
+    {
+        return eNUMBER_OF_BLE_STATEs;
+    }
+
+    eBLEState_t eState = atomic_load_explicit(&staAudioSrcConfigs[eId].eBleState, memory_order_acquire);
+    return eState;
+}
+
+bool bSet_BleConnectionState(eBLEState_t eState)
+{
+    if(eState <= eBleState_None || eState >= eNUMBER_OF_BLE_STATEs)
+    {
+        return false;
+    }
+
+    const eAudioSrc_Id_t eId = eGet_BluetoothSource();
+    if(eId >= eNUMBER_OF_AUDIO_SOURCES)
+    {
+        return false;
+    }
+
+    atomic_store_explicit(&staAudioSrcConfigs[eId].eBleState,
+                          eState,
+                          memory_order_release);
+    return true;
+}
+
 static bool bInit_AudioSrcMutexes( void )
 {
     if(bAudioSrcMutexesInitialized)
@@ -748,7 +792,9 @@ bool bLoad_AudioConfigurations( void )
         {
             Debug_AudioSrcConf_Printf("Invalid Source Configurations @SrcId: %d\n\r", uiSrcId);
             return false;            
-        }        
+        }
+        
+        atomic_store_explicit(&staTemp_AudioSrConfig[uiSrcId].eBleState, eBleState_Disconnected, memory_order_release);
     }
 
     if(!bValidate_AllSourceConfigurations(staTemp_AudioSrConfig))

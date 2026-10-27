@@ -48,7 +48,7 @@
 
 //File System
 #define MAX_FILE_NAME_LENGTH                        30U
-#define MAX_FILE_COUNT                              10U
+#define MAX_FILE_COUNT                              32U
 #define MAX_FILE_PATH_LENGTH                        100U
 #define MAX_DIRECTORY_COUNT                         10U
 #define MAX_FRAME_LENGTH                            256U
