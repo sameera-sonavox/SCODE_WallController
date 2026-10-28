@@ -23,6 +23,7 @@ typedef struct
 
     lv_obj_t *pstBleConnIcon;
     lv_obj_t *pstBleConText;
+    lv_obj_t *pstBleConLabel_Suffix;
 
     eBLEState_t eCurrentBleState;
     bool bAnimationInProgress;
@@ -32,7 +33,7 @@ static const char BleConnectionText[eNUMBER_OF_BLE_STATEs][24] = {
     [eBleState_None] = "",
     [eBleState_Pairing] = "Pairing",
     [eBleState_Disconnecting] = "Disconnecting",
-    [eBleState_Disconnected] = "Disconnected",
+    [eBleState_Disconnect] = "Disconnected",
     [eBleState_Connected] = "Connected"
 };
 
@@ -57,6 +58,7 @@ static void vTextAnimator_Callback(const char *pcaUpdateText);
 static void vStop_BluetoothIconAnimation(sT_BluetoothControl_Context_t *pstScreenContext);
 static void vStart_BluetoothPairingAnimation(sT_BluetoothControl_Context_t *pstScreenContext);
 static void vSet_BluetoothIconOpacity( void *pvObject, int32_t iOpacity);
+static bool bCreate_LabelForDisplay(sT_BluetoothControl_Context_t *pstScreenContext);
 
 bool bInit_BluetoothControlScreen(sT_UIScreenRuntime_t *pstBleControlScreen, 
                                   sT_UIScreenDescriptor_t *pstScreenDescriptor)
@@ -127,8 +129,11 @@ static bool bCreate_BluetoothConnControlScreen(sT_UIScreenRuntime_t *pstBleContr
         goto Exit;
     }
 
-    pstScreenContext->pstBleConText = pstScreenContext->stGuiderUI.Connected_revised.Option_3_Option_label_2;
-
+    if(!bCreate_LabelForDisplay(pstScreenContext))
+    {
+        goto Exit;
+    }
+    
     if(!bCreate_BluetoothIcon(pstScreenContext))
     {
         goto Exit;
@@ -151,6 +156,49 @@ Exit:
 
     lvgl_unlock();
     return bResult; 
+}
+
+static bool bCreate_LabelForDisplay(sT_BluetoothControl_Context_t *pstScreenContext)
+{
+    if(pstScreenContext == NULL)
+    {
+        FHALT("Bluetooth Menu Screen Context is Null");
+        return false;
+    }
+
+    lv_obj_t *pstLabel = pstScreenContext->stGuiderUI.Connected_revised.Option_3_Option_label_2;
+    lv_obj_t *pstParent = pstScreenContext->stGuiderUI.Connected_revised.Options_Option_3;
+    if(pstParent == NULL || pstLabel == NULL)
+    {
+        FHALT("Null Pointer Reference");
+        return false;
+    }
+
+    pstScreenContext->pstBleConText = pstLabel;
+    lv_obj_set_align(pstScreenContext->pstBleConText, LV_ALIGN_TOP_MID);
+    lv_obj_set_x(pstScreenContext->pstBleConText, 0);
+    lv_obj_set_y(pstScreenContext->pstBleConText, 4);
+
+    lv_obj_t *pstSUffixLabel = lv_label_create(pstParent);
+    if(pstSUffixLabel == NULL)
+    {
+        FHALT("Null Pointer Reference");
+        return false;        
+    }
+
+    lv_label_set_text(pstSUffixLabel, "");
+    lv_obj_set_style_text_font(pstSUffixLabel, 
+                               lv_obj_get_style_text_font(pstLabel, LV_PART_MAIN), 
+                               LV_PART_MAIN);
+    lv_obj_set_style_text_color(pstSUffixLabel,
+                                lv_obj_get_style_text_color(pstLabel, LV_PART_MAIN), 
+                                LV_PART_MAIN);
+    lv_obj_align_to(pstSUffixLabel, pstLabel, LV_ALIGN_OUT_RIGHT_MID, 0, 0);
+
+    pstScreenContext->pstBleConText = pstLabel;
+    pstScreenContext->pstBleConLabel_Suffix = pstSUffixLabel;
+    return true;
+
 }
 
 static bool bCreate_BluetoothIcon(sT_BluetoothControl_Context_t *pstScreenContext)
@@ -267,7 +315,7 @@ static void vUpdate_BLuetoothConnection_UI( sT_UIScreenRuntime_t *pstBleControlS
             lv_obj_set_style_text_color(pstLabel, lv_color_hex(BLUETOOTH_PAIRING_COLOR), LV_PART_MAIN);
             break;
         case eBleState_Disconnecting:
-        case eBleState_Disconnected:
+        case eBleState_Disconnect:
             lv_obj_set_style_image_recolor(pstScreenContext->pstBleConnIcon, lv_color_hex(BLUETOOTH_DISCONNECTED_COLOR), LV_PART_MAIN);
             lv_obj_set_style_image_recolor_opa(pstScreenContext->pstBleConnIcon, LV_OPA_COVER, LV_PART_MAIN);
             lv_obj_set_style_text_color(pstLabel, lv_color_hex(BLUETOOTH_DISCONNECTED_COLOR), LV_PART_MAIN);
@@ -284,7 +332,7 @@ static void vUpdate_BLuetoothConnection_UI( sT_UIScreenRuntime_t *pstBleControlS
     if(eState == eBleState_Pairing)
     {
         vStart_BluetoothPairingAnimation(pstScreenContext);
-        vStart_TextAnimator(pcaAnimateString, BleConnectionText[eState], 
+        vStart_TextAnimator(pcaAnimateString, "", 
                             ARRAY_SIZE(pcaAnimateString), vTextAnimator_Callback, 
                             BLE_PAIRING_TEXT_ANIMATE_DELAY_ms);
         pstScreenContext->bAnimationInProgress = true;
@@ -302,13 +350,16 @@ static void vTextAnimator_Callback(const char *pcaUpdateText)
     }
 
     lv_obj_t *pstLabel = stTBluetoothCtrlContext.pstBleConText;
-    if(pstLabel == NULL || !lv_obj_is_valid(pstLabel))
+    lv_obj_t *pstLabelSuffix = stTBluetoothCtrlContext.pstBleConLabel_Suffix;
+    if(pstLabel == NULL || pstLabelSuffix == NULL ||
+       !lv_obj_is_valid(pstLabel) || !lv_obj_is_valid(pstLabelSuffix))
     {
         FHALT("Label is Null");
         return;        
     }
-
-    lv_label_set_text(pstLabel, pcaUpdateText);
+   
+    lv_label_set_text(pstLabelSuffix, pcaUpdateText);
+    lv_obj_align_to(pstLabelSuffix, pstLabel, LV_ALIGN_OUT_RIGHT_MID, 0, 0);
 }
 
 static void vStart_BluetoothPairingAnimation(sT_BluetoothControl_Context_t *pstScreenContext)

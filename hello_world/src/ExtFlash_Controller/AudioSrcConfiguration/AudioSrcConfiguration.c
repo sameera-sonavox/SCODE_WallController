@@ -794,7 +794,7 @@ bool bLoad_AudioConfigurations( void )
             return false;            
         }
         
-        atomic_store_explicit(&staTemp_AudioSrConfig[uiSrcId].eBleState, eBleState_Disconnected, memory_order_release);
+        atomic_store_explicit(&staTemp_AudioSrConfig[uiSrcId].eBleState, eBleState_Disconnect, memory_order_release);
     }
 
     if(!bValidate_AllSourceConfigurations(staTemp_AudioSrConfig))

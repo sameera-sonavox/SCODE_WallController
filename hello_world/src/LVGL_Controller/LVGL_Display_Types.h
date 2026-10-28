@@ -126,7 +126,7 @@ typedef enum
     eBleState_None,
     eBleState_Pairing,
     eBleState_Disconnecting,
-    eBleState_Disconnected,
+    eBleState_Disconnect,
     eBleState_Connected,
     eNUMBER_OF_BLE_STATEs
 } eBLEState_t;

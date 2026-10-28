@@ -395,8 +395,17 @@ static void vHandle_EncoderPress(sT_UIScreenRuntime_t *pstBluetoothMenuScreen,
             }
             break;
 
-        case eBluetoothMenuItem_Disconnect:
-            printk("Bluetooth Disconnect Requested...\n\r");
+        case eBluetoothMenuItem_Disconnect:            
+            if(!bSet_BleConnectionState(eBleState_Disconnect))
+            {
+                FHALT("Bluetooth source is unavailable");
+                break;
+            }
+
+            if(!bRequest_UIScreen(eScreen_BluetoothControl))
+            {
+                FHALT("Screen Navigation Failed");
+            }
             break;
 
         default:

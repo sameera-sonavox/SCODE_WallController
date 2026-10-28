@@ -99,6 +99,7 @@ mcxa_target_components(
         SPI
         QDC
         AK4148
+        FlexIO_I2S
 )
 
 target_sources(app PRIVATE  
