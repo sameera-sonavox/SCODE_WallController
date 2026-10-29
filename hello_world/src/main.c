@@ -31,8 +31,9 @@
 bool bInit_System( void );
 void vCheck_For_FileSystem( void );
 static void vRun_System( void );
+static void vHandle_I2SStop(struct k_work *work);
 
-struct k_work kwork_StopI2S;
+struct k_work_delayable kwork_StopI2S;
 
 int main(void)
 {
@@ -106,7 +107,25 @@ bool bInit_System( void )
 	{
 		return false;
 	}
+
+	k_work_init_delayable(&kwork_StopI2S, vHandle_I2SStop);
+	k_work_schedule(&kwork_StopI2S, K_MSEC(4000U));
 	return true;
+}
+
+static void vHandle_I2SStop(struct k_work *work)
+{
+	if(bIs_FlexIO_I2S_Running())
+	{
+		(void)iStop_FlexIO_I2S();		
+		k_work_schedule((struct k_work_delayable*)work, K_MSEC(4000U));
+	}
+	else
+	{
+		(void)iStart_FlexIO_I2S();
+		k_work_schedule((struct k_work_delayable*)work, K_MSEC(4000U));
+	}
+
 }
 
 void vCheck_For_FileSystem( void )

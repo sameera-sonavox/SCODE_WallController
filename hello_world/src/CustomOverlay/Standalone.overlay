@@ -1,0 +1,18 @@
+/* Give the direct-boot application all 1 MiB of internal flash. */
+/ {
+    chosen {
+        /delete-property/ zephyr,code-partition;
+    };
+};
+
+&flash {
+    /delete-node/ partitions;
+};
+
+/* No external flash is fitted. Keep its pins and DMA channels unclaimed. */
+&lpspi1 {
+    status = "disabled";
+};
+&flexpwm0_pwm0 {
+    status = "disabled";
+};

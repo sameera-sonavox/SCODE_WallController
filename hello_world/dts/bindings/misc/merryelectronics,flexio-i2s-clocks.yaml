@@ -1,0 +1,45 @@
+description: |
+  Application-owned FlexIO clock generator producing continuous
+  BCLK and LRCLK without an audio-data shifter.
+
+compatible: "merryelectronics,flexio-i2s-clocks"
+
+include:
+  - base.yaml
+  - pinctrl-device.yaml
+
+properties:
+  flexio:
+    type: phandle
+    required: true
+    description: FlexIO peripheral used by the clock generator.
+
+  bclk-pin:
+    type: int
+    required: true
+    description: Internal FlexIO signal index for BCLK.
+
+  lrclk-pin:
+    type: int
+    required: true
+    description: Internal FlexIO signal index for LRCLK.
+
+  bclk-timer:
+    type: int
+    required: true
+    description: FlexIO timer index for BCLK.
+
+  lrclk-timer:
+    type: int
+    required: true
+    description: FlexIO timer index for LRCLK.
+
+  bclk-gpios:
+    type: phandle-array
+    required: true
+    description: Active-high BCLK GPIO used to hold the pin low when stopped.
+
+  lrclk-gpios:
+    type: phandle-array
+    required: true
+    description: Active-high LRCLK GPIO used to hold the pin low when stopped.

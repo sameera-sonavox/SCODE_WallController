@@ -1,0 +1,48 @@
+#include <nxp/mcx/MCXA156VLL-pinctrl.h>
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/* The parallel LCD must not own FlexIO. */
+&flexio0_lcd {
+    status = "disabled";
+};
+
+&flexio0 {
+    status = "okay";
+};
+
+&pinctrl {
+    pinmux_flexio_i2s_clocks: pinmux_flexio_i2s_clocks {
+        group0 {
+            pinmux = <FLEXIO0_D2_P0_18>,
+                     <FLEXIO0_D3_P0_19>;
+
+            slew-rate = "fast";
+            drive-strength = "low";
+        };
+    };
+};
+
+/ {
+    flexio_i2s_clocks: flexio-i2s-clocks {
+        compatible = "merryelectronics,flexio-i2s-clocks";
+
+        flexio = <&flexio0>;
+
+        pinctrl-0 = <&pinmux_flexio_i2s_clocks>;
+        pinctrl-names = "default";
+
+        /* Internal FlexIO signal indices. */
+        bclk-pin = <2>;
+        lrclk-pin = <3>;
+
+        /* FlexIO timer indices. */
+        bclk-timer = <0>;
+        lrclk-timer = <1>;
+
+        /* Physical GPIO identities for stopped/idle operation. */
+        bclk-gpios = <&gpio0 18 GPIO_ACTIVE_HIGH>;
+        lrclk-gpios = <&gpio0 19 GPIO_ACTIVE_HIGH>;
+
+        status = "okay";
+    };
+};
