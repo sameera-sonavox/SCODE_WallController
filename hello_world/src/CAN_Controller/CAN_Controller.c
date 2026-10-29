@@ -212,7 +212,9 @@ static void vFormat_Bootloader_Msg(sT_Bootloader_CtrlMsg_t *pstBtlMsg,
     }
     if(!bIsBootloader_Initialized())
     {
+#if !defined(APP_STANDALONE)
         FHALT("%s -> Bootloader not initialized", __func__);
+#endif
         vSet_BootloaderMsgStatus(pstBtlMsg, false,
                                  eBootloader_Error_NotInitialized);
         return;

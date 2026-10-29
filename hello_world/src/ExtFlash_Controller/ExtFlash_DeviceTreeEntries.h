@@ -4,8 +4,14 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/fs/fs.h>
 
+#if defined(APP_STANDALONE)
+/* Path strings remain valid for UI/file-protocol parsing; no volume exists. */
+#define EXT_LITTLEFS_MOUNT_POINT "/lfs"
+#else
 #define EXT_LITTLEFS_NODE                   DT_NODELABEL(ext_littlefs)
 #define EXT_LITTLEFS_MOUNT_POINT            FSTAB_ENTRY_DT_MOUNT_POINT(EXT_LITTLEFS_NODE)
+
+#endif
 
 //Paths
 #define EXT_LITTLEFS_IMAGE_DIRECTORY        EXT_LITTLEFS_MOUNT_POINT "/Images/"

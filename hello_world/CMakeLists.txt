@@ -12,6 +12,16 @@ if(NOT EXISTS "${MCXA_LIB_DIR}/cmake/MCXAComponents.cmake")
     )
 endif()
 
+option(APP_STANDALONE "Boot directly from internal flash without external storage" ON)
+option(APP_BOOT_TRACE "Print Zephyr device initialization progress" OFF)
+if(APP_BOOT_TRACE)
+    list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_SOURCE_DIR}/boot_trace.conf")
+endif()
+
+if(APP_STANDALONE)
+    list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_SOURCE_DIR}/standalone.conf")
+endif()
+
 set(DTC_OVERLAY_FILE
     "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/GPIOCtrl.overlay"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/PWMCtrl.overlay"
@@ -23,7 +33,18 @@ set(DTC_OVERLAY_FILE
     "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/SPI1_ExtFlashCtrl.overlay"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/FlashPartitions.overlay"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/ExtFlash_Ctrl.overlay"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/FlexIO_I2S.overlay"
     CACHE STRING "Application devicetree overlays" FORCE)
+
+if(APP_STANDALONE)
+    list(REMOVE_ITEM DTC_OVERLAY_FILE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/SPI1_ExtFlashCtrl.overlay"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/FlashPartitions.overlay"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/ExtFlash_Ctrl.overlay")
+    list(APPEND DTC_OVERLAY_FILE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOverlay/Standalone.overlay")
+    set(DTC_OVERLAY_FILE "${DTC_OVERLAY_FILE}" CACHE STRING "Application devicetree overlays" FORCE)
+endif()
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(hello_world)
@@ -247,3 +268,17 @@ set_property(SOURCE
         "-iquote${BLUETOOTH_CONNECTION_GUI_DIR}/custom"
 )
 
+
+# Standalone boards have no external storage or MCUboot services.
+if(APP_STANDALONE)
+    target_compile_definitions(app PRIVATE APP_STANDALONE=1)
+    get_target_property(app_sources app SOURCES)
+    list(FILTER app_sources EXCLUDE REGEX "src/Bootloader_Controller/Bootloader_Ctrl[.]c$")
+    list(FILTER app_sources EXCLUDE REGEX "src/ExtFlash_Controller/(ExtFlash_Controller[.]c|SPIController/.*|ExtFlashInitialSetup/.*|ExtFlashReadWrite/.*|Flash_Memory_ValidateTest/.*|ZephyrFlashMiddleWare/.*|LittleFsController/LittleFs_Controller[.]c)$")
+    set_property(TARGET app PROPERTY SOURCES "${app_sources}")
+    target_sources(app PRIVATE src/Standalone/UnavailableServices.c)
+endif()
+
+if(APP_BOOT_TRACE)
+    target_sources(app PRIVATE src/Standalone/BootTrace.c)
+endif()

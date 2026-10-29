@@ -107,6 +107,16 @@ static bool bCreate_WelComeScreen( sT_UIScreenRuntime_t *pstScreenRuntime )
 
     lv_obj_remove_flag(pstLogoSlot, LV_OBJ_FLAG_SCROLLABLE);
 
+#if defined(APP_STANDALONE)
+    /* No filesystem-backed logo exists on the standalone board. */
+    pstLogoImage = lv_label_create(pstLogoSlot);
+    if(pstLogoImage == NULL)
+    {
+        goto Exit;
+    }
+    lv_label_set_text(pstLogoImage, "CoAudio\nStandalone");
+    lv_obj_center(pstLogoImage);
+#else
     lv_image_header_t stTImageHeader = {0};
     lv_result_t eResult = lv_image_decoder_get_info(WELCOME_IMAGE_PATH, &stTImageHeader);
     if(eResult != LV_RESULT_OK)
@@ -126,6 +136,7 @@ static bool bCreate_WelComeScreen( sT_UIScreenRuntime_t *pstScreenRuntime )
     
     lv_image_set_src(pstLogoImage, WELCOME_IMAGE_PATH);
     lv_obj_center(pstLogoImage);
+#endif
     pstScreenContext->pstLogoImage = pstLogoImage;
 
     pstScreenRuntime->pstRootObj = pstRoot;
@@ -169,7 +180,10 @@ static void vEnter_WelcomeScreen( sT_UIScreenRuntime_t *pstScreenRuntime )
     lv_screen_load(pstScreenRuntime->pstRootObj);
     lvgl_unlock();
     
+#if !defined(APP_STANDALONE)
     vStart_WelcomeImageFadeIn(pstScreenRuntime);
+#endif
+    /* Standalone stays on this screen: menu assets require external storage. */
 }
 
 static void vExit_WelcomeScreen( sT_UIScreenRuntime_t *pstScreenRuntime )
