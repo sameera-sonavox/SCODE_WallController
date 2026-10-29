@@ -1,3 +1,3 @@
 {
-    "cmake.sourceDirectory": "C:/SCODE/NXP_Dev/MCXA156/01_HelloWorld/hello_world"
+    "cmake.sourceDirectory": "${workspaceFolder}/hello_world"
 }
