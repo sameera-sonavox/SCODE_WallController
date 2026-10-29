@@ -9,7 +9,7 @@
       "displayName": "debug-env",
       "hidden": true,
       "environment": {
-        "ZEPHYR_BASE": "C:/SCODE/NXP_Dev/MCXA156/zephyr_440_mcxa156/zephyr/zephyr",
+        "ZEPHYR_BASE": "${sourceParentDir}/Project_Assets/zephyr_440_mcxa156/zephyr/zephyr",
         "MCUX_VENV_PATH": "C:/Users/sameera.SONAVOX/.mcuxpressotools/.mcux-venv-3.12/Scripts",
         "PATH": "$env{MCUX_VENV_PATH}${pathListSep}$penv{PATH}",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
@@ -26,7 +26,7 @@
       "displayName": "release-env",
       "hidden": true,
       "environment": {
-        "ZEPHYR_BASE": "C:/SCODE/NXP_Dev/MCXA156/zephyr_440_mcxa156/zephyr/zephyr",
+        "ZEPHYR_BASE": "${sourceParentDir}/Project_Assets/zephyr_440_mcxa156/zephyr/zephyr",
         "MCUX_VENV_PATH": "C:/Users/sameera.SONAVOX/.mcuxpressotools/.mcux-venv-3.12/Scripts",
         "PATH": "$env{MCUX_VENV_PATH}${pathListSep}$penv{PATH}",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"

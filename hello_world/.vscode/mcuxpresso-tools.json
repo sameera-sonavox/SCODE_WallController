@@ -7,7 +7,7 @@
   "projectType": "zephyr-freestanding",
   "projectName": "hello_world",
   "sdk": {
-    "path": "c:\\SCODE\\NXP_Dev\\MCXA156\\zephyr_440_mcxa156\\zephyr",
+    "path": "C:/SCODE/NXP_Dev/MCXA156/SCODE3688_89-U10-x-x-x-Atlas_DCM_DMA_VSBT/Project_Assets/zephyr_440_mcxa156/zephyr",
     "version": "4.4.0"
   }
 }

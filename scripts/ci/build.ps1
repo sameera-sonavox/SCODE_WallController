@@ -351,6 +351,7 @@ function Assert-GeneratedBuildPaths {
         'C:/SCODE/CI_Test/ZephyrWorkspace',
         'C:/SCODE/CI_Test/NXP_MCXA_LIB',
         'C:/SCODE/NXP_Dev/MCXA156/zephyr_440_mcxa156',
+        (Join-Path $Environment.repository_root 'Project_Assets/zephyr_440_mcxa156').Replace('\', '/'),
         'C:/SCODE/NXP_Dev/MCXA_Lib/Lib'
     )
     foreach ($path in $forbidden) {

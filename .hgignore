@@ -8,3 +8,6 @@ hello_world/format-prompt
 hello_world/keys/*_signingkey.pem
 hello_world/keys/*.private.pem
 hello_world/boot_diagnostic*
+# Local assets must not be committed or exported to GitHub.
+syntax: regexp
+^Project_Assets(/|$)
